@@ -2779,7 +2779,8 @@ function enforce_vperp_boundary_condition!(f::AbstractArray{mk_float,3}, bc, vpe
 end
 
 """
-    skip_f_electron_bc_points_in_Jacobian(speeds, both_zero_flags, ivpa, ivperp, iz,
+    skip_f_electron_bc_points_in_Jacobian(speeds, both_zero_flags,
+                                          handle_overlaps::Val, ivpa, ivperp, iz,
                                           vpa, vperp, z)
 
 This function returns `true` when the grid point specified by `iz`, `ivperp`, `ivpa` would
@@ -2787,8 +2788,13 @@ be set by the boundary conditions on the electron distribution function. When th
 happens, the corresponding row should be skipped when adding contributions to the Jacobian
 matrix, so that the row remains the same as a row of the identity matrix, so that the
 Jacobian matrix does not modify those points. Returns `false` otherwise.
+
+`handle_overlaps` indicates whether this function is being called to construct a Jacobian
+matrix that is distributed across multiple blocks (`Val(true)`) or that is intended to be
+inverted in a decoupled way on each block individually (`Val(false)`).
 """
-function skip_f_electron_bc_points_in_Jacobian(speeds, both_zero_flags, ivpa, ivperp, iz,
+function skip_f_electron_bc_points_in_Jacobian(speeds, both_zero_flags,
+                                               handle_overlaps::Val, ivpa, ivperp, iz,
                                                vpa, vperp, z)
     # z boundary condition
     # Treat as if using Dirichlet boundary condition for incoming part of the distribution
@@ -2796,10 +2802,10 @@ function skip_f_electron_bc_points_in_Jacobian(speeds, both_zero_flags, ivpa, iv
     # whether this is an internal boundary or an actual domain boundary. This prevents the
     # matrix evaluated for a single block (without coupling to neighbouring blocks) from
     # becoming singular
-    if iz == 1 && speeds[3][ivpa,ivperp,iz] ≥ 0.0
+    if (handle_overlaps === Val(false) || z.irank == 0) && iz == 1 && speeds[3][ivpa,ivperp,iz] ≥ 0.0
         return true
     end
-    if iz == z.n && speeds[3][ivpa,ivperp,iz] ≤ 0.0
+    if (handle_overlaps === Val(false) || z.irank == z.nrank - 1) && iz == z.n && speeds[3][ivpa,ivperp,iz] ≤ 0.0
         return true
     end
 
@@ -2819,7 +2825,8 @@ function skip_f_electron_bc_points_in_Jacobian(speeds, both_zero_flags, ivpa, iv
 end
 
 """
-    skip_f_electron_bc_points_in_Jacobian_z_periodic(speeds, both_zero_flags, ivpa,
+    skip_f_electron_bc_points_in_Jacobian_z_periodic(speeds, both_zero_flags,
+                                                     handle_overlaps::Val, ivpa,
                                                      ivperp, iz, vpa, vperp, z)
 
 This function returns `true` when the grid point specified by `iz`, `ivperp`, `ivpa` would
@@ -2831,7 +2838,8 @@ Returns `false` otherwise.
 
 This function is for the periodic case.
 """
-function skip_f_electron_bc_points_in_Jacobian_z_periodic(speeds, both_zero_flags, ivpa,
+function skip_f_electron_bc_points_in_Jacobian_z_periodic(speeds, both_zero_flags,
+                                                          handle_overlaps::Val, ivpa,
                                                           ivperp, iz, vpa, vperp, z)
     # vperp boundary condition
     if vperp.n > 1 && ivperp == vperp.n && (both_zero_flags[2] || speeds[2][ivpa,ivperp,iz] ≤ 0.0)
@@ -2849,9 +2857,9 @@ function skip_f_electron_bc_points_in_Jacobian_z_periodic(speeds, both_zero_flag
 end
 
 """
-    skip_f_electron_bc_points_in_Jacobian_z_periodic_serial(speeds, both_zero_flags,
-                                                            ivpa, ivperp, iz, vpa,
-                                                            vperp, z)
+    skip_f_electron_bc_points_in_Jacobian_z_periodic_serial(
+        speeds, both_zero_flags, handle_overlaps::Val, ivpa, ivperp, iz, vpa, vperp,
+        z)
 
 This function returns `true` when the grid point specified by `iz`, `ivperp`, `ivpa` would
 be set by the boundary conditions on the electron distribution function, for the case when
@@ -2864,9 +2872,13 @@ This function is for the serial, periodic case - then the upper boundary is set 
 periodicity constraint, so the corresponding rows should not have any Jacobian
 contributions added to them.
 """
-function skip_f_electron_bc_points_in_Jacobian_z_periodic_serial(speeds, both_zero_flags,
-                                                                 ivpa, ivperp, iz, vpa,
-                                                                 vperp, z)
+function skip_f_electron_bc_points_in_Jacobian_z_periodic_serial(
+             speeds, both_zero_flags, handle_overlaps::Val, ivpa, ivperp, iz, vpa, vperp,
+             z)
+    if handle_overlaps === Val(true)
+        error("`handle_overlaps === Val(true)` unexpected in "
+              * "`skip_f_electron_bc_points_in_Jacobian_z_periodic_serial()`")
+    end
     if iz == z.n
         return true
     end
@@ -2887,7 +2899,12 @@ function skip_f_electron_bc_points_in_Jacobian_z_periodic_serial(speeds, both_ze
 end
 
 function skip_p_electron_bc_points_in_Jacobian_z_periodic_serial(speeds, both_zero_flags,
-                                                                 iz, z)
+                                                                 handle_overlaps::Val, iz,
+                                                                 z)
+    if handle_overlaps === Val(true)
+        error("`handle_overlaps === Val(true)` unexpected in "
+              * "`skip_p_electron_bc_points_in_Jacobian_z_periodic_serial()`")
+    end
     if iz == z.n
         return true
     end
@@ -2896,14 +2913,19 @@ function skip_p_electron_bc_points_in_Jacobian_z_periodic_serial(speeds, both_ze
 end
 
 function skip_f_electron_bc_points_in_Jacobian_v_solve(boundary_flag_and_speeds,
-                                                       both_zero_flags, ivpa, ivperp, vpa,
-                                                       vperp)
+                                                       both_zero_flags,
+                                                       handle_overlaps::Val, ivpa, vpa,
+                                                       ivperp, vperp)
     # z boundary condition
     # Treat as if using Dirichlet boundary condition for incoming part of the distribution
     # function on the block boundary, regardless of the actual boundary condition and
     # whether this is an internal boundary or an actual domain boundary. This prevents the
     # matrix evaluated for a single block (without coupling to neighbouring blocks) from
     # becoming singular
+    if handle_overlaps === Val(true)
+        error("handle_overlaps === Val(true) not supported in "
+              * "skip_f_electron_bc_points_in_Jacobian_v_solve()")
+    end
     is_lower_boundary, speeds = boundary_flag_and_speeds
     if is_lower_boundary !== nothing
         if is_lower_boundary
@@ -2933,8 +2955,13 @@ function skip_f_electron_bc_points_in_Jacobian_v_solve(boundary_flag_and_speeds,
 end
 
 function skip_f_electron_bc_points_in_Jacobian_v_solve_z_periodic(speeds, both_zero_flags,
+                                                                  handle_overlaps::Val,
                                                                   ivpa, ivperp, vpa,
                                                                   vperp)
+    if handle_overlaps === Val(true)
+        error("handle_overlaps === Val(true) not supported in "
+              * "skip_f_electron_bc_points_in_Jacobian_v_solve_z_periodic()")
+    end
     # vperp boundary condition
     if vperp.n > 1 && ivperp == vperp.n && (both_zero_flags[2] || speeds[2][ivpa,ivperp,iz] ≤ 0.0)
         return true
@@ -2953,35 +2980,44 @@ end
 skip_f_electron_bc_points_in_Jacobian_v_solve_z_periodic_serial(args...) = skip_f_electron_bc_points_in_Jacobian_v_solve_z_periodic(args...)
 
 function skip_p_electron_bc_points_in_Jacobian_v_solve_z_periodic_serial(
-             speeds, both_zero_flags, iz, z)
+             speeds, both_zero_flags,
+                                                                         handle_overlaps::Val,
+                                                                         iz, z)
+    if handle_overlaps === Val(true)
+        error("`handle_overlaps === Val(true)` unexpected in "
+              * "`skip_p_electron_bc_points_in_Jacobian_v_solve_z_periodic_serial()`")
+    end
     return false
 end
 
 @inline function get_ADI_boundary_v_solve_speeds(speeds, z, iz)
-    if iz == 1
+    if z.irank == 0 && iz == 1
         return (true, speeds)
-    elseif iz == z.n
+    elseif z.irank == z.nrank - 1 && iz == z.n
         return (false, speeds)
     else
         return (nothing, speeds)
     end
 end
 
-function skip_f_electron_bc_points_in_Jacobian_z_solve(boundary_flags_and_speeds,
-                                                       both_zero_flags, iz, z)
+function skip_f_electron_bc_points_in_Jacobian_z_solve(
+             boundary_flags_and_speeds, both_zero_flags, handle_overlaps::Val, iz, z)
     is_vperp_upper_boundary, is_vpa_lower_boundary, is_vpa_upper_boundary, speeds =
         boundary_flags_and_speeds
-
     # z boundary condition
     # Treat as if using Dirichlet boundary condition for incoming part of the distribution
     # function on the block boundary, regardless of the actual boundary condition and
     # whether this is an internal boundary or an actual domain boundary. This prevents the
     # matrix evaluated for a single block (without coupling to neighbouring blocks) from
     # becoming singular
-    if iz == 1 && speeds[3][iz] ≥ 0.0
+    if handle_overlaps === Val(true)
+        error("handle_overlaps === Val(true) not supported in "
+              * "skip_f_electron_bc_points_in_Jacobian_z_solve()")
+    end
+    if z.irank == 0 && iz == 1 && speeds[3][iz] ≥ 0.0
         return true
     end
-    if iz == z.n && speeds[3][iz] ≤ 0.0
+    if z.irank == z.nrank - 1 && iz == z.n && speeds[3][iz] ≤ 0.0
         return true
     end
 
@@ -3001,12 +3037,21 @@ function skip_f_electron_bc_points_in_Jacobian_z_solve(boundary_flags_and_speeds
 end
 
 function skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic(speeds, both_zero_flags,
+                                                                  handle_overlaps::Val,
                                                                   iz, z)
+    if handle_overlaps === Val(true)
+        error("handle_overlaps === Val(true) not supported in "
+              * "skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic()")
+    end
     return false
 end
 
 function skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial(
-             speeds, both_zero_flags, iz, z)
+             speeds, both_zero_flags, handle_overlaps::Val, iz, z)
+    if handle_overlaps === Val(true)
+        error("handle_overlaps === Val(true) not supported in "
+              * "skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial()")
+    end
     if iz == z.n
         return true
     end
@@ -3015,7 +3060,11 @@ function skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial(
 end
 
 function skip_p_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial(
-             speeds, both_zero_flags, iz, z)
+             speeds, both_zero_flags, handle_overlaps::Val, iz, z)
+    if handle_overlaps === Val(true)
+        error("`handle_overlaps === Val(true)` unexpected in "
+              * "`skip_p_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial()`")
+    end
     if iz == z.n
         return true
     end

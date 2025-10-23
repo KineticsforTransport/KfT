@@ -1022,6 +1022,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
                             create_jacobian_info(coords, spectral;
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
+                                                 handle_overlaps=Val(false),
                                                  boundary_skip_funcs=boundary_skip_funcs.full,
                                                  both_zero_flags=both_zero_flags,
                                                  electron_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
@@ -1053,6 +1054,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
                             create_jacobian_info(coords, spectral;
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
+                                                 handle_overlaps=Val(false),
                                                  boundary_skip_funcs=boundary_skip_funcs.full,
                                                  both_zero_flags=both_zero_flags,
                                                  electron_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
@@ -1081,6 +1083,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
                             create_jacobian_info(coords, spectral;
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
+                                                 handle_overlaps=Val(false),
                                                  boundary_skip_funcs=boundary_skip_funcs.full,
                                                  both_zero_flags=both_zero_flags,
                                                  electron_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
@@ -1106,6 +1109,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
                             create_jacobian_info(coords, spectral;
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
+                                                 handle_overlaps=Val(false),
                                                  boundary_skip_funcs=boundary_skip_funcs.full,
                                                  both_zero_flags=both_zero_flags,
                                                  electron_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
@@ -1137,6 +1141,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
             v_solve_jacobian = create_jacobian_info(coords, spectral;
                                                     comm=nothing,
                                                     synchronize=nothing,
+                                                    handle_overlaps=Val(false),
                                                     boundary_skip_funcs=boundary_skip_funcs.v_solve,
                                                     both_zero_flags=both_zero_flags,
                                                     electron_pdf=(nothing, (:vpa, :vperp), false),
@@ -1161,17 +1166,20 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
             z_solve_buffer2 = allocate_float(z_solve_n)
             z_solve_jacobian = create_jacobian_info(coords, spectral; comm=nothing,
                                                     synchronize=nothing,
+                                                    handle_overlaps=Val(false),
                                                     boundary_skip_funcs=boundary_skip_funcs.z_solve,
                                                     both_zero_flags=both_zero_flags,
                                                     electron_pdf=(nothing,(:z,), false))
             z_solve_jacobian_p = create_jacobian_info(coords, spectral; comm=nothing,
                                                       synchronize=nothing,
+                                                      handle_overlaps=Val(false),
                                                       boundary_skip_funcs=boundary_skip_funcs.z_solve,
                                                       both_zero_flags=both_zero_flags,
                                                       electron_p=(nothing,(:z,), false))
 
             explicit_jacobian = create_jacobian_info(coords, spectral; comm=comm_anyzv_subblock[],
                                                      synchronize=_anyzv_subblock_synchronize,
+                                                     handle_overlaps=Val(false),
                                                      boundary_skip_funcs=boundary_skip_funcs.full,
                                                      both_zero_flags=both_zero_flags,
                                                      electron_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
@@ -2432,7 +2440,7 @@ to allow the outer r-loop to be parallelised.
                                                     r, z, vperp, vpa, z_spectral,
                                                     vperp_spectral, vpa_spectral,
                                                     z_advect, vpa_advect, num_diss_params,
-                                                    ir)
+                                                    ir, steady_state_f=Val(true))
 
         residual = (scratch_dummy.implicit_buffer_z_1,
                     scratch_dummy.implicit_buffer_vpavperpz_1)
