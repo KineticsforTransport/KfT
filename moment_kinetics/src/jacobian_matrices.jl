@@ -9,7 +9,7 @@ export jacobian_info, create_jacobian_info, jacobian_initialize_identity!,
        CompoundTerm, NullTerm, add_term_to_Jacobian!,
        add_periodicity_constraint_to_jacobian!
 
-using ..array_allocation: allocate_shared_float, allocate_float
+using ..array_allocation: allocate_shared_float, allocate_float, allocate_shared_int, allocate_int
 using ..communication
 using ..debugging
 using ..looping
@@ -20,7 +20,9 @@ using ..type_definitions
 using BlockArrays
 using BlockBandedMatrices
 using MPI
+using MPIStaticCondensations: create_dimension, get_shared_sparse_matrix_csc_buffer
 using SparseArrays
+using SparseArrays: FixedSparseCSC
 
 # Stores some information from `coordinate` struct, but has no type parameters so can be
 # stored in a Vector or looked up from a Tuple without type instability.
@@ -73,6 +75,13 @@ struct mini_discretization_info
         end
         return new(radau_Dmat, lobatto_Dmat, dense_second_deriv_matrix)
     end
+end
+
+function get_MPIStaticCondensations_Dimensions_from_coordinates(coordinates)
+    return [create_dimension(; name=String(c.name), nelement=c.nelement_global,
+                             ngrid=c.ngrid, nrank=c.nrank, irank=c.irank,
+                             periodic=c.periodic, dense_boundaries=(c.bc=="wall"))
+            for c ∈ coordinates]
 end
 
 """
@@ -160,7 +169,7 @@ end
     create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=comm_block[],
                          synchronize::Union{Function,Nothing}=_block_synchronize,
                          boundary_skip_funcs::BSF=nothing,
-                         handle_overlaps::Val=Val(true), block_banded=true,
+                         handle_overlaps::Val=Val(true), sparse_storage=true,
                          kwargs...) where {BSF}
 
 Create a [`jacobian_info`](@ref) struct.
@@ -173,7 +182,8 @@ Vector or Tuple of Symbols giving the dimensions of the variable; the third elem
 evolution equation (`false`).
 
 `coords` is a NamedTuple giving all the needed coordinates, `spectral` is a NamedTuple
-with all the needed 'spectral' objects.
+with all the needed 'spectral' objects. `coords` should be ordered from fastest to slowest
+varying.
 
 `comm` is the communicator to use to allocate shared memory arrays. `synchronize` is the
 function used to synchronize between shared-memory operations.
@@ -190,15 +200,16 @@ if no function is needed for the variable).
 to be solved coupled across all distributed-MPI subdomains, or restricted to a single
 distributed-MPI subdomain (for a more approximate but more parallelisable preconditioner).
 
-`block_banded=false` can be passed to store the Jacobian matrix in a dense
-`MPISharedArray`, rather than the default block-banded matrix type (BlockSkylineMatrix,
-with data stored in a shared-memory array).
+`sparse_storage=false` can be passed to store the Jacobian matrix in a dense
+`MPISharedArray`, rather than the default sparse (FixedSparseCSC, with data stored in a
+shared-memory array) or block-banded matrix type (BlockSkylineMatrix, with data stored in
+a shared-memory array).
 """
 function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=comm_block[],
                               synchronize::Union{Function,Nothing}=_block_synchronize,
                               boundary_skip_funcs::BSF=nothing, both_zero_flags=nothing,
-                              handle_overlaps::Val=Val(true), block_banded=true,
-                              kwargs...) where {BSF}
+                              handle_overlaps::Val=Val(true), sparse_storage::Bool=true,
+                              blockskyline_storage::Bool=false, kwargs...) where {BSF}
 
     @debug_consistency_checks all(all(d ∈ keys(coords) for d ∈ v[2]) for v ∈ values(kwargs)) || error("Some coordinate required by the state variables were not included in `coords`.")
 
@@ -224,15 +235,17 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
         # block-structured matrix in the way that we do it below, and probably more
         # efficient anyway to stick with a simple dense matrix, since the block-structured
         # one would not have any zero blocks even if we were to handle this special case.
-        block_banded = false
+        sparse_storage = false
     end
-    if (state_vector_coords[1][end].periodic && state_vector_coords[1][end].irank == 0
+    if (sparse_storage && handle_overlaps === Val(false)
+            && state_vector_coords[1][end].periodic
+            && state_vector_coords[1][end].irank == 0
             && state_vector_coords[1][end].nrank == 1)
         # Periodic, but this cannot be handled by the structure of BlockSkylineMatrix at
         # the moment, so revert to dense matrices.
         println("WARNING: periodic bcs not compatible with block-banded matrix "
                 * "structure, using dense matrix storage for Jacobian matrix.")
-        block_banded = false
+        sparse_storage = false
     end
 
     # For each variable, get the corresponding 'region type' from
@@ -244,7 +257,16 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
                                       Tuple(getfield(looping.loop_ranges_store[rt], d) for d ∈ v)
                                       for (rt,v) ∈ zip(state_vector_region_types,state_vector_dims))
     # Flattened ranges for shared-memory-parallel loops over each variable.
-    function get_local_flattened_range(n)
+    function get_local_flattened_range(block_or_n)
+        if isa(block_or_n, Integer)
+            n = block_or_n
+        elseif isa(block_or_n, BlockSkylineMatrix)
+            n = length(block_or_n.data)
+        elseif isa(block_or_n, FixedSparseCSC)
+            n = length(block_or_n.nzval)
+        else
+            error("Unsupported type $(typeof(block_or_n)) for `block_or_n`")
+        end
         if comm === nothing
             local_range = 1:n
         else
@@ -326,25 +348,43 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
         off_diagonals = mk_int[(i - 1) % 2 + 1 for i ∈ 1:2*outer_nelement-1]
         return row_block_sizes, column_block_sizes, off_diagonals
     end
+    if sparse_storage && !blockskyline_storage
+        mpisc_dims =
+            get_MPIStaticCondensations_Dimensions_from_coordinates(values(coords))
+    end
     if comm === nothing
         # No shared memory needed
         function get_sub_matrix(i, j)
-            if block_banded
-                if state_vector_coords[i][end].name != state_vector_coords[j][end].name
-                    error("Cannot create block-banded matrix for Jacobian block for "
-                          * "block ($i,$j) when outer coordinates "
-                          * "($(state_vector_coords[i][end].name) and "
-                          * "$(state_vector_coords[j][end].name)) are not the same.")
+            if sparse_storage
+                if blockskyline_storage
+                    if state_vector_coords[i][end].name != state_vector_coords[j][end].name
+                        error("Cannot create block-banded matrix for Jacobian block for "
+                              * "block ($i,$j) when outer coordinates "
+                              * "($(state_vector_coords[i][end].name) and "
+                              * "$(state_vector_coords[j][end].name)) are not the same.")
+                    end
+                    outer_coord = state_vector_coords[i][end]
+                    row_block_sizes, column_block_sizes, off_diagonals =
+                        get_block_sizes(outer_coord.nelement_local, outer_coord.ngrid,
+                                        state_vector_dim_steps[i][end],
+                                        state_vector_dim_steps[j][end])
+                    return BlockSkylineMatrix{mk_float}(BlockBandedMatrices.Zeros(sum(row_block_sizes),
+                                                                                  sum(column_block_sizes)),
+                                                        row_block_sizes, column_block_sizes,
+                                                        (off_diagonals,off_diagonals))
+                else
+                    # Create FixedSparseCSC buffer for the main distribution-function
+                    # block of the Jacobian matrix.
+                    jac_comm = comm
+                    jac_allocate_float = (args...; comm=nothing, kwargs...) -> allocate_float(args...; kwargs...)
+                    jac_allocate_int = (args...; comm=nothing, kwargs...) -> allocate_int(args...; kwargs...)
+                    return get_shared_sparse_matrix_csc_buffer(mpisc_dims, MPI.COMM_SELF,
+                                                               jac_allocate_float,
+                                                               jac_allocate_int;
+                                                               row_dimensions=[state_vector_dim_numbers[i]...],
+                                                               column_dimensions=[state_vector_dim_numbers[j]...],
+                                                               ind_type=mk_int)
                 end
-                outer_coord = state_vector_coords[i][end]
-                row_block_sizes, column_block_sizes, off_diagonals =
-                    get_block_sizes(outer_coord.nelement_local, outer_coord.ngrid,
-                                    state_vector_dim_steps[i][end],
-                                    state_vector_dim_steps[j][end])
-                return BlockSkylineMatrix{mk_float}(BlockBandedMatrices.Zeros(sum(row_block_sizes),
-                                                                              sum(column_block_sizes)),
-                                                    row_block_sizes, column_block_sizes,
-                                                    (off_diagonals,off_diagonals))
             else
                 # Use dense matrices.
                 return allocate_float(Symbol(:jacobian_size, i)=>state_vector_sizes[i],
@@ -355,28 +395,42 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
                                 for i ∈ 1:n_entries)
     else
         function get_shared_sub_matrix(i, j)
-            if block_banded
-                if state_vector_coords[i][end].name != state_vector_coords[j][end].name
-                    error("Cannot create block-banded matrix for Jacobian block for "
-                          * "block ($i,$j) when outer coordinates "
-                          * "($(state_vector_coords[i][end].name) and "
-                          * "$(state_vector_coords[j][end].name)) are not the same.")
+            if sparse_storage
+                if blockskyline_storage
+                    if state_vector_coords[i][end].name != state_vector_coords[j][end].name
+                        error("Cannot create block-banded matrix for Jacobian block for "
+                              * "block ($i,$j) when outer coordinates "
+                              * "($(state_vector_coords[i][end].name) and "
+                              * "$(state_vector_coords[j][end].name)) are not the same.")
+                    end
+                    # Need to use lower level interface so that the memory backing the
+                    # BlockSkylineMatrix is a shared-memory array allocated with
+                    # allocate_shared_float().
+                    outer_coord = state_vector_coords[i][end]
+                    row_block_sizes, column_block_sizes, off_diagonals =
+                        get_block_sizes(outer_coord.nelement_local, outer_coord.ngrid,
+                                        state_vector_dim_steps[i][end],
+                                        state_vector_dim_steps[j][end])
+                    skyline_sizes = BlockBandedMatrices.BlockSkylineSizes(row_block_sizes,
+                                                                          column_block_sizes,
+                                                                          off_diagonals,
+                                                                          off_diagonals)
+                    data_length = BlockBandedMatrices.bb_numentries(skyline_sizes)
+                    data = allocate_shared_float(:jacobian_data=>data_length, comm=comm)
+                    return BlockBandedMatrices._BlockSkylineMatrix(data, skyline_sizes)
+                else
+                    # Create FixedSparseCSC buffer for the main distribution-function
+                    # block of the Jacobian matrix.
+                    jac_comm = comm
+                    jac_allocate_shared_float = (dim_sizes...; comm=nothing, kwargs...) -> allocate_shared_float(ntuple(i->Symbol("$i")=>dim_sizes[i], length(dim_sizes))...; kwargs..., comm=(comm===nothing ? jac_comm : comm))
+                    jac_allocate_shared_int = (dim_sizes...; comm=nothing, kwargs...) -> allocate_shared_int(ntuple(i->Symbol("$i")=>dim_sizes[i], length(dim_sizes))...; kwargs..., comm=(comm===nothing ? jac_comm : comm))
+                    return get_shared_sparse_matrix_csc_buffer(mpisc_dims, comm,
+                                                               jac_allocate_shared_float,
+                                                               jac_allocate_shared_int;
+                                                               row_dimensions=[state_vector_dim_numbers[i]...],
+                                                               column_dimensions=[state_vector_dim_numbers[j]...],
+                                                               ind_type=mk_int)
                 end
-                # Need to use lower level interface so that the memory backing the
-                # BlockSkylineMatrix is a shared-memory array allocated with
-                # allocate_shared_float().
-                outer_coord = state_vector_coords[i][end]
-                row_block_sizes, column_block_sizes, off_diagonals =
-                    get_block_sizes(outer_coord.nelement_local, outer_coord.ngrid,
-                                    state_vector_dim_steps[i][end],
-                                    state_vector_dim_steps[j][end])
-                skyline_sizes = BlockBandedMatrices.BlockSkylineSizes(row_block_sizes,
-                                                                      column_block_sizes,
-                                                                      off_diagonals,
-                                                                      off_diagonals)
-                data_length = BlockBandedMatrices.bb_numentries(skyline_sizes)
-                data = allocate_shared_float(:jacobian_data=>data_length, comm=comm)
-                return BlockBandedMatrices._BlockSkylineMatrix(data, skyline_sizes)
             else
                 return allocate_shared_float(Symbol(:jacobian_size, i)=>state_vector_sizes[i],
                                              Symbol(:jacobian_size, j)=>state_vector_sizes[j];
@@ -387,9 +441,9 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
                                 for i ∈ 1:n_entries)
     end
 
-    if block_banded
+    if sparse_storage
         function get_row_local_ranges(row)
-            return Tuple(get_local_flattened_range(length(block.data)) for block ∈ row)
+            return Tuple(get_local_flattened_range(block) for block ∈ row)
         end
         local_block_ranges = Tuple(get_row_local_ranges(r) for r ∈ jacobian_matrix)
 
@@ -517,13 +571,19 @@ Initialize `jacobian.matrix` to zero.
 @timeit_debug global_timer jacobian_initialize_zero!(jacobian::jacobian_info) = begin
     jacobian_matrix = jacobian.matrix
     n_entries = jacobian.n_entries
-    if isa(jacobian_matrix[1][1], BlockSkylineMatrix)
+    if isa(jacobian_matrix[1][1], FixedSparseCSC)
         local_block_ranges = jacobian.local_block_ranges
         for col_variable ∈ 1:n_entries
             for row_variable ∈ 1:n_entries
                 this_block = jacobian_matrix[row_variable][col_variable]
                 local_range = local_block_ranges[row_variable][col_variable]
-                this_block.data[local_range] .= 0.0
+                if isa(this_block, FixedSparseCSC)
+                    this_block.nzval[local_range] .= 0.0
+                elseif isa(this_block, BlockSkylineMatrix)
+                    this_block.data[local_range] .= 0.0
+                else
+                    error("Unrecognised type for block in `jacobian`")
+                end
             end
         end
     else
@@ -643,9 +703,11 @@ function jacobian_initialize_bc_digonal_single_variable!(
     return nothing
 end
 
-@timeit_debug global_timer get_joined_array(jacobian::jacobian_info) = begin
+@timeit_debug global_timer get_joined_array(jacobian::jacobian_info,
+                                            row_range=1:jacobian.n_entries,
+                                            col_range=1:jacobian.n_entries) = begin
     n_entries = jacobian.n_entries
-    array_of_arrays = [jacobian.matrix[i][j] for i ∈ 1:n_entries, j ∈ 1:n_entries]
+    array_of_arrays = [jacobian.matrix[i][j] for i ∈ row_range, j ∈ col_range]
     joined_array = mortar(array_of_arrays)
     return joined_array
 end
@@ -1455,8 +1517,7 @@ function get_overlap_factor(indices::NTuple{N,mk_int}, coords::NTuple{N,mini_coo
 end
 
 """
-    add_term_to_Jacobian_row!(jacobian::jacobian_info,
-                              jacobian_row::NTuple{N,<:AbstractVector{mk_float}} where N,
+    add_term_to_Jacobian_row!(jacobian::jacobian_info, jacobian_row::Tuple,
                               rows_variable::Symbol, prefactor::mk_float,
                               terms::EquationTerm, indices::Tuple,
                               boundary_speed, overlap_factor::mk_float,
@@ -1466,8 +1527,7 @@ Traverse the tree of EquationTerms, accumulating the prefactors until reaching a
 (`kind = ETsimple`) that represents a state vector variable, which makes a contribution to
 the Jacobian.
 """
-function add_term_to_Jacobian_row!(jacobian::jacobian_info,
-                                   jacobian_row::NTuple{N,<:AbstractVector{mk_float}} where N,
+function add_term_to_Jacobian_row!(jacobian::jacobian_info, jacobian_row::Tuple,
                                    rows_variable::Symbol, prefactor::mk_float,
                                    terms::EquationTerm, indices::Tuple, boundary_speed,
                                    overlap_factor::mk_float,
@@ -1543,8 +1603,7 @@ end
 
 # `term` is just one of the state vector variables, so add its prefactor to the
 # corresponding column.
-function add_simple_term_to_Jacobian_row!(jacobian::jacobian_info,
-                                          jacobian_row::NTuple{N,<:AbstractVector{mk_float}} where N,
+function add_simple_term_to_Jacobian_row!(jacobian::jacobian_info, jacobian_row::Tuple,
                                           rows_variable::Symbol, prefactor::mk_float,
                                           term::EquationTerm, indices::Tuple,
                                           overlap_factor::mk_float)
@@ -1568,8 +1627,7 @@ end
 # corresponding to the row is an element boundary, depending on upwinding), and insert
 # `prefactor` times a column of the derivative matrix into those points.
 function add_derivative_term_to_Jacobian_row!(jacobian::jacobian_info,
-                                              jacobian_row::NTuple{N,<:AbstractVector{mk_float}} where N,
-                                              rows_variable::Symbol,
+                                              jacobian_row::Tuple, rows_variable::Symbol,
                                               prefactor::mk_float, term::EquationTerm,
                                               indices::Union{Tuple,Vector},
                                               derivative_overlap_factors::NamedTuple)
@@ -1837,8 +1895,7 @@ end
 # improved by special handling of the mass matrix (or matrices, e.g. for each velocity
 # dimension) in future.
 function add_second_derivative_term_to_Jacobian_row!(
-             jacobian::jacobian_info,
-             jacobian_row::NTuple{N,<:AbstractVector{mk_float}} where N,
+             jacobian::jacobian_info, jacobian_row::Tuple,
              rows_variable::Symbol, prefactor::mk_float, term::EquationTerm,
              indices::Union{Tuple,Vector}, derivative_overlap_factors::NamedTuple)
     @inbounds begin
@@ -1878,8 +1935,7 @@ end
 # `term` represents an integral of a state vector variable (or possibly an integral of a
 # derivative of a state vector variable). Loops over the columns corresponding to every
 # point in the dimensions `term.integrals`.
-function add_integral_term_to_Jacobian_row!(jacobian::jacobian_info,
-                                            jacobian_row::NTuple{N,<:AbstractVector{mk_float}} where N,
+function add_integral_term_to_Jacobian_row!(jacobian::jacobian_info, jacobian_row::Tuple,
                                             rows_variable::Symbol, prefactor::mk_float,
                                             term::EquationTerm, row_indices::Tuple,
                                             overlap_factor::mk_float,
@@ -1907,8 +1963,7 @@ end
 # Separate internal function so that `integral_dim_sizes` can be a Tuple, allowing
 # `CartesianIndices(integral_dim_sizes)` to be type stable as the length of
 # `integral_dim_sizes` is known at compile time.
-function add_integral_term_to_Jacobian_row!(jacobian::jacobian_info,
-                                            jacobian_row::NTuple{N,<:AbstractVector{mk_float}} where N,
+function add_integral_term_to_Jacobian_row!(jacobian::jacobian_info, jacobian_row::Tuple,
                                             rows_variable::Symbol, prefactor::mk_float,
                                             term::EquationTerm, row_indices::Tuple,
                                             integrand_variable, integral_dim_sizes,

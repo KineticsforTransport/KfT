@@ -3,6 +3,7 @@ module electron_kinetic_equation
 using ConcreteStructs
 using LinearAlgebra
 using MPI
+using MPIStaticCondensations
 using OrderedCollections
 using SparseArrays
 
@@ -18,13 +19,14 @@ using ..calculus: derivative!, second_derivative!, integral,
                   reconcile_element_boundaries_MPI_z_pdf_vpavperpz!
 using ..communication
 using ..communication: _anyzv_subblock_synchronize
+using ..coordinates
 using ..debugging
 using ..gauss_legendre: gausslegendre_info
 using ..input_structs
 using ..interpolation: interpolate_to_grid_1d!, fill_1d_interpolation_matrix!,
                        interpolate_symmetric!, fill_interpolate_symmetric_matrix!
 using ..type_definitions
-using ..array_allocation: allocate_float, allocate_shared_float
+using ..array_allocation: allocate_float, allocate_shared_float, allocate_shared_int
 using ..electron_fluid_equations: calculate_electron_moments!,
                                   calculate_electron_moments_no_r!,
                                   update_electron_vth_temperature!,
@@ -46,6 +48,7 @@ using ..file_io: get_electron_io_info, write_electron_state, finish_electron_io,
 using ..collision_frequencies: get_collision_frequency_ee,
                                get_collision_frequency_ei
 using ..jacobian_matrices
+using ..jacobian_matrices: get_MPIStaticCondensations_Dimensions_from_coordinates
 using ..krook_collisions: electron_krook_collisions!, get_electron_krook_collisions_term
 using ..timer_utils
 using ..moment_constraints: hard_force_moment_constraints!,
@@ -1016,10 +1019,111 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
     end
     both_zero_flags = [get_both_zero_flag(c) for c ∈ coords]
 
-    if preconditioner_type === Val(:electron_lu_separate_dp_dz_dq_dz)
+    function get_has_diss(coord)
+        diss_name = Symbol(coord.name, "_dissipation_coefficient")
+        if diss_name ∈ fieldnames(typeof(electron_num_diss_params))
+            return getfield(electron_num_diss_params, diss_name) > 0.0
+        else
+            return false
+        end
+    end
+    has_diss = any(get_has_diss(c) for c ∈ coords)
+
+    if preconditioner_type === Val(:electron_static_condensation)
+        function get_static_condensation_precon()
+            precon = create_jacobian_info(coords, spectral; comm=comm_anyzv_subblock[],
+                                          synchronize=_anyzv_subblock_synchronize,
+                                          handle_overlaps=Val(true),
+                                          boundary_skip_funcs=boundary_skip_funcs.full,
+                                          both_zero_flags=both_zero_flags,
+                                          electron_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
+                                          electron_p=((:anyzv,:z), (:z,), false),
+                                          zeroth_moment=((:anyzv,:z), (:z,), true),
+                                          first_moment=((:anyzv,:z), (:z,), true),
+                                          second_moment=((:anyzv,:z), (:z,), true),
+                                          third_moment=((:anyzv,:z), (:z,), true),
+                                         )
+            state_vector_size = sum(precon.state_vector_sizes)
+            state_buffer = allocate_shared_float(:newton_size=>state_vector_size;
+                                                 comm=comm_anyzv_subblock[])
+
+            # Initialise state_buffer to zero so that constraint equations have zero on
+            # the RHS.
+            @begin_serial_region()
+            @serial_region begin
+                state_buffer .= 0.0
+            end
+
+            pdf_global_indices = get_global_indices((coords.vpa, coords.vperp, coords.z))
+            moments_global_indices = get_global_indices(precon.n_entries - 1, (coords.z,))
+            @debug_shared_array begin
+                # Cannot convert DebugMPISharedArray to Vector, which
+                # MPIStaticCondensations requires for the indices. The indices will only
+                # be read, so should be safe to unwrap the arrays here.
+                pdf_global_indices = pdf_global_indices.data
+                moments_global_indices = moments_global_indices.data
+            end
+
+            dfn_coords = [coords.vpa, coords.vperp, coords.z]
+            mpisc_dims =
+                get_MPIStaticCondensations_Dimensions_from_coordinates(dfn_coords)
+            function precon_allocate_shared_float(dim_sizes...; comm=nothing)
+                if comm === nothing
+                    this_comm = comm_anyzv_subblock[]
+                else
+                    this_comm = comm
+                end
+                return allocate_shared_float(ntuple(i->(Symbol("static_condensation$i")=>dim_sizes[i]),
+                                                    length(dim_sizes))...; comm=comm)
+            end
+            function precon_allocate_shared_int(dim_sizes...; comm=nothing)
+                if comm === nothing
+                    this_comm = comm_anyzv_subblock[]
+                else
+                    this_comm = comm
+                end
+                return allocate_shared_int(ntuple(i->(Symbol("static_condensation$i")=>dim_sizes[i]),
+                                                  length(dim_sizes))...; comm=comm)
+            end
+            # External package MPIStaticCondensations cannot use our macro
+            # @_anyzv_subblock_synchronize() to retrieve line numbers, so (if using
+            # @debug_block_synchronize_quick) get a hash for the location of the following
+            # line, and pass that instead.
+            fake_call_site = @debug_block_synchronize_quick_ifelse(
+                                 hash(string(@__FILE__, @__LINE__)),
+                                 nothing
+                                )
+            precon_synchronize = () -> _anyzv_subblock_synchronize(fake_call_site)
+            if timeit_debug_enabled()
+                precon_timer = global_timer
+            else
+                precon_timer = nothing
+            end
+            precon_check_lu = @debug_consistency_checks_ifelse(true, false)
+            static_condensation_factorization = mpi_static_condensation(
+                                                    mpisc_dims;
+                                                    variable_dimensions=tuple(nothing, ([length(mpisc_dims)] for v ∈ 2:precon.n_entries)...),
+                                                    #block_sizes_heuristic=nl_solver_input.MPIStaticCondensation_block_sizes_heuristic,
+                                                    reduce_proc_count_with_blocks=nl_solver_input.MPIStaticCondensation_reduce_proc_count_with_blocks,
+                                                    sparse_C_blocks=nl_solver_input.MPIStaticCondensation_sparse_C_blocks,
+                                                    reduce_dense_boundaries_memory=nl_solver_input.MPIStaticCondensation_reduce_dense_boundaries_memory,
+                                                    comm=comm_world,
+                                                    distributed_comm=coords.z.comm,
+                                                    shared_comm=comm_anyzv_subblock[],
+                                                    allocate_shared_float=precon_allocate_shared_float,
+                                                    allocate_shared_int=precon_allocate_shared_int,
+                                                    synchronize_shared=precon_synchronize,
+                                                    timer=precon_timer,
+                                                    check_lu=precon_check_lu)
+
+            return static_condensation_factorization, precon, state_buffer
+        end
+        preconditioners = [get_static_condensation_precon() for _ ∈ CartesianIndices(reverse(outer_coord_sizes))]
+    elseif preconditioner_type === Val(:electron_lu_separate_dp_dz_dq_dz)
         pdf_plus_p_plus_constraints_size = total_size_coords + coords.z.n + 6 * coords.z.n
         preconditioners = [(lu(sparse(1.0*I, 1, 1)),
                             create_jacobian_info(coords, spectral;
+                                                 blockskyline_storage=has_diss,
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  handle_overlaps=Val(false),
@@ -1052,6 +1156,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
         pdf_plus_p_plus_constraints_size = total_size_coords + coords.z.n + 4 * coords.z.n
         preconditioners = [(lu(sparse(1.0*I, 1, 1)),
                             create_jacobian_info(coords, spectral;
+                                                 blockskyline_storage=has_diss,
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  handle_overlaps=Val(false),
@@ -1081,6 +1186,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
         pdf_plus_p_plus_constraints_size = total_size_coords + coords.z.n + coords.z.n
         preconditioners = [(lu(sparse(1.0*I, 1, 1)),
                             create_jacobian_info(coords, spectral;
+                                                 blockskyline_storage=true,
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  handle_overlaps=Val(false),
@@ -1107,6 +1213,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
         pdf_plus_p_size = total_size_coords + coords.z.n
         preconditioners = [(lu(sparse(1.0*I, 1, 1)),
                             create_jacobian_info(coords, spectral;
+                                                 blockskyline_storage=true,
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  handle_overlaps=Val(false),
@@ -1139,6 +1246,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
             v_solve_buffer = allocate_float(v_solve_n)
             v_solve_buffer2 = allocate_float(v_solve_n)
             v_solve_jacobian = create_jacobian_info(coords, spectral;
+                                                    blockskyline_topleft=true,
                                                     comm=nothing,
                                                     synchronize=nothing,
                                                     handle_overlaps=Val(false),
@@ -1165,12 +1273,14 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
             z_solve_buffer = allocate_float(z_solve_n)
             z_solve_buffer2 = allocate_float(z_solve_n)
             z_solve_jacobian = create_jacobian_info(coords, spectral; comm=nothing,
+                                                    blockskyline_topleft=true,
                                                     synchronize=nothing,
                                                     handle_overlaps=Val(false),
                                                     boundary_skip_funcs=boundary_skip_funcs.z_solve,
                                                     both_zero_flags=both_zero_flags,
                                                     electron_pdf=(nothing,(:z,), false))
             z_solve_jacobian_p = create_jacobian_info(coords, spectral; comm=nothing,
+                                                      blockskyline_topleft=true,
                                                       synchronize=nothing,
                                                       handle_overlaps=Val(false),
                                                       boundary_skip_funcs=boundary_skip_funcs.z_solve,
@@ -1178,6 +1288,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
                                                       electron_p=(nothing,(:z,), false))
 
             explicit_jacobian = create_jacobian_info(coords, spectral; comm=comm_anyzv_subblock[],
+                                                     blockskyline_topleft=true,
                                                      synchronize=_anyzv_subblock_synchronize,
                                                      handle_overlaps=Val(false),
                                                      boundary_skip_funcs=boundary_skip_funcs.full,
@@ -1233,6 +1344,216 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
     return preconditioners
 end
 
+@kwdef @concrete struct kinetic_electron_recalculate_static_condensation!
+    nl_solver_params
+    f_electron_new
+    electron_p_new
+    moments
+    this_phi
+    collisions
+    composition
+    z
+    vperp
+    vpa
+    z_spectral
+    vperp_spectral
+    vpa_spectral
+    z_advect
+    vperp_advect
+    vpa_advect
+    scratch_dummy
+    external_source_settings
+    num_diss_params
+    t_params
+    ion_dt
+    evolve_p::Bool
+    add_identity::Bool
+    ir::mk_int
+end
+
+@timeit global_timer (recalc::kinetic_electron_recalculate_static_condensation!)() = begin
+    nl_solver_params = recalc.nl_solver_params
+    f_electron_new = recalc.f_electron_new
+    electron_p_new = recalc.electron_p_new
+    moments = recalc.moments
+    this_phi = recalc.this_phi
+    collisions = recalc.collisions
+    composition = recalc.composition
+    z = recalc.z
+    vperp = recalc.vperp
+    vpa = recalc.vpa
+    z_spectral = recalc.z_spectral
+    vperp_spectral = recalc.vperp_spectral
+    vpa_spectral = recalc.vpa_spectral
+    z_advect = recalc.z_advect
+    vperp_advect = recalc.vperp_advect
+    vpa_advect = recalc.vpa_advect
+    scratch_dummy = recalc.scratch_dummy
+    external_source_settings = recalc.external_source_settings
+    num_diss_params = recalc.num_diss_params
+    t_params = recalc.t_params
+    ion_dt = recalc.ion_dt
+    evolve_p = recalc.evolve_p
+    add_identity = recalc.add_identity
+    ir = recalc.ir
+
+global_rank[] == 0 && println("recalculating precon")
+
+    nl_solver_params.solves_since_precon_update[] = 0
+    nl_solver_params.precon_dt[] = t_params.dt[]
+
+    static_condensation_factorization, precon, state_buffer =
+        nl_solver_params.preconditioners[ir]
+
+    fill_electron_kinetic_equation_Jacobian!(
+        precon, f_electron_new, electron_p_new, moments, this_phi, collisions,
+        composition, z, vperp, vpa, z_spectral, vperp_spectral, vpa_spectral,
+        z_advect, vperp_advect, vpa_advect, scratch_dummy, external_source_settings,
+        num_diss_params, t_params, ion_dt, ir, evolve_p, :all, true, add_identity)
+
+    @timeit global_timer "lu!" lu!(static_condensation_factorization, precon.matrix)
+
+    nl_solver_params.preconditioners[ir] =
+        (static_condensation_factorization, precon, state_buffer)
+
+    return nothing
+end
+
+@kwdef @concrete struct kinetic_electron_static_condensation_precon!
+    nl_solver_params
+    scratch_dummy
+    buffer_1
+    buffer_2
+    buffer_3
+    buffer_4
+    z
+    ir::mk_int
+end
+
+@timeit global_timer (static_condensation_pre::kinetic_electron_static_condensation_precon!)(x) = begin
+    nl_solver_params = static_condensation_pre.nl_solver_params
+    scratch_dummy = static_condensation_pre.scratch_dummy
+    buffer_1 = static_condensation_pre.buffer_1
+    buffer_2 = static_condensation_pre.buffer_2
+    buffer_3 = static_condensation_pre.buffer_3
+    buffer_4 = static_condensation_pre.buffer_4
+    z = static_condensation_pre.z
+    ir = static_condensation_pre.ir
+
+    precon_p, precon_f = x
+
+    static_condensation_factorization, precon, state_buffer =
+        nl_solver_params.preconditioners[ir]
+
+    state_vector_sizes = precon.state_vector_sizes
+    state_vector_local_flattened_ranges = precon.state_vector_local_flattened_ranges
+
+    @_anyzv_subblock_synchronize()
+    for i ∈ state_vector_local_flattened_ranges[1]
+        state_buffer[i] = precon_f[i]
+    end
+    @_anyzv_subblock_synchronize()
+    offset = state_vector_sizes[1]
+
+    @begin_anyzv_z_region()
+    @loop_z iz begin
+        state_buffer[offset+iz] = precon_p[iz]
+    end
+    # Zero out the remaining entries, which correspond to moment constraints as the buffer
+    # entries may have been set to non-zero values by previous solves.
+    for i ∈ 3:precon.n_entries
+        offset += state_vector_sizes[i-1]
+        @loop_z iz begin
+            state_buffer[iz+offset] = 0.0
+        end
+    end
+
+    @timeit global_timer "ldiv!" ldiv!(static_condensation_factorization, state_buffer)
+
+    @_anyzv_subblock_synchronize()
+    for i ∈ state_vector_local_flattened_ranges[1]
+        precon_f[i] = state_buffer[i]
+    end
+    @_anyzv_subblock_synchronize()
+    offset = state_vector_sizes[1]
+
+    @begin_anyzv_z_region()
+    @loop_z iz begin
+        precon_p[iz] = state_buffer[offset+iz]
+    end
+
+    # Don't think the following is necessary when using MPIStaticCondensations for the
+    # preconditioner solve, but just comment out in case it turns out to be needed in
+    # future (bitwise consistency of repeated/overlapping entries in the result seems to
+    # depend on the algorithm used in `mul!()` - probably coming from BLAS - which might
+    # change in future or on different platforms).
+    ## Ensure values of precon_f and precon_p are consistent across
+    ## distributed-MPI block boundaries. For precon_f take the upwind
+    ## value, and for precon_p take the average.
+    #f_lower_endpoints = @view scratch_dummy.buffer_vpavperpr_1[:,:,ir]
+    #f_upper_endpoints = @view scratch_dummy.buffer_vpavperpr_2[:,:,ir]
+    #receive_buffer1 = @view scratch_dummy.buffer_vpavperpr_3[:,:,ir]
+    #receive_buffer2 = @view scratch_dummy.buffer_vpavperpr_4[:,:,ir]
+    #@begin_anyzv_vperp_vpa_region()
+    #@loop_vperp_vpa ivperp ivpa begin
+    #    f_lower_endpoints[ivpa,ivperp] = precon_f[ivpa,ivperp,1]
+    #    f_upper_endpoints[ivpa,ivperp] = precon_f[ivpa,ivperp,end]
+    #end
+    ## We upwind the z-derivatives in `electron_z_advection!()`, so would
+    ## expect that upwinding the results here in z would make sense.
+    ## However, upwinding here makes convergence much slower (~10x),
+    ## compared to picking the values from one side or other of the block
+    ## boundary, or taking the average of the values on either side.
+    ## Neither direction is special, so taking the average seems most
+    ## sensible (although in an intial test it does not seem to converge
+    ## faster than just picking one or the other).
+    ## Maybe this could indicate that it is more important to have a fully
+    ## self-consistent Jacobian inversion for the
+    ## `electron_vpa_advection()` part rather than taking half(ish) of the
+    ## values from one block and the other half(ish) from the other.
+    #reconcile_element_boundaries_MPI_z_pdf_vpavperpz!(
+    #    precon_f, f_lower_endpoints, f_upper_endpoints, receive_buffer1,
+    #    receive_buffer2, z)
+
+    #@begin_anyzv_region()
+    #@anyzv_serial_region begin
+    #    buffer_1[] = precon_p[1]
+    #    buffer_2[] = precon_p[end]
+    #end
+    #reconcile_element_boundaries_MPI_anyzv!(
+    #    precon_p, buffer_1, buffer_2, buffer_3, buffer_4, z)
+
+    return nothing
+end
+
+function get_electron_static_condensation_preconditioner(
+             nl_solver_params, f_electron_new, electron_p_new, buffer_1, buffer_2,
+             buffer_3, buffer_4, electron_density, electron_upar, this_phi, moments,
+             collisions, composition, z, vperp, vpa, z_spectral, vperp_spectral,
+             vpa_spectral, z_advect, vperp_advect, vpa_advect, scratch_dummy,
+             external_source_settings, num_diss_params, t_params, ion_dt, ir, evolve_p,
+             add_identity=true)
+
+    recalculate_static_condensation_preconditioner! =
+        kinetic_electron_recalculate_static_condensation!(;
+            nl_solver_params, f_electron_new, electron_p_new, moments, this_phi,
+            collisions, composition, z, vperp, vpa, z_spectral, vperp_spectral,
+            vpa_spectral, z_advect, vperp_advect, vpa_advect, scratch_dummy,
+            external_source_settings, num_diss_params, t_params, ion_dt, evolve_p,
+            add_identity, ir)
+
+    static_condensation_precon! =
+        kinetic_electron_static_condensation_precon!(; nl_solver_params, scratch_dummy,
+                                                     buffer_1, buffer_2, buffer_3,
+                                                     buffer_4, z, ir)
+
+    left_preconditioner = identity
+    right_preconditioner = static_condensation_precon!
+
+    return left_preconditioner, right_preconditioner,
+           recalculate_static_condensation_preconditioner!
+end
+
 @kwdef @concrete struct kinetic_electron_recalculate_lu!
     nl_solver_params
     f_electron_new
@@ -1260,7 +1581,7 @@ end
     ir::mk_int
 end
 
-function (recalc::kinetic_electron_recalculate_lu!)()
+@timeit global_timer (recalc::kinetic_electron_recalculate_lu!)() = begin
     nl_solver_params = recalc.nl_solver_params
     f_electron_new = recalc.f_electron_new
     electron_p_new = recalc.electron_p_new
@@ -1305,7 +1626,7 @@ global_rank[] == 0 && println("recalculating precon")
         if size(orig_lu) == (1, 1)
             # Have not properly created the LU decomposition before, so
             # cannot reuse it.
-            @timeit_debug global_timer "lu" nl_solver_params.preconditioners[ir] =
+            @timeit global_timer "lu" nl_solver_params.preconditioners[ir] =
                 (lu(get_sparse_joined_array(precon)), precon, input_buffer,
                  output_buffer)
         else
@@ -1313,14 +1634,14 @@ global_rank[] == 0 && println("recalculating precon")
             # has the same sparsity pattern, so by using `lu!()` we can
             # reuse some setup.
             try
-                @timeit_debug global_timer "lu!" lu!(orig_lu, get_sparse_joined_array(precon); check=false)
+                @timeit global_timer "lu!" lu!(orig_lu, get_sparse_joined_array(precon); check=false)
             catch e
                 if !isa(e, ArgumentError)
                     rethrow(e)
                 end
                 println("Sparsity pattern of matrix changed, rebuilding "
                         * "LU from scratch")
-                @timeit_debug global_timer "lu" orig_lu = lu(get_sparse_joined_array(precon))
+                @timeit global_timer "lu" orig_lu = lu(get_sparse_joined_array(precon))
             end
             nl_solver_params.preconditioners[ir] =
                 (orig_lu, precon, input_buffer, output_buffer)
@@ -1344,7 +1665,7 @@ end
     ir::mk_int
 end
 
-@timeit_debug global_timer (lu_pre::kinetic_electron_lu_precon!)(x) = begin
+@timeit global_timer (lu_pre::kinetic_electron_lu_precon!)(x) = begin
     nl_solver_params = lu_pre.nl_solver_params
     scratch_dummy = lu_pre.scratch_dummy
     buffer_1 = lu_pre.buffer_1
@@ -1392,7 +1713,7 @@ end
 
     @begin_anyzv_region()
     @anyzv_serial_region begin
-        @timeit_debug global_timer "ldiv!" ldiv!(this_output_buffer, precon_lu, this_input_buffer)
+        @timeit global_timer "ldiv!" ldiv!(this_output_buffer, precon_lu, this_input_buffer)
     end
 
     @begin_anyzv_region()
@@ -1505,7 +1826,7 @@ end
     add_identity::Bool
 end
 
-function (recalc_adi::kinetic_electron_recalculate_adi!)()
+@timeit global_timer (recalc_adi::kinetic_electron_recalculate_adi!)() = begin
     nl_solver_params = recalc_adi.nl_solver_params
     f_electron_new = recalc_adi.f_electron_new
     electron_p_new = recalc_adi.electron_p_new
@@ -1782,7 +2103,7 @@ end
     scratch_dummy
 end
 
-@timeit_debug global_timer (adi_pre::kinetic_electron_adi_precon!)(x) = begin
+@timeit global_timer (adi_pre::kinetic_electron_adi_precon!)(x) = begin
     nl_solver_params = adi_pre.nl_solver_params
     z = adi_pre.z
     vperp = adi_pre.vperp
@@ -2017,10 +2338,18 @@ function get_electron_preconditioner(nl_solver_params, f_electron_new, electron_
                                      vpa_advect, scratch_dummy, external_source_settings,
                                      num_diss_params, t_params, ion_dt, ir, evolve_p,
                                      add_identity=true)
-    if nl_solver_params.preconditioner_type ∈ (Val(:electron_lu_no_separate_moments),
-                                               Val(:electron_lu_separate_third_moment),
-                                               Val(:electron_lu),
-                                               Val(:electron_lu_separate_dp_dz_dq_dz))
+    if nl_solver_params.preconditioner_type === Val(:electron_static_condensation)
+        return get_electron_static_condensation_preconditioner(
+                   nl_solver_params, f_electron_new, electron_p_new, buffer_1, buffer_2,
+                   buffer_3, buffer_4, electron_density, electron_upar, this_phi, moments,
+                   collisions, composition, z, vperp, vpa, z_spectral, vperp_spectral,
+                   vpa_spectral, z_advect, vperp_advect, vpa_advect, scratch_dummy,
+                   external_source_settings, num_diss_params, t_params, ion_dt, ir,
+                   evolve_p, add_identity)
+    elseif nl_solver_params.preconditioner_type ∈ (Val(:electron_lu_no_separate_moments),
+                                                   Val(:electron_lu_separate_third_moment),
+                                                   Val(:electron_lu),
+                                                   Val(:electron_lu_separate_dp_dz_dq_dz))
         return get_electron_lu_preconditioner(nl_solver_params, f_electron_new,
                                               electron_p_new, buffer_1, buffer_2,
                                               buffer_3, buffer_4, electron_density,
@@ -3744,12 +4073,18 @@ boundary condition on those entries of δg (when the right-hand-side is set to z
                        vpa, vpa_spectral)
 
             # Reverse the sign of the elements we just filled
-            jacobian_zbegin[sigma_ind:last_nonzero_ind,1:sigma_ind-1] .*= -1.0
+            for col ∈ 1:sigma_ind-1, row ∈ sigma_ind:last_nonzero_ind
+                jacobian_zbegin[row,col] *= -1.0
+            end
 
             if plus_vcut_fraction > 0.5
-                jacobian_zbegin[last_nonzero_ind,1:sigma_ind-1] .*= plus_vcut_fraction - 0.5
+                for col ∈ 1:sigma_ind-1
+                    jacobian_zbegin[last_nonzero_ind,col] *= plus_vcut_fraction - 0.5
+                end
             else
-                jacobian_zbegin[last_nonzero_ind,1:sigma_ind-1] .*= plus_vcut_fraction + 0.5
+                for col ∈ 1:sigma_ind-1
+                    jacobian_zbegin[last_nonzero_ind,col] *= plus_vcut_fraction + 0.5
+                end
             end
 
             # Fill in elements giving response to changes in electron_p
@@ -3933,7 +4268,7 @@ boundary condition on those entries of δg (when the right-hand-side is set to z
             # This term seems to have a very small contribution, and could probably be
             # skipped.
             A, B, C, D = correction_matrix \ [a2-a3, -b2-b3, c2-c3, -d2-d3]
-            @. jacobian_zbegin_p[output_range] *=
+            @views @. jacobian_zbegin_p[output_range] *=
                    1.0 +
                    (A
                     + B * v_over_vth
@@ -4237,12 +4572,18 @@ boundary condition on those entries of δg (when the right-hand-side is set to z
                        vpa, vpa_spectral)
 
             # Reverse the sign of the elements we just filled
-            jacobian_zend[first_nonzero_ind:sigma_ind,sigma_ind+1:end] .*= -1.0
+            for col ∈ sigma_ind+1:size(jacobian_zend, 2), row ∈ first_nonzero_ind:sigma_ind
+                jacobian_zend[row,col] *= -1.0
+            end
 
             if minus_vcut_fraction < 0.5
-                jacobian_zend[first_nonzero_ind,sigma_ind+1:end] .*= 0.5 - minus_vcut_fraction
+                for col ∈ sigma_ind+1:size(jacobian_zend, 2)
+                    jacobian_zend[first_nonzero_ind,col] *= 0.5 - minus_vcut_fraction
+                end
             else
-                jacobian_zend[first_nonzero_ind,sigma_ind+1:end] .*= 1.5 - minus_vcut_fraction
+                for col ∈ sigma_ind+1:size(jacobian_zend, 2)
+                    jacobian_zend[first_nonzero_ind,col] *= 1.5 - minus_vcut_fraction
+                end
             end
 
             # Fill in elements giving response to changes in electron_p
@@ -4428,7 +4769,7 @@ boundary condition on those entries of δg (when the right-hand-side is set to z
             # This term seems to have a very small contribution, and could probably be
             # skipped.
             A, B, C, D = correction_matrix \ [a2-a3, -b2-b3, c2-c3, -d2-d3]
-            @. jacobian_zend_p[output_range] *=
+            @views @. jacobian_zend_p[output_range] *=
                    1.0 +
                    (A
                     + B * v_over_vth
