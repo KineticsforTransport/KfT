@@ -165,6 +165,7 @@ function get_electron_Jacobian_matrix(run_directory; restart_time_index=1,
     jacobian = create_jacobian_info((; vpa=vpa, vperp=vperp, z=z),
                                     (; vpa=vpa_spectral, vperp=vperp_spectral,
                                      z=z_spectral);
+                                    blockskyline_storage=true,
                                     comm=comm_anyzv_subblock[],
                                     synchronize=_anyzv_subblock_synchronize,
                                     electron_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
