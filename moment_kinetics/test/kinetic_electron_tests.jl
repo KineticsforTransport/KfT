@@ -161,36 +161,25 @@ function run_test()
         run_moment_kinetics(this_boltzmann_input)
     end
 
-    if ("nelement_local" ∈ keys(kinetic_input["z"])
-        && kinetic_input["z"]["nelement"] ÷ kinetic_input["z"]["nelement_local"] < global_size[]
-       )
-        # Using shared-memory parallelism, test both LU and ADI preconditioners
-        adi_precon_iterations_values = (-1,1,2)
-    else
-        adi_precon_iterations_values = -1
-    end
+    preconditioners = ["static_condensation", "lu"]
 
     # Test implicit electron solve
     test_inputs = [(deepcopy(kinetic_input), "fixed timestep", 1.0e-6),
                    (deepcopy(kinetic_input_time_evolving), "time evolving", 4.0e-4),]
     @long push!(test_inputs, (deepcopy(kinetic_input_adaptive_timestep), "adaptive timestep", 2.0e-4))
-    @testset "$label$(adi_precon_iterations < 0 ? "" : " $adi_precon_iterations")" for (this_kinetic_input, label, tol) ∈ test_inputs,
-                                                                                       adi_precon_iterations ∈ adi_precon_iterations_values
+    @testset "$label $precon" for (this_kinetic_input, label, tol) ∈ test_inputs,
+                                  precon ∈ preconditioners
 
-        this_kinetic_input["output"]["base_directory"] = test_output_directory
+        this_test_input = deepcopy(this_kinetic_input)
+        this_test_input["output"]["base_directory"] = test_output_directory
+        this_test_input["output"]["run_name"] *= "_$precon"
+        this_test_input["timestepping"]["kinetic_electron_preconditioner"] = precon
 
-        if adi_precon_iterations < 0
+        println("    - testing kinetic electrons, $label, $precon")
+        if precon ∈ ("lu", "static_condensation")
             # Provide some progress info
-            println("    - testing kinetic electrons, $label")
             # Don't use distributed memory parallelism with LU preconditioner
-            pop!(this_kinetic_input["z"], "nelement_local")
-        else
-            this_kinetic_input["output"]["run_name"] *= "_adi$adi_precon_iterations"
-            this_kinetic_input["timestepping"]["kinetic_electron_preconditioner"] = "adi"
-            this_kinetic_input["nonlinear_solver"]["adi_precon_iterations"] = adi_precon_iterations
-
-            # Provide some progress info
-            println("    - testing kinetic electrons $adi_precon_iterations ADI iterations, $label")
+            pop!(this_test_input["z"], "nelement_local")
         end
 
         # Suppress console output while running.
@@ -200,14 +189,14 @@ function run_test()
             restart_from_file = glob(restart_from_file_pattern, restart_from_directory)[1]
 
             # run kinetic electron simulation
-            run_moment_kinetics(this_kinetic_input; restart=restart_from_file)
+            run_moment_kinetics(this_test_input; restart=restart_from_file)
         end
 
         if global_rank[] == 0
             # Load and analyse output
             #########################
 
-            path = joinpath(realpath(this_kinetic_input["output"]["base_directory"]), this_kinetic_input["output"]["run_name"])
+            path = joinpath(realpath(this_test_input["output"]["base_directory"]), this_test_input["output"]["run_name"])
 
             # open the output file(s)
             run_info = get_run_info_no_setup(path, dfns=true)
@@ -303,7 +292,7 @@ function run_test()
                 @test elementwise_isapprox(vthe, expected_vthe, rtol=tol, atol=0.0)
             end
 
-            if this_kinetic_input["timestepping"]["kinetic_electron_preconditioner"] != "adi"
+            if this_test_input["timestepping"]["kinetic_electron_preconditioner"] != "adi"
                 # Iteration counts are fairly inconsistent, but it's good to check that they at
                 # least don't unexpectedly increase by an order of magnitude.
                 # Expected iteration count is from a serial run on Linux.

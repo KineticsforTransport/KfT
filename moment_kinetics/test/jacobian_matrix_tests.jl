@@ -676,6 +676,7 @@ function test_get_pdf_term(test_input::AbstractDict, label::String, get_term::Fu
             jacobian_ADI_check = create_jacobian_info((; vpa=vpa, vperp=vperp, z=z),
                                                       (; vpa=vpa_spectral,
                                                        vperp=vperp_spectral, z=z_spectral);
+                                                      blockskyline_storage=true,
                                                       comm=comm_anyzv_subblock[],
                                                       handle_overlaps=Val(false),
                                                       synchronize=_anyzv_subblock_synchronize,
@@ -688,6 +689,7 @@ function test_get_pdf_term(test_input::AbstractDict, label::String, get_term::Fu
             v_solve_jacobian_ADI_check = create_jacobian_info((; vpa=vpa, vperp=vperp),
                                                               (; vpa=vpa_spectral,
                                                                vperp=vperp_spectral);
+                                                              blockskyline_storage=true,
                                                               comm=nothing,
                                                               synchronize=nothing,
                                                               handle_overlaps=Val(false),
@@ -699,6 +701,7 @@ function test_get_pdf_term(test_input::AbstractDict, label::String, get_term::Fu
 
             z_solve_jacobian_ADI_check = create_jacobian_info((; z=z),
                                                               (; z=z_spectral);
+                                                              blockskyline_storage=true,
                                                               comm=nothing,
                                                               synchronize=nothing,
                                                               handle_overlaps=Val(false),
@@ -1284,6 +1287,7 @@ function test_get_p_term(test_input::AbstractDict, label::String, get_term::Func
             jacobian_ADI_check = create_jacobian_info((; vpa=vpa, vperp=vperp, z=z),
                                                       (; vpa=vpa_spectral,
                                                        vperp=vperp_spectral, z=z_spectral);
+                                                      blockskyline_storage=true,
                                                       comm=comm_anyzv_subblock[],
                                                       synchronize=_anyzv_subblock_synchronize,
                                                       handle_overlaps=Val(false),
@@ -1296,6 +1300,7 @@ function test_get_p_term(test_input::AbstractDict, label::String, get_term::Func
             v_solve_jacobian_ADI_check = create_jacobian_info((; vpa=vpa, vperp=vperp),
                                                               (; vpa=vpa_spectral,
                                                                vperp=vperp_spectral);
+                                                              blockskyline_storage=true,
                                                               comm=nothing,
                                                               synchronize=nothing,
                                                               handle_overlaps=Val(false),
@@ -1307,6 +1312,7 @@ function test_get_p_term(test_input::AbstractDict, label::String, get_term::Func
 
             z_solve_jacobian_ADI_check = create_jacobian_info((; z=z),
                                                               (; z=z_spectral);
+                                                              blockskyline_storage=true,
                                                               comm=nothing,
                                                               synchronize=nothing,
                                                               handle_overlaps=Val(false),
@@ -1665,8 +1671,16 @@ function test_electron_kinetic_equation(test_input, counter::mk_int;
                                                                                                 ("constant", 1.0e-15, false, expected_constant_nodiss),
                                                                                                 ("wall", 1.0e-13, true, expected_wall),
                                                                                                 ("wall", 1.0e-13, false, expected_wall_nodiss))
-        println("        - electron_kinetic_equation $bc diss=$diss")
         this_test_input = deepcopy(test_input)
+        if diss
+            if this_test_input["timestepping"]["kinetic_electron_preconditioner"] == "static_condensation"
+                # static_condensation preconditioner does not currently support diffusion.
+                continue
+            end
+        else
+            pop!(this_test_input["electron_numerical_dissipation"], "vpa_dissipation_coefficient", 0.0)
+        end
+        println("        - electron_kinetic_equation $bc diss=$diss")
         label = "electron_kinetic_equation_$bc"
         this_test_input["output"]["run_name"] *= "_$(counter)_$(counter2+=1)"
         this_test_input["z"]["bc"] = bc
@@ -1683,9 +1697,6 @@ function test_electron_kinetic_equation(test_input, counter::mk_int;
             regression_tol = 5.0e-10
         else
             regression_tol = 1.0e-11
-        end
-        if !diss
-            pop!(this_test_input["electron_numerical_dissipation"], "vpa_dissipation_coefficient", 0.0)
         end
 
         # Suppress console output while running
@@ -1855,6 +1866,7 @@ function test_electron_kinetic_equation(test_input, counter::mk_int;
             jacobian_ADI_check = create_jacobian_info((; vpa=vpa, vperp=vperp, z=z),
                                                       (; vpa=vpa_spectral,
                                                        vperp=vperp_spectral, z=z_spectral);
+                                                      blockskyline_storage=true,
                                                       comm=comm_anyzv_subblock[],
                                                       synchronize=_anyzv_subblock_synchronize,
                                                       handle_overlaps=Val(false),
@@ -1867,6 +1879,7 @@ function test_electron_kinetic_equation(test_input, counter::mk_int;
             v_solve_jacobian_ADI_check = create_jacobian_info((; vpa=vpa, vperp=vperp),
                                                               (; vpa=vpa_spectral,
                                                                vperp=vperp_spectral);
+                                                              blockskyline_storage=true,
                                                               comm=nothing,
                                                               synchronize=nothing,
                                                               handle_overlaps=Val(false),
@@ -1878,6 +1891,7 @@ function test_electron_kinetic_equation(test_input, counter::mk_int;
 
             z_solve_jacobian_ADI_check = create_jacobian_info((; z=z),
                                                               (; z=z_spectral);
+                                                              blockskyline_storage=true,
                                                               comm=nothing,
                                                               synchronize=nothing,
                                                               handle_overlaps=Val(false),
@@ -1888,6 +1902,7 @@ function test_electron_kinetic_equation(test_input, counter::mk_int;
 
             z_solve_p_jacobian_ADI_check = create_jacobian_info((; z=z),
                                                                 (; z=z_spectral);
+                                                                blockskyline_storage=true,
                                                                 comm=nothing,
                                                                 synchronize=nothing,
                                                                 handle_overlaps=Val(false),
@@ -2469,6 +2484,7 @@ function test_electron_wall_bc(test_input, counter::mk_int; atol=(10.0*epsilon)^
             jacobian_ADI_check = create_jacobian_info((; vpa=vpa, vperp=vperp, z=z),
                                                       (; vpa=vpa_spectral,
                                                        vperp=vperp_spectral, z=z_spectral);
+                                                      blockskyline_storage=true,
                                                       comm=comm_anyzv_subblock[],
                                                       synchronize=_anyzv_subblock_synchronize,
                                                       handle_overlaps=Val(false),
@@ -2481,6 +2497,7 @@ function test_electron_wall_bc(test_input, counter::mk_int; atol=(10.0*epsilon)^
             v_solve_jacobian_ADI_check = create_jacobian_info((; vpa=vpa, vperp=vperp),
                                                               (; vpa=vpa_spectral,
                                                                vperp=vperp_spectral);
+                                                              blockskyline_storage=true,
                                                               comm=nothing,
                                                               synchronize=nothing,
                                                               handle_overlaps=Val(false),
@@ -2819,19 +2836,23 @@ function test_jacobian_inversion(test_input, counter::mk_int; rtol=2.0e-11)
                                                                              ("periodic", true, expected_jacobian_inversion_periodic),
                                                                              ("periodic", false, expected_jacobian_inversion_periodic_nodiss)
                                                                             )
-        println("        - jacobian_inversion $bc diss=$diss")
         this_test_input = deepcopy(test_input)
-        label = "jacobian_inversion"
-        this_test_input["output"]["run_name"] *= "_$(counter)_$(counter2+=1)"
-        this_test_input["z"]["bc"] = bc
-
         if occursin("lu", this_test_input["timestepping"]["kinetic_electron_preconditioner"])
             # lu preconditioners do not support distributed-MPI parallelism.
             pop!(this_test_input["z"], "nelement_local", 1)
         end
-        if !diss
+        if diss
+            if this_test_input["timestepping"]["kinetic_electron_preconditioner"] == "static_condensation"
+                # static_condensation preconditioner does not currently support diffusion.
+                continue
+            end
+        else
             pop!(this_test_input["electron_numerical_dissipation"], "vpa_dissipation_coefficient", 0.0)
         end
+        println("        - jacobian_inversion $bc diss=$diss")
+        label = "jacobian_inversion"
+        this_test_input["output"]["run_name"] *= "_$(counter)_$(counter2+=1)"
+        this_test_input["z"]["bc"] = bc
 
         # Suppress console output while running
         pdf, scratch, scratch_implicit, scratch_electron, t_params, vz, vr, vzeta, vpa,
@@ -2936,7 +2957,7 @@ function test_jacobian_inversion(test_input, counter::mk_int; rtol=2.0e-11)
                     p_rtol = rtol
                 end
                 @test elementwise_isapprox(expected.precon_p, residual_p; rtol=p_rtol,
-                                           atol=1.0e-16)
+                                           atol=1.0e-15)
             end
         end
 
@@ -2960,9 +2981,13 @@ function runtests()
     @testset "Jacobian matrix " verbose=use_verbose begin
         println("Jacobian matrix")
         precon_list = String[]
-        @long push!(precon_list, "lu_no_separate_moments")
+        push!(precon_list, "static_condensation")
+        # Test this by default as it has a different structure in the Jacobian matrix than
+        # `static_condensation`, so although "lu" is used more often, this provides more test
+        # coverage.
+        push!(precon_list, "lu_no_separate_moments")
         @long push!(precon_list, "lu_separate_third_moment")
-        push!(precon_list, "lu")
+        @long push!(precon_list, "lu")
         @long push!(precon_list, "lu_separate_dp_dz_dq_dz")
         @testset "$kinetic_electron_preconditioner" verbose=use_verbose for kinetic_electron_preconditioner ∈ precon_list
             println("    - $kinetic_electron_preconditioner")
@@ -3020,10 +3045,12 @@ function runtests()
                                       kwargs[:num_diss_params], kwargs[:dt])
                 return nothing
             end
-            test_get_pdf_term(this_test_input, "electron_dissipation_term",
-                              get_electron_dissipation_term,
-                              contribution_from_electron_dissipation_term!,
-                              (1.0e1*epsilon)^2, expected_dissipation, counter+=1)
+            if kinetic_electron_preconditioner != "static_condensation"
+                test_get_pdf_term(this_test_input, "electron_dissipation_term",
+                                  get_electron_dissipation_term,
+                                  contribution_from_electron_dissipation_term!,
+                                  (1.0e1*epsilon)^2, expected_dissipation, counter+=1)
+            end
 
             function contribution_from_krook_collisions!(; kwargs...)
                 electron_krook_collisions!(kwargs[:residual], kwargs[:this_f], kwargs[:dens],

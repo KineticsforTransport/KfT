@@ -527,7 +527,8 @@ function setup_time_info(t_input, n_variables, code_time, dt_reload,
         if kinetic_electron_solver ∈ (implicit_time_evolving,
                                       implicit_p_implicit_pseudotimestep,
                                       implicit_steady_state)
-            electron_precon_types = Dict("lu_no_separate_moments" => :electron_lu_no_separate_moments,
+            electron_precon_types = Dict("static_condensation" => :electron_static_condensation,
+                                         "lu_no_separate_moments" => :electron_lu_no_separate_moments,
                                          "lu_separate_third_moment" => :electron_lu_separate_third_moment,
                                          "lu" => :electron_lu,
                                          "lu_separate_dp_dz_dq_dz" => :electron_lu_separate_dp_dz_dq_dz,
@@ -646,6 +647,10 @@ function get_nl_solver_params(t_params, input_dict, composition, num_diss_params
         preconditioner_update_interval=300,
         total_its_soft_limit=50,
         adi_precon_iterations=1,
+        #MPIStaticCondensation_block_sizes_heuristic=, # Would need to do something to convert, e.g., String option to MPIStaticCondensations.BlockSizesHeuristic objects or Vector{Vector{mk_int}}...
+        MPIStaticCondensation_reduce_proc_count_with_blocks=false,
+        MPIStaticCondensation_sparse_C_blocks=true,
+        MPIStaticCondensation_reduce_dense_boundaries_memory=true,
        )
 
     nl_solver_input = Dict_to_NamedTuple(nl_solver_section)
