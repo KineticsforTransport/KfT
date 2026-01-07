@@ -34,6 +34,13 @@ using UUIDs
 
 function __init__()
     try
+        # Try to load the ADIOS2 package.  If the package is not installed, then
+        # ADIOS2 I/O will not be available.
+        Base.require(Main, :ADIOS2)
+    catch
+        # Do nothing
+    end
+    try
         # Try to load the NCDatasets package.  If the package is not installed, then
         # NetCDF I/O will not be available.
         Base.require(Main, :NCDatasets)
@@ -601,7 +608,7 @@ function setup_electron_io(io_input, vpa, vperp, z, r, composition, collisions,
                                           description="electrostatic potential",
                                           units="T_ref/e")
 
-        close(fid)
+        io_close(fid)
 
         return file_info
     end
@@ -687,6 +694,17 @@ function reopen_initial_electron_io(file_info, ir)
 
     # For processes other than the root process of each shared-memory group...
     return nothing
+end
+
+function io_finalize!(file_info::Tuple{String,io_input_struct,MPI.Comm})
+    # Nothing to do in default case. Function is defined so that backends that need a more
+    # specialized version can define one.
+    return nothing
+end
+
+# Default implementation
+function io_close(fid)
+    return close(fid)
 end
 
 """
@@ -2148,6 +2166,9 @@ function reopen_output_file(filename, io_input, io_comm)
         check_io_implementation(hdf5)
         return open_output_file_implementation(Val(hdf5), prefix, io_input, io_comm,
                                                "r+")[1]
+    elseif format_string == ".bp"
+        check_io_implementation(adios)
+        return open_output_file_implementation(Val(adios), prefix, io_input, io_comm)[1]
     elseif format_string == ".cdf"
         check_io_implementation(netcdf)
         return open_output_file_implementation(Val(netcdf), prefix, io_input, io_comm,
@@ -2201,7 +2222,7 @@ function setup_moments_io(prefix, io_input, vz, vr, vzeta, vpa, vperp, r, z,
             io_input, external_source_settings, evolve_density, evolve_upar,
             evolve_p, composition.electron_physics, t_params, nl_solver_params)
 
-        close(fid)
+        io_close(fid)
 
         return file_info
     end
@@ -2377,7 +2398,7 @@ function setup_dfns_io(prefix, io_input, r, z, vperp, vpa, vzeta, vr, vz, compos
                                                 description="call-site label")
         end
 
-        close(fid)
+        io_close(fid)
 
         return file_info
     end
@@ -2612,7 +2633,7 @@ file
     end
 
     @serial_region begin
-        closefile && close(io_moments.fid)
+        closefile && io_close(io_moments.fid)
     end
 
     return timing_data_io_arrays
@@ -2989,8 +3010,8 @@ function write_final_timing_data_to_binary(io_or_file_info_moments, io_or_file_i
     dfns_timing_data_io_arrays = write_timing_data(io_dfns_moments, -1, true)
 
     @serial_region begin
-        closefile && close(io_moments.fid)
-        closefile && close(io_dfns.fid)
+        closefile && io_close(io_moments.fid)
+        closefile && io_close(io_dfns.fid)
     end
     return moments_timing_data_io_arrays, dfns_timing_data_io_arrays
 end
@@ -3487,7 +3508,7 @@ binary output file
         write_neutral_dfns_data_to_binary(scratch, t_params, n_neutral_species, io_dfns,
                                           t_idx, r, z, vzeta, vr, vz)
 
-        closefile && close(io_dfns.fid)
+        closefile && io_close(io_dfns.fid)
     end
     return nothing
 end
@@ -3724,7 +3745,7 @@ function write_electron_state(scratch_electron, moments, phi::AbstractMatrix{mk_
                            pdf_electron_converged)
         end
 
-        closefile && close(io_initial_electron.fid)
+        closefile && io_close(io_initial_electron.fid)
     end
 
     return nothing
@@ -3749,11 +3770,15 @@ function finish_file_io(ascii_io::Union{ascii_ios,Nothing},
                 end
             end
         end
-        if binary_moments !== nothing && !isa(binary_moments, Tuple)
-            close(binary_moments.fid)
+        if isa(binary_moments, Tuple)
+            io_finalize!(binary_moments)
+        elseif binary_moments !== nothing
+            io_close(binary_moments.fid)
         end
-        if binary_dfns !== nothing && !isa(binary_dfns, Tuple)
-            close(binary_dfns.fid)
+        if isa(binary_dfns, Tuple)
+            io_finalize!(binary_dfns)
+        elseif binary_dfns !== nothing
+            io_close(binary_dfns.fid)
         end
     end
     return nothing
@@ -3768,7 +3793,9 @@ function finish_electron_io(
     @serial_region begin
         # Only read/write from first process in each 'block'
 
-        if (binary_initial_electron !== nothing && !isa(binary_initial_electron, Tuple)
+        if isa(binary_initial_electron, Tuple)
+            io_finalize!(binary_initial_electron)
+        elseif (binary_initial_electron !== nothing
             && !isa(binary_initial_electron, Bool))
 
             close(binary_initial_electron.fid)
