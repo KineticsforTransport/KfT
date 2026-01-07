@@ -29,7 +29,7 @@ using ..em_fields: get_vEr, get_vEz
 using ..energy_equation: energy_equation!, neutral_energy_equation!
 using ..external_sources: setup_external_sources!
 using ..file_io: check_io_implementation, get_group, get_io_variable, get_subgroup_keys,
-                 get_variable_keys, io_close
+                 get_variable_keys
 using ..force_balance: force_balance!, neutral_force_balance!
 using ..input_structs
 using ..interpolation: interpolate_to_grid_1d!
@@ -164,10 +164,12 @@ function open_readonly_output_file(run_name, ext; iblock=0, printout=false)
     possible_names = (
         string(run_name, ".", ext, ".h5"),
         string(run_name, ".", ext, ".", iblock, ".h5"),
+        string(run_name, ".", ext, ".bp"),
+        string(run_name, ".", ext, ".", iblock, ".bp"),
         string(run_name, ".", ext, ".cdf"),
         string(run_name, ".", ext, ".", iblock, ".cdf"),
     )
-    existing_files = Tuple(f for f in possible_names if isfile(f))
+    existing_files = Tuple(f for f in possible_names if ispath(f))
     exists_count = length(existing_files)
     if exists_count == 0
         error("None of $possible_names exist, cannot open output")
@@ -178,21 +180,30 @@ function open_readonly_output_file(run_name, ext; iblock=0, printout=false)
     # Have checked there is only one filename in existing_files
     filename = existing_files[1]
 
-    if splitext(filename)[2] == ".h5"
+    file_ext = splitext(filename)[2]
+    if file_ext == ".h5"
         if printout
             print("Opening ", filename, " to read HDF5 data...")
         end
         # open the HDF5 file with given filename for reading
         check_io_implementation(hdf5)
         fid = open_file_to_read(Val(hdf5), filename)
-    else
+    elseif file_ext == ".bp"
+        if printout
+            print("Opening ", filename, " to read ADIOS2 data...")
+        end
+        # open the ADIOS2 file with given filename for reading
+        check_io_implementation(adios)
+        fid = open_file_to_read(Val(adios), filename)
+    elseif file_ext == ".cdf"
         if printout
             print("Opening ", filename, " to read NetCDF data...")
         end
-
         # open the netcdf file with given filename for reading
         check_io_implementation(netcdf)
         fid = open_file_to_read(Val(netcdf), filename)
+    else
+        error("Unrecognised file extension $file_ext.")
     end
     if printout
         println("done.")
@@ -3608,9 +3619,7 @@ function get_run_info_no_setup(run_dir::Union{AbstractString,Tuple{AbstractStrin
             while true
                 # Test if output files exist for this value of counter
                 prefix_with_count = base_prefix * "_$counter"
-                if length(glob(basename(prefix_with_count) * ".initial_electron*.h5", dirname(prefix_with_count))) > 0 ||
-                    length(glob(basename(prefix_with_count) * ".initial_electron*.cdf", dirname(prefix_with_count))) > 0
-
+                if length(glob(basename(prefix_with_count) * ".initial_electron*.*", dirname(prefix_with_count))) > 0
                     push!(run_prefixes, prefix_with_count)
                 else
                     # No more output files found
@@ -3622,11 +3631,7 @@ function get_run_info_no_setup(run_dir::Union{AbstractString,Tuple{AbstractStrin
             while true
                 # Test if output files exist for this value of counter
                 prefix_with_count = base_prefix * "_$counter"
-                if length(glob(basename(prefix_with_count) * ".dfns*.h5", dirname(prefix_with_count))) > 0 ||
-                    length(glob(basename(prefix_with_count) * ".dfns*.cdf", dirname(prefix_with_count))) > 0 ||
-                    length(glob(basename(prefix_with_count) * ".moments*.h5", dirname(prefix_with_count))) > 0 ||
-                    length(glob(basename(prefix_with_count) * ".moments*.cdf", dirname(prefix_with_count))) > 0
-
+                if length(glob(basename(prefix_with_count) * ".dfns*.*", dirname(prefix_with_count))) > 0
                     push!(run_prefixes, prefix_with_count)
                 else
                     # No more output files found
@@ -3656,8 +3661,7 @@ function get_run_info_no_setup(run_dir::Union{AbstractString,Tuple{AbstractStrin
         ext = "moments"
     end
 
-    has_data = all(length(glob(basename(p) * ".$ext*.h5", dirname(p))) > 0 ||
-                   length(glob(basename(p) * ".$ext*.cdf", dirname(p))) > 0
+    has_data = all(length(glob(basename(p) * ".$ext*.*", dirname(p))) > 0
                    for p ∈ run_prefixes)
     if !has_data
         println("No $ext data found for $run_prefixes, skipping $ext")
@@ -3789,7 +3793,7 @@ function get_run_info_no_setup(run_dir::Union{AbstractString,Tuple{AbstractStrin
     groups = get_subgroup_keys(fids0[1])
 
     pt_group = get_group(fids0[1], "provenance_tracking")
-    provenance_tracking = NamedTuple(Symbol(k) => pt_group[k][]
+    provenance_tracking = NamedTuple(Symbol(k) => load_variable(pt_group, k)
                                      for k ∈ get_variable_keys(pt_group))
 
     if parallel_io
@@ -4080,7 +4084,7 @@ function postproc_load_variable(run_info, variable_name; it=nothing, is=nothing,
                           * "restart, should have finished already")
                 elseif tind <= local_nt
                     # tind is within this restart's time range, so get result
-                    result .= v[slice_indices..., tind]
+                    result .= load_slice(v, slice_indices..., tind)
 
                     # Already got the data for `it`, so end loop
                     break
