@@ -4,6 +4,7 @@ module file_io
 
 export input_option_error
 export get_group
+export get_variable
 export open_output_file, open_ascii_output_file
 export setup_io_input
 export setup_file_io, finish_file_io
@@ -644,7 +645,7 @@ function reopen_initial_electron_io(file_info, ir)
         variable_list = get_variable_keys(dyn)
         function getvar(name)
             if name ∈ variable_list
-                return dyn[name]
+                return get_variable(dyn, name)
             else
                 return nothing
             end
@@ -688,6 +689,10 @@ function reopen_initial_electron_io(file_info, ir)
     return nothing
 end
 
+"""
+Get a variable from a file or group
+"""
+function get_variable end
 
 """
 Get a (sub-)group from a file or group
@@ -2222,16 +2227,16 @@ function reopen_moments_io(file_info)
         variable_list = get_variable_keys(dyn)
         function getvar(name)
             if name ∈ variable_list
-                return dyn[name]
+                return get_variable(dyn, name)
             elseif name == "nl_solver_diagnostics"
                 nl_names = (name for name ∈ variable_list
                             if occursin("_nonlinear_iterations", name))
                 nl_prefixes = (split(name, "_nonlinear_iterations")[1]
                                for name ∈ nl_names)
-                return NamedTuple(Symbol(term)=>(n_solves=dyn["$(term)_n_solves"],
-                                                 nonlinear_iterations=dyn["$(term)_nonlinear_iterations"],
-                                                 linear_iterations=dyn["$(term)_linear_iterations"],
-                                                 precon_iterations=dyn["$(term)_precon_iterations"])
+                return NamedTuple(Symbol(term)=>(n_solves=get_variable(dyn, "$(term)_n_solves"),
+                                                 nonlinear_iterations=get_variable(dyn, "$(term)_nonlinear_iterations"),
+                                                 linear_iterations=get_variable(dyn, "$(term)_linear_iterations"),
+                                                 precon_iterations=get_variable(dyn, "$(term)_precon_iterations"))
                                   for term ∈ nl_prefixes)
             else
                 return nothing
@@ -2299,8 +2304,9 @@ function reopen_moments_io(file_info)
                                getvar("electron_constraints_A_coefficient"),
                                getvar("electron_constraints_B_coefficient"),
                                getvar("electron_constraints_C_coefficient"),
-                               timing["time_for_run"], getvar("step_counter"),
-                               getvar("dt"), getvar("previous_dt"), getvar("failure_counter"),
+                               get_variable(timing, "time_for_run"),
+                               getvar("step_counter"), getvar("dt"),
+                               getvar("previous_dt"), getvar("failure_counter"),
                                getvar("dt_before_last_fail"),getvar("electron_step_counter"),
                                getvar("electron_cumulative_pseudotime"),
                                getvar("electron_dt"), getvar("electron_previous_dt"),
@@ -2397,16 +2403,16 @@ function reopen_dfns_io(file_info)
         variable_list = get_variable_keys(dyn)
         function getvar(name)
             if name ∈ variable_list
-                return dyn[name]
+                return get_variable(dyn, name)
             elseif name == "nl_solver_diagnostics"
                 nl_names = (name for name ∈ variable_list
                             if occursin("_nonlinear_iterations", name))
                 nl_prefixes = (split(name, "_nonlinear_iterations")[1]
                                for name ∈ nl_names)
-                return NamedTuple(Symbol(term)=>(n_solves=dyn["$(term)_n_solves"],
-                                                 nonlinear_iterations=dyn["$(term)_nonlinear_iterations"],
-                                                 linear_iterations=dyn["$(term)_linear_iterations"],
-                                                 precon_iterations=dyn["$(term)_precon_iterations"])
+                return NamedTuple(Symbol(term)=>(n_solves=get_variable(dyn, "$(term)_n_solves"),
+                                                 nonlinear_iterations=get_variable(dyn, "$(term)_nonlinear_iterations"),
+                                                 linear_iterations=get_variable(dyn, "$(term)_linear_iterations"),
+                                                 precon_iterations=get_variable(dyn, "$(term)_precon_iterations"))
                                   for term ∈ nl_prefixes)
             else
                 return nothing
@@ -2476,9 +2482,9 @@ function reopen_dfns_io(file_info)
                                      getvar("electron_constraints_A_coefficient"),
                                      getvar("electron_constraints_B_coefficient"),
                                      getvar("electron_constraints_C_coefficient"),
-                                     timing["time_for_run"], getvar("step_counter"),
-                                     getvar("dt"), getvar("previous_dt"),
-                                     getvar("failure_counter"),
+                                     get_variable(timing, "time_for_run"),
+                                     getvar("step_counter"), getvar("dt"),
+                                     getvar("previous_dt"), getvar("failure_counter"),
                                      getvar("dt_before_last_fail"),
                                      getvar("electron_step_counter"),
                                      getvar("electron_cumulative_pseudotime"),
@@ -2575,14 +2581,14 @@ file
             if "failure_caused_by_$k" ∉ dynamic_varnames
                 continue
             end
-            io_var = dynamic["failure_caused_by_$k"]
+            io_var = get_variable(dynamic, "failure_caused_by_$k")
             append_to_dynamic_var(io_var, v, t_idx, parallel_io; only_root=true)
         end
         for (k,v) ∈ pairs(t_params.limit_caused_by)
             if "limit_caused_by_$k" ∉ dynamic_varnames
                 continue
             end
-            io_var = dynamic["limit_caused_by_$k"]
+            io_var = get_variable(dynamic, "limit_caused_by_$k")
             append_to_dynamic_var(io_var, v, t_idx, parallel_io; only_root=true)
         end
         append_to_dynamic_var(io_moments.dt_before_last_fail,
@@ -3284,7 +3290,7 @@ function write_electron_moments_data_to_binary(scratch, moments, t_params, elect
                 # Only write these variables if they were created in the output file,
                 # because sometimes (e.g. for debug_io=true) they are not needed.
                 if k ∈ dynamic_keys
-                    io_var = dynamic["electron_failure_caused_by_$k"]
+                    io_var = get_variable(dynamic, "electron_failure_caused_by_$k")
                     append_to_dynamic_var(io_var, get_from_ir_1d(v), t_idx, parallel_io,
                                           r; only_root=only_root)
                 end
@@ -3293,7 +3299,7 @@ function write_electron_moments_data_to_binary(scratch, moments, t_params, elect
                 # Only write these variables if they were created in the output file,
                 # because sometimes (e.g. for debug_io=true) they are not needed.
                 if k ∈ dynamic_keys
-                    io_var = dynamic["electron_limit_caused_by_$k"]
+                    io_var = get_variable(dynamic, "electron_limit_caused_by_$k")
                     append_to_dynamic_var(io_var, get_from_ir_1d(v), t_idx, parallel_io,
                                           r; only_root=only_root)
                 end
