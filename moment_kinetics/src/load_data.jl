@@ -28,7 +28,8 @@ using ..electron_z_advection: update_electron_speed_z!
 using ..em_fields: get_vEr, get_vEz
 using ..energy_equation: energy_equation!, neutral_energy_equation!
 using ..external_sources: setup_external_sources!
-using ..file_io: check_io_implementation, get_group, get_subgroup_keys, get_variable_keys
+using ..file_io: check_io_implementation, get_group, get_io_variable, get_subgroup_keys,
+                 get_variable_keys, io_close
 using ..force_balance: force_balance!, neutral_force_balance!
 using ..input_structs
 using ..interpolation: interpolate_to_grid_1d!
@@ -339,7 +340,7 @@ function load_coordinate_data(fid, name; printout=false, irank=nothing, nrank=no
 
     if irank === nothing && nrank === nothing
         irank = load_variable(coord_group, "irank")
-        if "nrank" in keys(coord_group)
+        if "nrank" in get_variable_keys(coord_group)
             nrank = load_variable(coord_group, "nrank")
         else
             # Workaround for older output files that did not save nrank
@@ -387,20 +388,20 @@ function load_coordinate_data(fid, name; printout=false, irank=nothing, nrank=no
     # L = global box length
     input["L"] = load_variable(coord_group, "L")
     input["discretization"] = load_variable(coord_group, "discretization")
-    if "finite_difference_option" ∈ keys(coord_group)
+    if "finite_difference_option" ∈ get_variable_keys(coord_group)
         input["finite_difference_option"] = load_variable(coord_group, "finite_difference_option")
     else
         # Older output file
         input["finite_difference_option"] = load_variable(coord_group, "fd_option")
     end
-    if "cheb_option" ∈ keys(coord_group)
+    if "cheb_option" ∈ get_variable_keys(coord_group)
         input["cheb_option"] = load_variable(coord_group, "cheb_option")
     else
         # Old output file
         input["cheb_option"] = "FFT"
     end
     input["bc"] = load_variable(coord_group, "bc")
-    if "element_spacing_option" ∈ keys(coord_group)
+    if "element_spacing_option" ∈ get_variable_keys(coord_group)
         input["element_spacing_option"] = load_variable(coord_group, "element_spacing_option")
     else
         input["element_spacing_option"] = "uniform"
@@ -422,7 +423,7 @@ function load_run_info_history(fid)
                                            ignore_subsections=true)
 
     counter = 0
-    pt_keys = keys(provenance_tracking)
+    pt_keys = get_subgroup_keys(provenance_tracking)
     while "previous_run_$(counter+1)" ∈ pt_keys
         counter += 1
     end
@@ -459,7 +460,7 @@ function load_mk_options(fid)
 
     evolve_density = load_variable(overview, "evolve_density")
     evolve_upar = load_variable(overview, "evolve_upar")
-    if "evolve_p" ∈ keys(overview)
+    if "evolve_p" ∈ get_variable_keys(overview)
         evolve_p = load_variable(overview, "evolve_p")
     else
         # Older output file, before option was renamed
@@ -797,7 +798,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                                               coords, reload_ranges, restart_coords,
                                               interpolation_needed)
             if moments.evolve_density || moments.evolve_upar || moments.evolve_p
-                if "ion_constraints_A_coefficient" ∈ keys(dynamic)
+                if "ion_constraints_A_coefficient" ∈ get_variable_keys(dynamic)
                     moments.ion.constraints_A_coefficient .=
                         reload_moment("ion_constraints_A_coefficient", dynamic,
                                       time_index, coords, reload_ranges, restart_coords,
@@ -805,7 +806,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                 elseif moments.ion.constraints_A_coefficient !== nothing
                     moments.ion.constraints_A_coefficient .= 0.0
                 end
-                if "ion_constraints_B_coefficient" ∈ keys(dynamic)
+                if "ion_constraints_B_coefficient" ∈ get_variable_keys(dynamic)
                     moments.ion.constraints_B_coefficient .=
                         reload_moment("ion_constraints_B_coefficient", dynamic,
                                       time_index, coords, reload_ranges, restart_coords,
@@ -813,7 +814,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                 elseif moments.ion.constraints_B_coefficient !== nothing
                     moments.ion.constraints_B_coefficient .= 0.0
                 end
-                if "ion_constraints_C_coefficient" ∈ keys(dynamic)
+                if "ion_constraints_C_coefficient" ∈ get_variable_keys(dynamic)
                     moments.ion.constraints_C_coefficient .=
                         reload_moment("ion_constraints_C_coefficient", dynamic,
                                       time_index, coords, reload_ranges, restart_coords,
@@ -823,7 +824,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                 end
             end
             if z.irank == 0
-                if "chodura_integral_lower" ∈ keys(dynamic)
+                if "chodura_integral_lower" ∈ get_variable_keys(dynamic)
                     moments.ion.chodura_integral_lower .= load_slice(dynamic, "chodura_integral_lower",
                                                                      reload_ranges.r_range,
                                                                      :, time_index)
@@ -832,7 +833,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                 end
             end
             if z.irank == z.nrank - 1
-                if "chodura_integral_upper" ∈ keys(dynamic)
+                if "chodura_integral_upper" ∈ get_variable_keys(dynamic)
                     moments.ion.chodura_integral_upper .= load_slice(dynamic, "chodura_integral_upper",
                                                                      reload_ranges.r_range,
                                                                      :, time_index)
@@ -875,7 +876,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                                                            dynamic, time_index, coords,
                                                            reload_ranges, restart_coords,
                                                            interpolation_needed)
-            if "electron_constraints_A_coefficient" ∈ keys(dynamic)
+            if "electron_constraints_A_coefficient" ∈ get_variable_keys(dynamic)
                 moments.electron.constraints_A_coefficient .=
                     reload_electron_moment("electron_constraints_A_coefficient", dynamic,
                                            time_index, coords, reload_ranges,
@@ -883,7 +884,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
             else
                 moments.electron.constraints_A_coefficient .= 0.0
             end
-            if "electron_constraints_B_coefficient" ∈ keys(dynamic)
+            if "electron_constraints_B_coefficient" ∈ get_variable_keys(dynamic)
                 moments.electron.constraints_B_coefficient .=
                     reload_electron_moment("electron_constraints_B_coefficient", dynamic,
                                            time_index, coords, reload_ranges,
@@ -891,7 +892,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
             else
                 moments.electron.constraints_B_coefficient .= 0.0
             end
-            if "electron_constraints_C_coefficient" ∈ keys(dynamic)
+            if "electron_constraints_C_coefficient" ∈ get_variable_keys(dynamic)
                 moments.electron.constraints_C_coefficient .=
                     reload_electron_moment("electron_constraints_C_coefficient", dynamic,
                                            time_index, coords, reload_ranges,
@@ -962,7 +963,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                                                      time_index, coords, reload_ranges,
                                                      restart_coords, interpolation_needed)
                 if moments.evolve_density || moments.evolve_upar || moments.evolve_p
-                    if "neutral_constraints_A_coefficient" ∈ keys(dynamic)
+                    if "neutral_constraints_A_coefficient" ∈ get_variable_keys(dynamic)
                         moments.neutral.constraints_A_coefficient .=
                             reload_moment("neutral_constraints_A_coefficient", dynamic,
                                           time_index, coords, reload_ranges, restart_coords,
@@ -970,7 +971,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                     elseif moments.neutral.constraints_A_coefficient !== nothing
                         moments.neutral.constraints_A_coefficient .= 0.0
                     end
-                    if "neutral_constraints_B_coefficient" ∈ keys(dynamic)
+                    if "neutral_constraints_B_coefficient" ∈ get_variable_keys(dynamic)
                         moments.neutral.constraints_B_coefficient .=
                             reload_moment("neutral_constraints_B_coefficient", dynamic,
                                           time_index, coords, reload_ranges, restart_coords,
@@ -978,7 +979,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                     elseif moments.neutral.constraints_B_coefficient !== nothing
                         moments.neutral.constraints_B_coefficient .= 0.0
                     end
-                    if "neutral_constraints_C_coefficient" ∈ keys(dynamic)
+                    if "neutral_constraints_C_coefficient" ∈ get_variable_keys(dynamic)
                         moments.neutral.constraints_C_coefficient .=
                             reload_moment("neutral_constraints_C_coefficient", dynamic,
                                           time_index, coords, reload_ranges, restart_coords,
@@ -1020,13 +1021,13 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                 end
             end
 
-            if "dt" ∈ keys(dynamic)
+            if "dt" ∈ get_variable_keys(dynamic)
                 # If "dt" is not present, the file being restarted from is an older
                 # one that did not have an adaptive timestep, so just leave the value
                 # of "dt" from the input file.
                 dt[] = load_slice(dynamic, "dt", time_index)
             end
-            if "dt_before_last_fail" ∈ keys(dynamic)
+            if "dt_before_last_fail" ∈ get_variable_keys(dynamic)
                 # If "dt_before_last_fail" is not present, the file being
                 # restarted from is an older one that did not have an adaptive
                 # timestep, so just leave the value of "dt_before_last_fail" from
@@ -1034,7 +1035,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                 dt_before_last_fail[] = load_slice(dynamic, "dt_before_last_fail",
                                                 time_index)
             end
-            if "electron_dt" ∈ keys(dynamic)
+            if "electron_dt" ∈ get_variable_keys(dynamic)
                 # The algorithm for electron pseudo-timestepping actually starts each
                 # solve using t_params.electron.previous_dt[], so "electron_previous_dt"
                 # is the thing to load.
@@ -1042,7 +1043,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                     reload_r_array("electron_previous_dt", dynamic, time_index, coords,
                                    reload_ranges, restart_coords, interpolation_needed)
             end
-            if "electron_dt_before_last_fail" ∈ keys(dynamic)
+            if "electron_dt_before_last_fail" ∈ get_variable_keys(dynamic)
                 electron_dt_before_last_fail .=
                     reload_r_array("electron_dt_before_last_fail", dynamic, time_index,
                                    coords, reload_ranges, restart_coords,
@@ -3781,7 +3782,7 @@ function get_run_info_no_setup(run_dir::Union{AbstractString,Tuple{AbstractStrin
     # true, and might cause errors if some variables are missing for restarts after the
     # first.
     timing_group = get_group(fids0[1], "timing_data")
-    timing_variable_names = collect(k for k in keys(timing_group)
+    timing_variable_names = collect(k for k in get_variable_keys(timing_group)
                                     if startswith(k, "time:") || startswith(k, "ncalls:") ||
                                        startswith(k, "allocs:"))
 
@@ -3999,7 +4000,7 @@ function postproc_load_variable(run_info, variable_name; it=nothing, is=nothing,
         end
 
         # Get HDF5/NetCDF variables directly and load slices
-        variable = Tuple(get_group(f, group)[variable_name]
+        variable = Tuple(get_io_variable(get_group(f, group), variable_name)
                          for f ∈ run_info.files)
         nd = ndims(variable[1])
         variable_dims = split(get_attribute(variable[1], "dims"), ",")
@@ -4098,7 +4099,7 @@ function postproc_load_variable(run_info, variable_name; it=nothing, is=nothing,
                     tinds = tinds[begin]:tstep:tinds[end]
                     global_it_end = global_it_start + length(tinds) - 1
 
-                    selectdim(result, ndims(result), global_it_start:global_it_end) .= v[slice_indices..., tinds]
+                    selectdim(result, ndims(result), global_it_start:global_it_end) .= load_slice(v, slice_indices..., tinds)
 
                     global_it_start = global_it_end + 1
                 end
