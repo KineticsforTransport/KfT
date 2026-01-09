@@ -1124,7 +1124,7 @@ function reload_electron_data!(pdf, moments, phi, t_params, restart_prefix_ibloc
                                         interpolation_needed)
 
             if has_attribute(fid, "pdf_electron_converged")
-                pdf_electron_converged[] = get_attribute(fid, "pdf_electron_converged")
+                pdf_electron_converged[] = Bool(get_attribute(fid, "pdf_electron_converged"))
             end
 
             moments.electron.upar_updated[] = true
