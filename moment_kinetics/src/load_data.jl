@@ -207,7 +207,7 @@ function get_nranks(run_name,nblocks,description)
         z_irank, r_irank = load_rank_data(fid,printout=false)
         z_nrank = max(z_irank,z_nrank)
         r_nrank = max(r_irank,r_nrank)
-        close(fid)
+        mk_close(fid)
     end
     r_nrank = r_nrank + 1
     z_nrank = z_nrank + 1
@@ -1041,7 +1041,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                                    interpolation_needed)
             end
         finally
-            close(fid)
+            mk_close(fid)
         end
     end
     moments.ion.dens_updated .= true
@@ -1192,7 +1192,7 @@ function reload_electron_data!(pdf, moments, phi, t_params, restart_prefix_ibloc
                 reload_r_array("electron_step_counter", dynamic, time_index, coords,
                                reload_ranges, restart_coords, interpolation_needed)
         finally
-            close(fid)
+            mk_close(fid)
         end
     end
 
@@ -3031,7 +3031,7 @@ function load_distributed_ion_pdf_slice(run_names::Tuple, nblocks::Tuple, t_rang
             f_local_slice = selectdim(f_local_slice, thisdim, local_t_range)
 
             f_global_slice .= f_local_slice
-            close(fid)
+            mk_close(fid)
         end
         local_tind_start = local_tind_end + 1
         global_tind_start = global_tind_end + 1
@@ -3231,7 +3231,7 @@ function load_distributed_electron_pdf_slice(run_names::Tuple, nblocks::Tuple, t
             f_local_slice = selectdim(f_local_slice, thisdim, local_t_range)
 
             f_global_slice .= f_local_slice
-            close(fid)
+            mk_close(fid)
         end
         local_tind_start = local_tind_end + 1
         global_tind_start = global_tind_end + 1
@@ -3445,7 +3445,7 @@ function load_distributed_neutral_pdf_slice(run_names::Tuple, nblocks::Tuple, t_
             f_local_slice = selectdim(f_local_slice, thisdim, local_t_range)
 
             f_global_slice .= f_local_slice
-            close(fid)
+            mk_close(fid)
         end
         local_tind_start = local_tind_end + 1
         global_tind_start = global_tind_end + 1
@@ -3790,7 +3790,7 @@ function get_run_info_no_setup(run_dir::Union{AbstractString,Tuple{AbstractStrin
         # themselves
         files = run_prefixes
         for f ∈ fids0
-            close(f)
+            mk_close(f)
         end
     end
 
@@ -3844,7 +3844,7 @@ function close_run_info(run_info)
     end
 
     for f ∈ run_info.files
-        close(f)
+        mk_close(f)
     end
 
     return nothing
@@ -6527,7 +6527,7 @@ function read_distributed_zr_data!(var::Array{mk_float,N}, var_name::String,
                     end
                 end
             end
-            close(fid)
+            mk_close(fid)
         end
         local_tind_start = local_tind_end + 1
         global_tind_start = global_tind_end + 1
