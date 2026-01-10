@@ -23,6 +23,8 @@ default_settings["base"] = Dict("account"=>"",
                                 "use_plots"=>"n",
                                 "separate_postproc_projects"=>"n",
                                 "use_system_mpi"=>"y",
+                                "use_adios"=>"n",
+                                "build_adios"=>"y",
                                 "use_netcdf"=>"n",
                                 "enable_mms"=>"n",
                                 "use_stopnow"=>"n",
@@ -34,6 +36,7 @@ default_settings["generic-pc"] = merge(default_settings["base"],
                                         "default_postproc_time"=>"0:00:00",
                                         "default_postproc_memory"=>"0",
                                         "use_makie"=>"y",
+                                        "use_adios"=>"n",
                                         "use_stopnow"=>"y",
                                         "use_revise"=>"y"))
 default_settings["generic-batch"] = deepcopy(default_settings["base"])
@@ -43,7 +46,8 @@ default_settings["archer"] = merge(default_settings["base"],
 default_settings["pitagora"] = merge(default_settings["base"],
                                      Dict("default_partition"=>"dcgp_fua_prod",
                                           "default_postproc_time"=>"0:30:00",
-                                          "default_qos"=>"normal"))
+                                          "default_qos"=>"normal",
+                                          "use_adios"=>"y"))
 """
     get_user_input(possible_values, default_value)
 
@@ -245,6 +249,29 @@ function machine_setup_moment_kinetics(machine::String; no_force_exit::Bool=fals
                 * "of `mpirun -np 4 julia ...`.\n"
                 * "Do you want to use the system-provided MPI?",
                 machine, mk_preferences, ["y", "n"])
+    get_setting("use_adios",
+                "Would you like to enable optional ADIOS2 I/O (may give better I/O performance\n"
+                * "on HPC clusters than HDF5)?",
+                machine, mk_preferences, ["y", "n"])
+    if mk_preferences["use_adios"] == "y" && mk_preferences["use_system_mpi"] == "y"
+        get_setting("build_adios",
+                    "Do you want to download, and compile a local version of ADIOS2 (if you do\n"
+                    * "not do this, you will be given the option to choose an ADIOS2 library to\n"
+                    * "link later)?",
+                    machine, mk_preferences, ["y", "n"])
+        if mk_preferences["build_adios"] == "y"
+            adios_dir = joinpath(pwd(), "machines", "artifacts", "adios-build")
+            mk_preferences["adios_path"] = adios_dir
+        else
+            default_adios_dir = get(mk_preferences, "adios_path", "")
+            adios_dir = get_input_with_path_completion(
+                "\nAn ADIOS2 installation compiled with your system MPI is required to use\n"
+                * "ADIOS I/O. Enter the directory where lib/libadios2_c_mpi.so is\n"
+                * "located: [$default_adios_dir]")
+        end
+    else
+        mk_preferences["build_adios"] = "n"
+    end
     get_setting("use_netcdf",
                 "Would you like to enable optional NetCDF I/O (warning: using NetCDF sometimes\n"
                 * "causes errors when using a local or system install of HDF5)?",
@@ -307,6 +334,11 @@ function machine_setup_moment_kinetics(machine::String; no_force_exit::Bool=fals
         TOML.print(io, local_preferences, sorted=true)
     end
 
+    extra_environment_variables = String[]
+    if mk_preferences["use_adios"] == "y" && adios_dir != ""
+        push!(extra_environment_variables, "JULIA_ADIOS2_PATH=$adios_dir")
+    end
+
     if batch_system
         # Only use julia.env for a batch system as for an interactive system there are no
         # modules to set up and source'ing julia.env is mildly inconvenient.
@@ -319,12 +351,15 @@ function machine_setup_moment_kinetics(machine::String; no_force_exit::Bool=fals
         open(envname, "w") do io
             write(io, template)
 
-            # Don't do the following on ARCHER2 because the depot has to be copied onto
+            # Don't do the following on some clusters because the depot has to be copied onto
             # the compute notes within batch jobs, but sometimes scripts want to use the
             # julia.env on the login nodes.
-            if machine != "archer" && julia_directory != ""
+            if machine ∉ ("archer", "pitagora") && julia_directory != ""
                 println("\n** Setting JULIA_DEPOT_PATH=$julia_directory in `julia.env`\n")
                 println(io, "\nexport JULIA_DEPOT_PATH=$julia_directory")
+            end
+            for env_var ∈ extra_environment_variables
+                println(io, "export $env_var")
             end
         end
     end
@@ -332,7 +367,7 @@ function machine_setup_moment_kinetics(machine::String; no_force_exit::Bool=fals
     bindir = joinpath(repo_dir, "bin")
     mkpath(bindir)
     julia_executable_name = joinpath(bindir, "julia")
-    if batch_system || (julia_directory == "" && mk_preferences["use_plots"] == "n")
+    if batch_system || (julia_directory == "" && mk_preferences["use_plots"] == "n" && isempty(extra_environment_variables))
         # Make a local link to the Julia binary so scripts in the repo can find it
         println("\n** Making a symlink to the julia executable at bin/julia\n")
         islink(julia_executable_name) && rm(julia_executable_name)
@@ -344,6 +379,9 @@ function machine_setup_moment_kinetics(machine::String; no_force_exit::Bool=fals
             println(io, "#!/usr/bin/env bash")
             if julia_directory != ""
                 println(io, "export JULIA_DEPOT_PATH=$julia_directory")
+            end
+            for env_var ∈ extra_environment_variables
+                println(io, "export $env_var")
             end
             julia_path = joinpath(Sys.BINDIR, "julia")
             println(io, "$julia_path \"\$@\"")

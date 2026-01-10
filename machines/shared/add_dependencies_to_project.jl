@@ -21,38 +21,13 @@ else
 end
 
 
-"""
-    get_input_with_path_completion(message=nothing)
-
-Print `message` and get user input using the `read` utility from bash to allow
-path-completion.
-
-Solution adapted from
-https://discourse.julialang.org/t/collecting-all-output-from-shell-commands/15592/2
-"""
-function get_input_with_path_completion(message=nothing)
-    if message !== nothing
-        println(message)
-    end
-
-    # The `out` object is used by `pipeline()` to capture output from the shell command.
-    out = Pipe()
-
-    # Use Julia's shell command functionality to actually run bash - not sure how to use
-    # `read` and get output from it without using bash.
-    run(pipeline(`bash -c "read -e -p '> ' USERINPUT; echo \$USERINPUT"`, stdout=out))
-
-    # Need to close `out.in` to be able to read from `out`.
-    close(out.in)
-
-    # chomp removes the trailing '\n'. 'String()' converts Vector{Char} to a String.
-    input = chomp(String(read(out)))
-
-    return input
-end
+include("get_input_with_path_completion.jl")
 
 
 to_rm = String[]
+if mk_preferences["use_adios"] == "n"
+    push!(to_rm, "ADIOS2")
+end
 if mk_preferences["use_netcdf"] == "n"
     push!(to_rm, "NCDatasets")
 end
@@ -67,6 +42,7 @@ for p ∈ to_rm
     catch
     end
 end
+flush(stdout)
 to_add = ["HDF5", "MPI", "MPIPreferences", "PackageCompiler", "SpecialFunctions"]
 if !mk_preferences["batch_system"] && mk_preferences["use_revise"] == "y"
     push!(to_add, "Revise")
@@ -279,19 +255,31 @@ if mk_preferences["use_system_mpi"] == "y"
     end
 end
 
+# ADIOS2 setup
+##############
+
+Pkg.build()
+
 
 Pkg.develop(path="moment_kinetics")
-Pkg.precompile()
 
 
 # It seems to be important to add the dependencies for MMS before the ones for NetCDF (as
 # of 30/12/2023).  Don't understand why that should be true.
 if mk_preferences["enable_mms"] == "y"
     Pkg.add(["Symbolics", "IfElse"])
-    Pkg.precompile()
+end
+
+if mk_preferences["use_adios"] == "y"
+    Pkg.add("ADIOS2")
+    if get(mk_preferences, "build_adios", "n") == "y"
+        ENV["JULIA_ADIOS2_PATH"] = joinpath(pwd(), "machines", "artifacts", "adios-build")
+    end
+    Pkg.build()
 end
 
 if mk_preferences["use_netcdf"] == "y"
     Pkg.add("NCDatasets")
-    Pkg.precompile()
 end
+
+Pkg.precompile()
