@@ -4,7 +4,8 @@ using ConcreteStructs
 using LinearAlgebra
 using MPI
 using MPISchurComplements
-using MPISchurComplements.FakeMPILUs # This is not performant, use temporarily for prototyping.
+using MPISchurComplements.FakeMPILUs # This is not performant, use only for comparison/testing.
+using MPIStaticCondensations
 using OrderedCollections
 using SparseArrays
 
@@ -27,7 +28,7 @@ using ..input_structs
 using ..interpolation: interpolate_to_grid_1d!, fill_1d_interpolation_matrix!,
                        interpolate_symmetric!, fill_interpolate_symmetric_matrix!
 using ..type_definitions
-using ..array_allocation: allocate_float, allocate_shared_float
+using ..array_allocation: allocate_float, allocate_shared_float, allocate_shared_int
 using ..electron_fluid_equations: calculate_electron_moments!,
                                   calculate_electron_moments_no_r!,
                                   update_electron_vth_temperature!,
@@ -49,6 +50,7 @@ using ..file_io: get_electron_io_info, write_electron_state, finish_electron_io,
 using ..collision_frequencies: get_collision_frequency_ee,
                                get_collision_frequency_ei
 using ..jacobian_matrices
+using ..jacobian_matrices: get_MPIStaticCondensations_Dimensions_from_coordinates
 using ..krook_collisions: electron_krook_collisions!, get_electron_krook_collisions_term
 using ..timer_utils
 using ..moment_constraints: hard_force_moment_constraints!,
@@ -1019,7 +1021,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
     end
     both_zero_flags = [get_both_zero_flag(c) for c ∈ coords]
 
-    if preconditioner_type === Val(:electron_schur_complement)
+    if preconditioner_type ∈ (Val(:electron_static_condensation), Val(:electron_schur_complement))
         function get_schur_precon()
             precon = create_jacobian_info(coords, spectral; comm=comm_anyzv_subblock[],
                                           synchronize=_anyzv_subblock_synchronize,
@@ -1061,13 +1063,26 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
                 moments_global_indices = moments_global_indices.data
             end
 
-            Alu = FakeMPILU(A, pdf_global_indices, pdf_global_indices; comm=coords.z.comm,
-                            shared_comm=comm_anyzv_subblock[], use_sparse=true, skip_factorization=true)
-
-            function schur_complement_allocate(dim_sizes...)
+            dfn_coords = [coords.vpa, coords.vperp, coords.z]
+            mpisc_dims =
+                get_MPIStaticCondensations_Dimensions_from_coordinates(dfn_coords)
+            function precon_allocate_shared_float(dim_sizes...; comm=nothing)
+                if comm === nothing
+                    this_comm = comm_anyzv_subblock[]
+                else
+                    this_comm = comm
+                end
                 return allocate_shared_float(ntuple(i->(Symbol("schur_complement$i")=>dim_sizes[i]),
-                                                    length(dim_sizes))...;
-                                             comm=comm_anyzv_subblock[])
+                                                    length(dim_sizes))...; comm=comm)
+            end
+            function precon_allocate_shared_int(dim_sizes...; comm=nothing)
+                if comm === nothing
+                    this_comm = comm_anyzv_subblock[]
+                else
+                    this_comm = comm
+                end
+                return allocate_shared_int(ntuple(i->(Symbol("schur_complement$i")=>dim_sizes[i]),
+                                                  length(dim_sizes))...; comm=comm)
             end
             # External package MPISchurComplements cannot use our macro
             # @_anyzv_subblock_synchronize() to retrieve line numbers, so (if using
@@ -1077,15 +1092,43 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
                                  hash(string(@__FILE__, @__LINE__)),
                                  nothing
                                 )
+            precon_synchronize = () -> _anyzv_subblock_synchronize(fake_call_site)
+            schur_tile_size = nl_solver_input.MPIStaticCondensation_schur_tile_size > 0 ? nl_solver_input.MPIStaticCondensation_schur_tile_size : nothing
+            if timeit_debug_enabled()
+                precon_timer = global_timer
+            else
+                precon_timer = nothing
+            end
+            precon_check_lu = @debug_consistency_checks_ifelse(true, false)
+            if preconditioner_type === Val(:electron_static_condensation)
+                Alu = mpi_static_condensation(mpisc_dims;
+                                              level_multiplier=nl_solver_input.MPIStaticCondensation_level_multiplier,
+                                              sparse_C_blocks=nl_solver_input.MPIStaticCondensation_sparse_C_blocks,
+                                              comm=comm_world, distributed_comm=coords.z.comm,
+                                              shared_comm=comm_anyzv_subblock[],
+                                              allocate_shared_float=precon_allocate_shared_float,
+                                              allocate_shared_int=precon_allocate_shared_int,
+                                              synchronize_shared=precon_synchronize,
+                                              schur_tile_size=schur_tile_size,
+                                              timer=precon_timer, check_lu=precon_check_lu)
+            elseif preconditioner_type === Val(:electron_schur_complement)
+                Alu = FakeMPILU(A, pdf_global_indices, pdf_global_indices;
+                                comm=coords.z.comm, shared_comm=comm_anyzv_subblock[],
+                                use_sparse=true, skip_factorization=true)
+            else
+                error("preconditioner_type=$preconditioner_type unexpected in this block")
+            end
+
             schur_complement_factorization =
                 mpi_schur_complement(Alu, B, C, D, pdf_global_indices,
                                      moments_global_indices;
                                      distributed_comm=coords.z.comm,
                                      shared_comm=comm_anyzv_subblock[],
-                                     allocate_array=schur_complement_allocate,
-                                     synchronize_shared=()->_anyzv_subblock_synchronize(fake_call_site),
-                                     skip_factorization=true,
-                                     timer=(timeit_debug_enabled() ? global_timer : nothing))
+                                     allocate_shared_float=precon_allocate_shared_float,
+                                     allocate_shared_int=precon_allocate_shared_int,
+                                     synchronize_shared=precon_synchronize,
+                                     skip_factorization=true, check_lu=precon_check_lu,
+                                     timer=precon_timer)
 
             return schur_complement_factorization, precon, moments_buffer
         end
@@ -1094,6 +1137,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
         pdf_plus_p_plus_constraints_size = total_size_coords + coords.z.n + 6 * coords.z.n
         preconditioners = [(lu(sparse(1.0*I, 1, 1)),
                             create_jacobian_info(coords, spectral;
+                                                 blockskyline_topleft=true,
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  handle_overlaps=Val(false),
@@ -1126,6 +1170,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
         pdf_plus_p_plus_constraints_size = total_size_coords + coords.z.n + 4 * coords.z.n
         preconditioners = [(lu(sparse(1.0*I, 1, 1)),
                             create_jacobian_info(coords, spectral;
+                                                 blockskyline_topleft=true,
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  handle_overlaps=Val(false),
@@ -1155,6 +1200,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
         pdf_plus_p_plus_constraints_size = total_size_coords + coords.z.n + coords.z.n
         preconditioners = [(lu(sparse(1.0*I, 1, 1)),
                             create_jacobian_info(coords, spectral;
+                                                 blockskyline_topleft=true,
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  handle_overlaps=Val(false),
@@ -1181,6 +1227,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
         pdf_plus_p_size = total_size_coords + coords.z.n
         preconditioners = [(lu(sparse(1.0*I, 1, 1)),
                             create_jacobian_info(coords, spectral;
+                                                 blockskyline_topleft=true,
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  handle_overlaps=Val(false),
@@ -1213,6 +1260,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
             v_solve_buffer = allocate_float(v_solve_n)
             v_solve_buffer2 = allocate_float(v_solve_n)
             v_solve_jacobian = create_jacobian_info(coords, spectral;
+                                                    blockskyline_topleft=true,
                                                     comm=nothing,
                                                     synchronize=nothing,
                                                     handle_overlaps=Val(false),
@@ -1239,12 +1287,14 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
             z_solve_buffer = allocate_float(z_solve_n)
             z_solve_buffer2 = allocate_float(z_solve_n)
             z_solve_jacobian = create_jacobian_info(coords, spectral; comm=nothing,
+                                                    blockskyline_topleft=true,
                                                     synchronize=nothing,
                                                     handle_overlaps=Val(false),
                                                     boundary_skip_funcs=boundary_skip_funcs.z_solve,
                                                     both_zero_flags=both_zero_flags,
                                                     electron_pdf=(nothing,(:z,), false))
             z_solve_jacobian_p = create_jacobian_info(coords, spectral; comm=nothing,
+                                                      blockskyline_topleft=true,
                                                       synchronize=nothing,
                                                       handle_overlaps=Val(false),
                                                       boundary_skip_funcs=boundary_skip_funcs.z_solve,
@@ -1252,6 +1302,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
                                                       electron_p=(nothing,(:z,), false))
 
             explicit_jacobian = create_jacobian_info(coords, spectral; comm=comm_anyzv_subblock[],
+                                                     blockskyline_topleft=true,
                                                      synchronize=_anyzv_subblock_synchronize,
                                                      handle_overlaps=Val(false),
                                                      boundary_skip_funcs=boundary_skip_funcs.full,
@@ -1333,7 +1384,7 @@ end
     ir::mk_int
 end
 
-function (recalc::kinetic_electron_recalculate_schur_complement!)()
+@timeit global_timer (recalc::kinetic_electron_recalculate_schur_complement!)() = begin
     nl_solver_params = recalc.nl_solver_params
     f_electron_new = recalc.f_electron_new
     electron_p_new = recalc.electron_p_new
@@ -1376,7 +1427,9 @@ global_rank[] == 0 && println("recalculating precon")
     B = get_joined_array(precon, 1:1, 2:precon.n_entries)
     C = get_joined_array(precon, 2:precon.n_entries, 1:1)
     D = get_joined_array(precon, 2:precon.n_entries, 2:precon.n_entries)
-    @timeit_debug "update_schur_complement!" update_schur_complement!(schur_complement_factorization, A, B, C, D)
+    @timeit global_timer "update_schur_complement!" update_schur_complement!(schur_complement_factorization,
+                                                                             A, sparse(B),
+                                                                             sparse(C), D)
 
     nl_solver_params.preconditioners[ir] =
         (schur_complement_factorization, precon, moments_buffer)
@@ -1395,7 +1448,7 @@ end
     ir::mk_int
 end
 
-@timeit_debug global_timer (schur_complement_pre::kinetic_electron_schur_complement_precon!)(x) = begin
+@timeit global_timer (schur_complement_pre::kinetic_electron_schur_complement_precon!)(x) = begin
     nl_solver_params = schur_complement_pre.nl_solver_params
     scratch_dummy = schur_complement_pre.scratch_dummy
     buffer_1 = schur_complement_pre.buffer_1
@@ -1424,7 +1477,7 @@ end
         end
     end
 
-    @timeit_debug global_timer "ldiv!" ldiv!(schur_complement_factorization,
+    @timeit global_timer "ldiv!" ldiv!(schur_complement_factorization,
                                              vec(precon_f), moments_buffer)
 
     @begin_anyzv_z_region()
@@ -1529,7 +1582,7 @@ end
     ir::mk_int
 end
 
-function (recalc::kinetic_electron_recalculate_lu!)()
+@timeit global_timer (recalc::kinetic_electron_recalculate_lu!)() = begin
     nl_solver_params = recalc.nl_solver_params
     f_electron_new = recalc.f_electron_new
     electron_p_new = recalc.electron_p_new
@@ -1574,7 +1627,7 @@ global_rank[] == 0 && println("recalculating precon")
         if size(orig_lu) == (1, 1)
             # Have not properly created the LU decomposition before, so
             # cannot reuse it.
-            @timeit_debug global_timer "lu" nl_solver_params.preconditioners[ir] =
+            @timeit global_timer "lu" nl_solver_params.preconditioners[ir] =
                 (lu(get_sparse_joined_array(precon)), precon, input_buffer,
                  output_buffer)
         else
@@ -1582,14 +1635,14 @@ global_rank[] == 0 && println("recalculating precon")
             # has the same sparsity pattern, so by using `lu!()` we can
             # reuse some setup.
             try
-                @timeit_debug global_timer "lu!" lu!(orig_lu, get_sparse_joined_array(precon); check=false)
+                @timeit global_timer "lu!" lu!(orig_lu, get_sparse_joined_array(precon); check=false)
             catch e
                 if !isa(e, ArgumentError)
                     rethrow(e)
                 end
                 println("Sparsity pattern of matrix changed, rebuilding "
                         * "LU from scratch")
-                @timeit_debug global_timer "lu" orig_lu = lu(get_sparse_joined_array(precon))
+                @timeit global_timer "lu" orig_lu = lu(get_sparse_joined_array(precon))
             end
             nl_solver_params.preconditioners[ir] =
                 (orig_lu, precon, input_buffer, output_buffer)
@@ -1613,7 +1666,7 @@ end
     ir::mk_int
 end
 
-@timeit_debug global_timer (lu_pre::kinetic_electron_lu_precon!)(x) = begin
+@timeit global_timer (lu_pre::kinetic_electron_lu_precon!)(x) = begin
     nl_solver_params = lu_pre.nl_solver_params
     scratch_dummy = lu_pre.scratch_dummy
     buffer_1 = lu_pre.buffer_1
@@ -1661,7 +1714,7 @@ end
 
     @begin_anyzv_region()
     @anyzv_serial_region begin
-        @timeit_debug global_timer "ldiv!" ldiv!(this_output_buffer, precon_lu, this_input_buffer)
+        @timeit global_timer "ldiv!" ldiv!(this_output_buffer, precon_lu, this_input_buffer)
     end
 
     @begin_anyzv_region()
@@ -1774,7 +1827,7 @@ end
     add_identity::Bool
 end
 
-function (recalc_adi::kinetic_electron_recalculate_adi!)()
+@timeit global_timer (recalc_adi::kinetic_electron_recalculate_adi!)() = begin
     nl_solver_params = recalc_adi.nl_solver_params
     f_electron_new = recalc_adi.f_electron_new
     electron_p_new = recalc_adi.electron_p_new
@@ -2051,7 +2104,7 @@ end
     scratch_dummy
 end
 
-@timeit_debug global_timer (adi_pre::kinetic_electron_adi_precon!)(x) = begin
+@timeit global_timer (adi_pre::kinetic_electron_adi_precon!)(x) = begin
     nl_solver_params = adi_pre.nl_solver_params
     z = adi_pre.z
     vperp = adi_pre.vperp
@@ -2286,7 +2339,8 @@ function get_electron_preconditioner(nl_solver_params, f_electron_new, electron_
                                      vpa_advect, scratch_dummy, external_source_settings,
                                      num_diss_params, t_params, ion_dt, ir, evolve_p,
                                      add_identity=true)
-    if nl_solver_params.preconditioner_type === Val(:electron_schur_complement)
+    if nl_solver_params.preconditioner_type ∈ (Val(:electron_static_condensation),
+                                               Val(:electron_schur_complement))
         return get_electron_schur_complement_preconditioner(
                    nl_solver_params, f_electron_new, electron_p_new, buffer_1, buffer_2,
                    buffer_3, buffer_4, electron_density, electron_upar, this_phi, moments,
@@ -4021,12 +4075,18 @@ boundary condition on those entries of δg (when the right-hand-side is set to z
                        vpa, vpa_spectral)
 
             # Reverse the sign of the elements we just filled
-            jacobian_zbegin[sigma_ind:last_nonzero_ind,1:sigma_ind-1] .*= -1.0
+            for col ∈ 1:sigma_ind-1, row ∈ sigma_ind:last_nonzero_ind
+                jacobian_zbegin[row,col] *= -1.0
+            end
 
             if plus_vcut_fraction > 0.5
-                jacobian_zbegin[last_nonzero_ind,1:sigma_ind-1] .*= plus_vcut_fraction - 0.5
+                for col ∈ 1:sigma_ind-1
+                    jacobian_zbegin[last_nonzero_ind,col] *= plus_vcut_fraction - 0.5
+                end
             else
-                jacobian_zbegin[last_nonzero_ind,1:sigma_ind-1] .*= plus_vcut_fraction + 0.5
+                for col ∈ 1:sigma_ind-1
+                    jacobian_zbegin[last_nonzero_ind,col] *= plus_vcut_fraction + 0.5
+                end
             end
 
             # Fill in elements giving response to changes in electron_p
@@ -4514,12 +4574,18 @@ boundary condition on those entries of δg (when the right-hand-side is set to z
                        vpa, vpa_spectral)
 
             # Reverse the sign of the elements we just filled
-            jacobian_zend[first_nonzero_ind:sigma_ind,sigma_ind+1:end] .*= -1.0
+            for col ∈ sigma_ind+1:size(jacobian_zend, 2), row ∈ first_nonzero_ind:sigma_ind
+                jacobian_zend[row,col] *= -1.0
+            end
 
             if minus_vcut_fraction < 0.5
-                jacobian_zend[first_nonzero_ind,sigma_ind+1:end] .*= 0.5 - minus_vcut_fraction
+                for col ∈ sigma_ind+1:size(jacobian_zend, 2)
+                    jacobian_zend[first_nonzero_ind,col] *= 0.5 - minus_vcut_fraction
+                end
             else
-                jacobian_zend[first_nonzero_ind,sigma_ind+1:end] .*= 1.5 - minus_vcut_fraction
+                for col ∈ sigma_ind+1:size(jacobian_zend, 2)
+                    jacobian_zend[first_nonzero_ind,col] *= 1.5 - minus_vcut_fraction
+                end
             end
 
             # Fill in elements giving response to changes in electron_p

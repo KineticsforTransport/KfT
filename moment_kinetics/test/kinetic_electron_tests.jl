@@ -161,7 +161,7 @@ function run_test()
         run_moment_kinetics(this_boltzmann_input)
     end
 
-    preconditioners = ["schur_complement", "lu"]
+    preconditioners = ["static_condensation", "lu"]
 
     # Test implicit electron solve
     test_inputs = [(deepcopy(kinetic_input), "fixed timestep", 1.0e-6),
