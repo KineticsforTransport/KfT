@@ -1,3 +1,4 @@
+using Dates
 using moment_kinetics.analysis: check_Chodura_condition
 
 """
@@ -170,7 +171,7 @@ function Chodura_condition_plots(run_info::Vector{Any}; plot_prefix)
         end
 
         for (ri, ax) ∈ zip(run_info, axes)
-            Chodura_condition_plots(ri; axes=ax)
+            Chodura_condition_plots(ri; axes=ax, output_prefix=plot_prefix)
         end
 
         if input.plot_vs_t
@@ -279,7 +280,8 @@ function Chodura_condition_plots(run_info::Vector{Any}; plot_prefix)
     return nothing
 end
 
-function Chodura_condition_plots(run_info; plot_prefix=nothing, axes=nothing)
+function Chodura_condition_plots(run_info; plot_prefix=nothing, output_prefix=nothing,
+                                 axes=nothing)
 
     if run_info === nothing
         println("In Chodura_condition_plots(), run_info===nothing so skipping")
@@ -289,6 +291,9 @@ function Chodura_condition_plots(run_info; plot_prefix=nothing, axes=nothing)
         println("In Chodura_condition_plots(), z.bc!=\"wall\" - there is no wall - so "
                 * "skipping")
         return nothing
+    end
+    if output_prefix === nothing
+        output_prefix = plot_prefix
     end
 
     input = Dict_to_NamedTuple(input_dict_dfns["Chodura_condition"])
@@ -302,7 +307,8 @@ function Chodura_condition_plots(run_info; plot_prefix=nothing, axes=nothing)
     f_lower = get_variable(run_info, "f", iz=1)
     f_upper = get_variable(run_info, "f", iz=run_info.z.n_global)
 
-    Chodura_ratio_lower, Chodura_ratio_upper, cutoff_lower, cutoff_upper =
+    Chodura_ratio_lower, Chodura_ratio_upper, cutoff_lower, cutoff_upper,
+    extra_offset_lower, extra_offset_upper =
         check_Chodura_condition(run_info.r_local, run_info.z_local, run_info.vperp,
                                 run_info.vpa, density, upar, vth, temp_e,
                                 run_info.composition, Er, run_info.geometry,
@@ -337,6 +343,15 @@ function Chodura_condition_plots(run_info; plot_prefix=nothing, axes=nothing)
         if plot_prefix !== nothing
             outfile = string(plot_prefix, "Chodura_ratio_upper_vs_t.pdf")
             save(outfile, fig)
+        end
+
+        if output_prefix !== nothing
+            vpa_unnorm = get_variable(run_info, "vpa_unnorm"; ivperp=1, ir=input.ir0, is=1)
+            last_negative_v_parallel_lower = vpa_unnorm[findlast(vpa_unnorm[:,1,end] .< 0),1,end]
+            first_positive_v_parallel_upper = vpa_unnorm[findfirst(vpa_unnorm[:,end,end] .> 0),end,end]
+            open(joinpath(dirname(output_prefix), "chodura_ratios.txt"), "a") do io
+                println(io, "$(now()) $(run_info.run_name) lower=$(Chodura_ratio_lower[input.ir0,end]) upper=$(Chodura_ratio_upper[input.ir0,end]) lower_last_v=$last_negative_v_parallel_lower cutoff_lower=$(cutoff_lower[input.ir0,end]) extra_offset_lower=$(extra_offset_lower[input.ir0,end]) upper_first_v=$first_positive_v_parallel_upper cutoff_upper=$(cutoff_upper[input.ir0,end]) extra_offset_upper=$(extra_offset_upper[input.ir0,end])")
+            end
         end
     end
 
