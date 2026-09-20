@@ -4,11 +4,12 @@ module calculus
 
 # Import moment_kinetics so that we can refer to it in docstrings
 import moment_kinetics
+using ..moment_kinetics_structs: coordinate
 
 export derivative!, second_derivative!, laplacian_derivative!
 export elementwise_indefinite_integration!
 export reconcile_element_boundaries_MPI!
-export integral
+export integral, integral_nd
 export indefinite_integral!
 
 using ..moment_kinetics_structs: discretization_info, null_spatial_dimension_info,
@@ -1596,6 +1597,28 @@ function integral(integrand, vx, px, wgtsx, vy, py, wgtsy, vz, pz, wgtsz)
         end
     end
     return integral
+end
+
+"""
+    integral_nd(integrand::AbstractArray{T,N}, coords::Vararg{coordinate,N}) where {T,N}
+
+Calculate the `N`-dimensional integral of `integrand`. `coords` should correspond to the
+dimensions of `integrand`.
+
+This function is only intended to be called in serial, e.g. for post-processing.
+"""
+function integral_nd(integrand::AbstractArray{T,N}, coords::Vararg{coordinate,N}) where {T,N}
+    if N == 0
+        return integrand[]
+    end
+
+    this_coord = last(coords)
+    n = this_coord.n
+    wgts = this_coord.wgts
+
+    other_coords = coords[1:end-1]
+
+    return sum(integral_nd(selectdim(integrand, N, i), other_coords...) * wgts[i] for i ∈ 1:n)
 end
 
 
