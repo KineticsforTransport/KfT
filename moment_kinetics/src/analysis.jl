@@ -300,7 +300,7 @@ function check_Chodura_condition(r, z, vperp, vpa, dens, upar, vth, temp_e, comp
     end
 
     if find_extra_offset
-        return lower_result, upper_result, cutoff_lower, cutoff_upper
+        return lower_result, upper_result, cutoff_lower, cutoff_upper, extra_offset_lower, extra_offset_upper
     else
         return lower_result, upper_result
     end
