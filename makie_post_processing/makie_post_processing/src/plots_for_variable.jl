@@ -1,4 +1,6 @@
+using Dates
 using moment_kinetics.array_allocation: allocate_float
+using moment_kinetics.calculus: integral_nd
 using moment_kinetics.load_data: regrid_variable
 
 """
@@ -56,6 +58,25 @@ function plots_for_variable(run_info, variable_name; plot_prefix, has_rdim=true,
     println("Making plots for $variable_name")
     flush(stdout)
 
+    if variable_name ∈ em_variables
+        species_indices = (nothing,)
+    elseif variable_name ∈ neutral_moment_variables ||
+           variable_name ∈ neutral_dfn_variables
+        species_indices = 1:maximum(ri.n_neutral_species for ri ∈ run_info)
+    elseif variable_name ∈ ion_moment_variables ||
+           variable_name ∈ ion_dfn_variables
+        species_indices = 1:maximum(ri.n_ion_species for ri ∈ run_info)
+    elseif variable_name in ion_source_variables
+        species_indices = 1:maximum(length(ri.external_source_settings.ion) for ri ∈ run_info)
+    elseif variable_name in electron_source_variables
+        species_indices = 1:maximum(length(ri.external_source_settings.electron) for ri ∈ run_info)
+    elseif variable_name in neutral_source_variables
+        species_indices = 1:maximum(length(ri.external_source_settings.neutral) for ri ∈ run_info)
+    else
+        species_indices = 1:1
+        #error("variable_name=$variable_name not found in any defined group")
+    end
+
     variable = nothing
     try
         variable = get_variable(run_info, variable_name)
@@ -108,26 +129,30 @@ function plots_for_variable(run_info, variable_name; plot_prefix, has_rdim=true,
             run_info = Any[(_run_info_to_coords(subtract_from_info)...,
                             run_name=ri.run_name) for ri ∈ run_info]
         end
+
+        if plot_prefix !== nothing
+            open(joinpath(dirname(plot_prefix), "error_norms.txt"), "a") do io
+                for (ri, v) ∈ zip(run_info, variable)
+                    r = ri.r
+                    z = ri.z
+                    for is ∈ species_indices
+                        error_slice = select_slice(v, :z, :r; is=is, input=input)
+                        error_norm_integrand = error_slice.^2
+                        error_norm = sqrt(integral_nd(error_norm_integrand, z, r) / (z.L * r.L))
+
+                        if is === nothing
+                            species_string = ""
+                        else
+                            species_string = " spec$is"
+                        end
+
+                        println(io, "$(now()) $variable_name$species_string $(ri.run_name) $error_norm")
+                    end
+                end
+            end
+        end
     end
 
-    if variable_name ∈ em_variables
-        species_indices = (nothing,)
-    elseif variable_name ∈ neutral_moment_variables ||
-           variable_name ∈ neutral_dfn_variables
-        species_indices = 1:maximum(ri.n_neutral_species for ri ∈ run_info)
-    elseif variable_name ∈ ion_moment_variables ||
-           variable_name ∈ ion_dfn_variables
-        species_indices = 1:maximum(ri.n_ion_species for ri ∈ run_info)
-    elseif variable_name in ion_source_variables
-        species_indices = 1:maximum(length(ri.external_source_settings.ion) for ri ∈ run_info)
-    elseif variable_name in electron_source_variables
-        species_indices = 1:maximum(length(ri.external_source_settings.electron) for ri ∈ run_info)
-    elseif variable_name in neutral_source_variables
-        species_indices = 1:maximum(length(ri.external_source_settings.neutral) for ri ∈ run_info)
-    else
-        species_indices = 1:1
-        #error("variable_name=$variable_name not found in any defined group")
-    end
     for is ∈ species_indices
         if is !== nothing
             variable_prefix = plot_prefix * variable_name * "_spec$(is)_"
@@ -243,7 +268,9 @@ function plots_for_dfn_variable(run_info, variable_name; plot_prefix, has_rdim=t
     println("Making plots for $variable_name")
     flush(stdout)
 
-    if is_neutral
+    if variable_name == "f_electron"
+        species_indices = (nothing,)
+    elseif is_neutral
         species_indices = 1:maximum(ri.n_neutral_species for ri ∈ run_info)
     else
         species_indices = 1:maximum(ri.n_ion_species for ri ∈ run_info)
@@ -352,6 +379,37 @@ function plots_for_dfn_variable(run_info, variable_name; plot_prefix, has_rdim=t
             # `subtract_from_info` for all plots.
             run_info = Any[(_run_info_to_coords(subtract_from_info)...,
                             run_name=ri.run_name) for ri ∈ run_info]
+        end
+
+        open(joinpath(dirname(plot_prefix), "error_norms.txt"), "a") do io
+            for (ri, v) ∈ zip(run_info, variable)
+                r = ri.r
+                z = ri.z
+                for is ∈ species_indices
+                    if is_neutral
+                        vzeta = ri.vzeta
+                        vr = ri.vr
+                        vz = ri.vz
+                        error_slice = select_slice(v, :vz, :vr, :vzeta, :z, :r; is=is, input=input)
+                        error_norm_integrand = error_slice.^2
+                        error_norm = sqrt(integral_nd(error_norm_integrand, vz, vr, vzeta, z, r) / (vz.L * vr.L * vzeta.L * z.L * r.L))
+                    else
+                        vperp = ri.vperp
+                        vpa = ri.vpa
+                        error_slice = select_slice(v, :vpa, :vperp, :z, :r; is=is, input=input)
+                        error_norm_integrand = error_slice.^2
+                        error_norm = sqrt(integral_nd(error_norm_integrand, vpa, vperp, z, r) / (vpa.L * vperp.L * z.L * r.L))
+                    end
+
+                    if is === nothing
+                        species_string = ""
+                    else
+                        species_string = " spec$is"
+                    end
+
+                    println(io, "$(now()) $variable_name$species_string $(ri.run_name) $error_norm")
+                end
+            end
         end
     end
 
