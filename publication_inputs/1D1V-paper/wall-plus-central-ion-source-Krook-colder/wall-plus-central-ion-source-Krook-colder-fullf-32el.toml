@@ -45,7 +45,7 @@ ngrid = 5
 discretization = "chebyshev_pseudospectral"
 nelement = 64
 L = 13.4
-element_spacing_option = "coarse_tails12.5"
+element_spacing_option = "coarse_tails5.6"
 bc = "zero"
 
 [ion_species_1]
