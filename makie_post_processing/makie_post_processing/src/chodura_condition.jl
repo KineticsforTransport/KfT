@@ -432,9 +432,9 @@ function Chodura_condition_plots(run_info; plot_prefix=nothing, output_prefix=no
         f_input["it0"] = input.it0
         f_input["ir0"] = input.ir0
         f_input["iz0"] = 1
-        plot_f_unnorm_vs_vpa(run_info; f_over_vpa2=true, input=f_input, is=1, fig=fig,
+        l = plot_f_unnorm_vs_vpa(run_info; f_over_vpa2=true, input=f_input, is=1, fig=fig,
                              ax=ax, label=label)
-        vlines!(ax, cutoff_lower[input.ir0,input.it0]; linestyle=:dash, color=:red)
+        vlines!(ax, cutoff_lower[input.ir0,input.it0]; linestyle=:dash, color=l.color)
         if plot_prefix !== nothing && fig !== nothing
             outfile=plot_prefix * "pdf_unnorm_over_vpa2_wall-_vs_vpa.pdf"
             save(outfile, fig)
@@ -454,9 +454,9 @@ function Chodura_condition_plots(run_info; plot_prefix=nothing, output_prefix=no
         f_input["it0"] = input.it0
         f_input["ir0"] = input.ir0
         f_input["iz0"] = run_info.z.n
-        plot_f_unnorm_vs_vpa(run_info; f_over_vpa2=true, input=f_input, is=1, fig=fig,
+        l = plot_f_unnorm_vs_vpa(run_info; f_over_vpa2=true, input=f_input, is=1, fig=fig,
                              ax=ax, label=label)
-        vlines!(ax, cutoff_upper[input.ir0,input.it0]; linestyle=:dash, color=:red)
+        vlines!(ax, cutoff_upper[input.ir0,input.it0]; linestyle=:dash, color=l.color)
         if plot_prefix !== nothing && fig !== nothing
             outfile=plot_prefix * "pdf_unnorm_over_vpa2_wall+_vs_vpa.pdf"
             save(outfile, fig)
