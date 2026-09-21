@@ -56,13 +56,13 @@ upar_phase = 0.0
 
 [timestepping]
 type = "Fekete4(3)"
-nstep = 1000000000
+nstep = 30000000
 dt = 1.0e-6
-minimum_dt = 1.0e-5
-#maximum_dt = 1.0e-4
+minimum_dt = 1.0e-7
+maximum_dt = 5.0e-6
 max_increase_factor = 1.001
-rtol = 1.0e-5
-atol = 1.0e-12
+rtol = 1.0e-8
+atol = 1.0e-13
 step_update_prefactor = 0.1
 nwrite = 1000000
 nwrite_dfns = 1000000
