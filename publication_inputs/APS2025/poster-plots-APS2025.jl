@@ -183,7 +183,7 @@ for (sim_dir, label) ∈ (("runs/1D1V-instability-test_Lvpa24/", "background_1D"
     nu_ei = get_variable(ri_1d, "collision_frequency_ei"; it=ri_1d.nt, is=1, ir=1)
     # Dimensionless Ω_i = Ω_{i,ref} (as B=B_ref is constant) is 1/rhostar due to reference
     # parameter definitions (see
-    # https://mabarnes.github.io/moment_kinetics/dev/moment_kinetic_equations/#Dimensionless-equations-for-code).
+    # https://kineticsfortransport.github.io/KfT/dev/moment_kinetic_equations/#Dimensionless-equations-for-code).
     Omega_i = 1.0 / ri_1d.geometry.rhostar
     Omega_e = Omega_i / ri_1d.composition.me_over_mi
     vth_i = get_variable(ri_1d, "thermal_speed"; it=ri_1d.nt, is=1, ir=1)

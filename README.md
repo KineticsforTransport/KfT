@@ -1,19 +1,19 @@
 # Getting started
 
-The full documentation is online at [https://mabarnes.github.io/moment_kinetics](https://mabarnes.github.io/moment_kinetics).
+The full documentation is online at [https://kineticsfortransport.github.io/KfT/dev](https://kineticsfortransport.github.io/KfT/dev).
 
 ## Setup
 
 First clone this git repository, e.g. (to clone it into a directory with the
 default name `moment_kinetics`)
 ```bash
-$ git clone git@github.com:mabarnes/moment_kinetics
+$ git clone git@github.com:KineticsforTransport/KfT
 ```
 The command above assumes that you have an account on Github.com, and that
 account has ssh keys set up. If that is not the case you can clone using https
 instead
 ```bash
-$ git clone https://github.com/mabarnes/moment_kinetics
+$ git clone https://github.com/KineticsforTransport/KfT
 ```
 When using https some things (e.g. pushing to the remote repository) may
 require you to use 2-factor authentication, see
@@ -56,11 +56,11 @@ https://docs.github.com/en/get-started/getting-started-with-git/about-remote-rep
     `machines/generic-batch-template/README.md`).
 
     For more information, see
-    [`machine_setup` notes](https://mabarnes.github.io/moment_kinetics/dev/machine_setup_notes/).
+    [`machine_setup` notes](https://kineticsfortransport.github.io/KfT/dev/machine_setup_notes/).
 
     If you want or need to set up 'by hand' without using
     `machines/machine_setup.sh`, see
-    [Manual setup](https://mabarnes.github.io/moment_kinetics/dev/manual_setup/).
+    [Manual setup](https://kineticsfortransport.github.io/KfT/dev/manual_setup/).
 
 Some other notes that might sometimes be useful:
 
@@ -132,7 +132,7 @@ Note that the middle character in `-O3` is a capital letter 'O', not a zero. (On
 HPC clusters, or if you selected the "set up separate packages for post
 processing" option from `machines/machine_setup.sh`, you should use `-O3
 --check-bounds=no` instead of just `-O3`, and the same in the
-[Restarting](https://mabarnes.github.io/moment_kinetics/dev/getting_started/#Restarting)
+[Restarting](https://kineticsfortransport.github.io/KfT/dev/getting_started/#Restarting)
 section.)
 
 Options are specified in a TOML file, e.g. `input.toml` here. The defaults are
@@ -276,7 +276,7 @@ interpolating variables from the old run onto the new grid.
 
 When running in parallel, both the old and the new grids must be compatible
 with the distributed-MPI parallelisation. When not using
-[Parallel I/O](https://mabarnes.github.io/moment_kinetics/dev/getting_started/#Parallel-I/O),
+[Parallel I/O](https://kineticsfortransport.github.io/KfT/dev/getting_started/#Parallel-I/O),
 the distributed-MPI domain decomposition must be identical in the old and new
 runs (as each block only reads from a single file).
 
@@ -285,13 +285,13 @@ runs (as each block only reads from a single file).
 The default post-processing module, written to be a bit more generic and
 flexible than the original Plots-based one, and able to be used interactively,
 is provided in `makie_post_processing`, see
-[Post processing](https://mabarnes.github.io/moment_kinetics/dev/post_processing_notes/).
+[Post processing](https://kineticsfortransport.github.io/KfT/dev/post_processing_notes/).
 
 On an HPC cluster, when you call `./submit-run.sh` or `./submit-restart.sh`, a
 job will (by default) be submitted to run
-[`makie_post_processing.makie_post_process`](https://mabarnes.github.io/moment_kinetics/dev/zz_makie_post_processing/#makie_post_processing.makie_post_process-Tuple)
+[`makie_post_processing.makie_post_process`](https://kineticsfortransport.github.io/KfT/dev/zz_makie_post_processing/#makie_post_processing.makie_post_process-Tuple)
 or
-[`plots_post_processing.analyze_and_plot_data`](https://mabarnes.github.io/moment_kinetics/dev/zz_plots_post_processing/#plots_post_processing.analyze_and_plot_data-Tuple) (depending on which you
+[`plots_post_processing.analyze_and_plot_data`](https://kineticsfortransport.github.io/KfT/dev/zz_plots_post_processing/#plots_post_processing.analyze_and_plot_data-Tuple) (depending on which you
 have set up, or on whether you pass the `-o` argument when both are set up) on
 the output after the run is finished. You can skip this by passing the `-a`
 argument to `./submit-run.sh` or `./submit-restart.sh`.
@@ -331,7 +331,7 @@ is provided by a module - this is currently true on ARCHER2 - where the
 module-provided HDF5 is used).
 
 ## Running parameter scans
-Parameter scans (see [Parameter scans](https://mabarnes.github.io/moment_kinetics/dev/parameter_scans/#Parameter-scans)) can be performed by running
+Parameter scans (see [Parameter scans](https://kineticsfortransport.github.io/KfT/dev/parameter_scans/#Parameter-scans)) can be performed by running
 ```
 $ julia -O3 --project run_parameter_scan.jl path/to/scan/input.toml
 ```
@@ -370,7 +370,7 @@ There is a test suite in the `test/` subdirectory. It can be run in a few ways:
     The downside of this method is that it will cause `NCDatasets` to be
     installed if you did not install it already, which might sometimes cause
     linking errors (related to the HDF5 library, see [Optional
-    dependencies](https://mabarnes.github.io/moment_kinetics/dev/developing/#Optional-dependencies)).
+    dependencies](https://kineticsfortransport.github.io/KfT/dev/developing/#Optional-dependencies)).
 
 By default the test suite should run fairly quickly (in a few minutes). To do
 so, it skips many cases. To run more comprehensive tests, you can activate the
@@ -401,9 +401,9 @@ and 2D2V or 2D3V (for neutral particles). To run these tests we run a normal `mo
 simulation, making use of the manufacted solutions test TOML options. We describe how to use 
 the existing tests below. To set up `moment_kinetics` to use the manufactured solutions features,
  take the following steps:
-* Install `moment_kinetics` using the setup instructions above ([Setup](https://github.com/mabarnes/moment_kinetics/tree/mms_bugfixes_and_docs#setup)), 
+* Install `moment_kinetics` using the setup instructions above ([Setup](https://github.com/KineticsforTransport/KfT/tree/mms_bugfixes_and_docs#setup)), 
   using the `plots_post_processing` project and make sure that the `Symbolics` package is installed, e.g., if following
-  the manual setup instructions ([Manual setup](https://mabarnes.github.io/moment_kinetics/dev/manual_setup/)), these commands would be
+  the manual setup instructions ([Manual setup](https://kineticsfortransport.github.io/KfT/dev/manual_setup/)), these commands would be
     ```
     $ julia -O3 --project
     julia> ]
@@ -413,7 +413,7 @@ the existing tests below. To set up `moment_kinetics` to use the manufactured so
     ```
     if you will run the tests with MPI, make sure that MPI is also installed at this step.
 * Select an input file representing the desired test. For example, we can pick from the list 
-  [MMS input TOML list](https://mabarnes.github.io/moment_kinetics/dev/manufactured_solution_test_examples/).
+  [MMS input TOML list](https://kineticsfortransport.github.io/KfT/dev/manufactured_solution_test_examples/).
 * Run the input file using the usual command.
     ```
     julia> using moment_kinetics
