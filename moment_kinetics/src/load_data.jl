@@ -5850,6 +5850,9 @@ const get_variable_funcs = Dict{String,Any}(
             variable = get_per_step_from_cumulative_variable(run_info, "limit_caused_by"; kwargs...)
             return variable
         end,
+    "time_for_run" => (run_info; kwargs...) -> begin
+        return postproc_load_variable(run_info, "time_for_run"; group="timing_data", kwargs...)
+    end,
     "average_successful_dt" => (run_info; kwargs...) -> begin
             steps_per_output = get_variable(run_info, "steps_per_output"; kwargs...)
             failures_per_output = get_variable(run_info, "failures_per_output"; kwargs...)
