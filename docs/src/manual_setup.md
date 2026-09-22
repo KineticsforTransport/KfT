@@ -168,7 +168,7 @@ native Julia MPI, and do not link to HDF5.
 
 # first time use, uncomment this
 # otherwise, use from the moment_kinetics_install (root) folder 
-git clone https://github.com/mabarnes/moment_kinetics.git moment_kinetics_test_install
+git clone https://github.com/KineticsforTransport/KfT.git moment_kinetics_test_install
 cd moment_kinetics_test_install
 
 # set up modules and environment variables

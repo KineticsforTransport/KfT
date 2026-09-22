@@ -1,7 +1,7 @@
 `moment_kinetics` documentation
 ===============================
 
-The docs are built automatically when a pull request is merged into the `master` branch on `github.com/mabarnes/moment_kinetics`. 
+The docs are built automatically when a pull request is merged into the `master` branch on `github.com/KineticsforTransport/KfT`. 
 
 To build a local version, run `julia --project make.jl` in this directory. To see the output, open `build/index.html` with a web browser. It may be necessary when editing the doc pages to rebuild many times. Then it is more convenient to keep a REPL session open from `julia --project` and just keep running `julia> include("make.jl")` as this avoids repeated compilation of code.
 
