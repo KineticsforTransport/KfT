@@ -188,6 +188,7 @@ function check_Chodura_condition(r, z, vperp, vpa, dens, upar, vth, temp_e, comp
         v_parallel = vpagrid_to_vpa(vpa.grid, vth[1,ir,is,it], upar[1,ir,is,it], evolve_p,
                                     evolve_upar)
         vpabar = @. v_parallel - geometry.rhostar * Er[1,ir,it] / geometry.bzed[1,ir]
+        unmodified_vpabar = copy(vpabar)
 
         # Get rid of a zero if it is there to avoid a blow up - f should be zero at that
         # point anyway
@@ -233,8 +234,8 @@ function check_Chodura_condition(r, z, vperp, vpa, dens, upar, vth, temp_e, comp
                 vperp_integral = @view sum(integrand; dims=2)[:,1]
                 cumulative_vpa_integral = cumsum(vperp_integral)
                 cutoff_index = searchsortedfirst(cumulative_vpa_integral, dens[1,ir,is,it] / temp_e[1,ir,it]) - 1
-                cutoff_lower[ir,it] = mean(vpabar[cutoff_index:cutoff_index+1])
-                vpa_before_zero_index = searchsortedfirst(vpabar, -zero) - 1
+                cutoff_lower[ir,it] = mean(unmodified_vpabar[cutoff_index:cutoff_index+1])
+                vpa_before_zero_index = searchsortedfirst(unmodified_vpabar, -zero) - 1
                 extra_offset_lower[ir,it] = vpa_before_zero_index - cutoff_index
             end
         end
@@ -245,6 +246,7 @@ function check_Chodura_condition(r, z, vperp, vpa, dens, upar, vth, temp_e, comp
         v_parallel = vpagrid_to_vpa(vpa.grid, vth[end,ir,is,it], upar[end,ir,is,it],
                                     evolve_p, evolve_upar)
         vpabar = @. v_parallel - geometry.rhostar * Er[end,ir,it] / geometry.bzed[end,ir]
+        unmodified_vpabar = copy(vpabar)
 
         # Get rid of a zero if it is there to avoid a blow up - f should be zero at that
         # point anyway
@@ -275,8 +277,8 @@ function check_Chodura_condition(r, z, vperp, vpa, dens, upar, vth, temp_e, comp
                 vperp_integral = @view sum(integrand; dims=2)[:,1]
                 cumulative_vpa_integral = reverse(cumsum(reverse(vperp_integral)))
                 cutoff_index = searchsortedfirst(cumulative_vpa_integral, dens[end,ir,is,it] / temp_e[end,ir,it]; rev=true)
-                cutoff_upper[ir,it] = mean(vpabar[cutoff_index-1:cutoff_index])
-                vpa_after_zero_index = searchsortedlast(vpabar, zero) + 1
+                cutoff_upper[ir,it] = mean(unmodified_vpabar[cutoff_index-1:cutoff_index])
+                vpa_after_zero_index = searchsortedlast(unmodified_vpabar, zero) + 1
                 extra_offset_upper[ir,it] = cutoff_index - vpa_after_zero_index
             end
         end
