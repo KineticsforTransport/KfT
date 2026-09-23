@@ -6,10 +6,10 @@ function print_time_for_run(run_names...)
     dir_name = "comparison_plots"
     open(joinpath(dir_name, "time_for_run.txt"), "a") do io
         for ri ∈ run_info
-            run_time_per_step = get_variable(ri, "time_for_run_per_step")[end]
+            run_time_per_step = get_variable(ri, "time_for_run_per_step")
             total_time = sum(run_time_per_step)
             output_dt = get_variable(ri, "time_per_step")
-            if output_dt > 0.2
+            if output_dt[end] > 0.2
                 # Sim time per output step is ~1
                 step_time = run_time_per_step[end]
             else
@@ -20,10 +20,10 @@ function print_time_for_run(run_names...)
                     # The total run did not reach 1 unit of simulation time, so report the
                     # run time per unit simulation time for the final step, but make it
                     # negative to mark that this 'fudge' is being done.
-                    step_time = - run_time_per_step[end] / step_time[end]
+                    step_time = - run_time_per_step[end] / output_dt[end]
                 end
             end
-            result_string = "$(now()) $(ri.run_name) total_time=$total_time step_time=$step_time"
+            result_string = "$(now()) $(ri.run_name) total_time=$total_time minutes, step_time=$step_time minutes"
             println(result_string)
             println(io, result_string)
         end
