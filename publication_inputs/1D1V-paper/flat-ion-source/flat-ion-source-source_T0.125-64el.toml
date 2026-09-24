@@ -36,8 +36,8 @@ bc = "wall"
 ngrid = 5
 discretization = "gausslegendre_pseudospectral"
 nelement = 128
-L = 50.0
-element_spacing_option = "coarse_tails8"
+L = 24.0
+element_spacing_option = "coarse_tails4"
 bc = "zero"
 
 [ion_species_1]
