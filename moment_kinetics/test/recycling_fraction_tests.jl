@@ -9,10 +9,17 @@ include("setup.jl")
 using Base.Filesystem: tempname
 using MPI
 
+using moment_kinetics.file_io: io_has_implementation
+using moment_kinetics.input_structs: adios
 using moment_kinetics.interpolation: interpolate_to_grid_z
 using moment_kinetics.load_data: get_run_info_no_setup, close_run_info,
                                  postproc_load_variable
 using moment_kinetics.utils: merge_dict_with_kwargs!
+
+# Use "adios" to test the ADIOS2 I/O if it is available (or if we are forcing optional
+# dependencies to be used, e.g. for CI tests), otherwise fall back to "hdf5".
+const binary_format = (force_optional_dependencies || io_has_implementation(Val(adios))) ?
+                      "adios" : "hdf5"
 
 # default inputs for tests
 test_input = OptionsDict("composition" => OptionsDict("n_ion_species" => 1,
@@ -53,7 +60,8 @@ test_input = OptionsDict("composition" => OptionsDict("n_ion_species" => 1,
                                                                   "upar_phase" => 0.0,
                                                                   "temperature_amplitude" => 0.0,
                                                                   "temperature_phase" => 0.0),
-                         "output" => OptionsDict("run_name" => "full-f"),
+                         "output" => OptionsDict("run_name" => "full-f",
+                                                 "binary_format" => binary_format),
                          "evolve_moments" => OptionsDict("density" => false,
                                                          "parallel_flow" => false,
                                                          "pressure" => false),
