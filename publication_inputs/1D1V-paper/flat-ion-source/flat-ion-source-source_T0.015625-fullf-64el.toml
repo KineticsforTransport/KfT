@@ -36,7 +36,7 @@ bc = "wall"
 ngrid = 5
 discretization = "gausslegendre_pseudospectral"
 nelement = 128
-L = 4.0
+L = 6.0
 #element_spacing_option = "coarse_tails3"
 bc = "zero"
 
