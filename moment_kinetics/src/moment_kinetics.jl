@@ -86,7 +86,6 @@ include("electron_kinetic_equation.jl")
 include("initial_conditions.jl")
 include("parameter_scans.jl")
 include("time_advance.jl")
-include("file_io_adios.jl")
 
 using Dates
 using Glob

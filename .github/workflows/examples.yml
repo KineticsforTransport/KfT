@@ -25,5 +25,5 @@ jobs:
       - name: Test examples
         run: |
           touch Project.toml
-          julia -O3 --project -e 'import Pkg; Pkg.develop(path="moment_kinetics/"); Pkg.add("NCDatasets"); Pkg.precompile()'
+          julia -O3 --project -e 'import Pkg; Pkg.develop(path="moment_kinetics/"); Pkg.add(["ADIOS2", "NCDatasets"]); Pkg.precompile()'
           julia -O3 --project examples/runtests.jl
