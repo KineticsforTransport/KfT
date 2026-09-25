@@ -4,7 +4,7 @@
 ###################################
 #
 # Note that you can delete this script if you only want to use a
-# system-provided HDF5 library.
+# system-provided HDF5 library and (optional) ADIOS2 library.
 
 set -e
 
