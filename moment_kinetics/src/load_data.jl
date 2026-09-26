@@ -245,6 +245,14 @@ end
 Load a slice of a single variable from a file
 """
 function load_slice end
+function load_slice(variable::HDF5.Dataset, slices_or_indices...)
+    try
+        return variable[slices_or_indices...]
+    catch
+        println("An error occured while loading $(HDF5.name(variable))")
+        rethrow()
+    end
+end
 function load_slice(file_or_group::HDF5.H5DataStore, name::String, slices_or_indices...)
     # This overload deals with cases where fid is an HDF5 `File` or `Group` (`H5DataStore`
     # is the abstract super-type for both
