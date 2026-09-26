@@ -9,6 +9,8 @@ include("setup.jl")
 using Base.Filesystem: tempname
 using MPI
 
+using moment_kinetics.file_io: io_has_implementation
+using moment_kinetics.input_structs: adios
 using moment_kinetics.interpolation: interpolate_to_grid_z
 using moment_kinetics.load_data: get_run_info_no_setup, close_run_info,
                                  postproc_load_variable
