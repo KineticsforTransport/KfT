@@ -129,15 +129,16 @@ function HarrisonThompson_comparison(run_names...)
     lines!(ax, HT_z, HT_phi; color=:black, label="Harrison-Thompson analytic")
 
     filter_inds = HT_z .≤ sqrt_plot_max_z
-    sqrt_delta_HT_z = sqrt.(HT_z[filter_inds] .+ 0.5)
-    filtered_data = HT_phi[filter_inds]
-    lines!(near_wall_ax, sqrt_delta_HT_z, filtered_data; color=:black, label="Harrison-Thompson analytic")
+    sqrt_delta_HT_z = collect(0.0:1000.0) ./ 1000.0 .* sqrt(0.5 + sqrt_plot_max_z)
+    sqrt_HT_data = findphi_bisection.(sqrt_delta_HT_z.^2 .- 0.5, C)
+    sqrt_HT_data .-= sqrt_HT_data[1]
+    lines!(near_wall_ax, sqrt_delta_HT_z, sqrt_HT_data; color=:black, label="Harrison-Thompson analytic")
 
     # Fit straight line to second half of data up to sqrt(z)=0.1, to visualise
     # deviation from sqrt(z) behaviour near sheath entrance.
     n = searchsortedfirst(sqrt_delta_HT_z, 0.1)
     x = sqrt_delta_HT_z[n÷2:min(n,end)]
-    y = filtered_data[n÷2:min(n,end)]
+    y = sqrt_HT_data[n÷2:min(n,end)]
     prob = CurveFitProblem(x, y)
     sol = solve(prob, LinearCurveFitAlgorithm())
     plotx = collect(0.0:0.01:sqrt(sqrt_plot_max_z + 0.5))
