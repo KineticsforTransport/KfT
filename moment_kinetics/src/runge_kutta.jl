@@ -277,6 +277,13 @@ function setup_runge_kutta_coefficients!(type, input_CFL_prefactor, split_operat
         low_storage = false
         CFL_prefactor = NaN
     elseif type == "SSPRK4"
+        # 4-stage, 3rd order method given on p. 189 of Ruuth (2005)
+        # https://doi.org/10.1090/S0025-5718-05-01772-2
+        # Apparently originally derived in Ruuth & Spiteri (2002)
+        # https://doi.org/10.1023/A:1015156832269
+        # or possibly Spiteri & Ruuth (2002)
+        # https://doi.org/10.1137/S0036142901389025
+        # but does not seem to be stated as clearly/explicitly in those references.
         n_rk_stages = 4
         rk_coefs = allocate_float(3, n_rk_stages)
         rk_coefs .= 0.0
@@ -295,6 +302,8 @@ function setup_runge_kutta_coefficients!(type, input_CFL_prefactor, split_operat
         low_storage = true
         CFL_prefactor = NaN
     elseif type == "SSPRK3"
+        # The 3-stage, 3rd order method from equation (2.18) of Shu & Osher (1988)
+        # https://doi.org/10.1016/0021-9991(88)90177-5
         n_rk_stages = 3
         rk_coefs = allocate_float(3, n_rk_stages)
         rk_coefs .= 0.0
@@ -308,6 +317,7 @@ function setup_runge_kutta_coefficients!(type, input_CFL_prefactor, split_operat
         low_storage = true
         CFL_prefactor = NaN
     elseif type == "SSPRK2"
+        # Heun's method https://en.wikipedia.org/wiki/Heun%27s_method
         n_rk_stages = 2
         rk_coefs = allocate_float(3, n_rk_stages)
         rk_coefs .= 0.0
@@ -319,6 +329,7 @@ function setup_runge_kutta_coefficients!(type, input_CFL_prefactor, split_operat
         low_storage = true
         CFL_prefactor = NaN
     elseif type == "SSPRK1"
+        # This is the forward-Euler method.
         n_rk_stages = 1
         rk_coefs = allocate_float(3, n_rk_stages)
         rk_coefs .= 0.0
