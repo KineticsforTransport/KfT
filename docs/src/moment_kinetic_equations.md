@@ -279,8 +279,8 @@ Can integrate the drift kinetic equation to give the moment equations:
   ```math
   \begin{align}
   & \frac{1}{2} \int v^2 \frac{\partial f_i}{\partial t} d^3 v
-      + \frac{1}{2} \int v^2 v_E^r f_i}{\partial r} d^3 v
-      + \frac{1}{2} \int v^2 v_E^z f_i}{\partial z} d^3 v
+      + \frac{1}{2} \int v^2 v_E^r \frac{\partial f_i}{\partial r} d^3 v
+      + \frac{1}{2} \int v^2 v_E^z \frac{\partial f_i}{\partial z} d^3 v
       + \frac{1}{2} \int v^2 b^z v_\parallel \frac{\partial f_i}{\partial z} d^3 v
       - \frac{1}{2} b^z \frac{e}{m_i} \frac{\partial\phi}{\partial z} \int v^2 \frac{\partial f_i}{\partial v_\parallel} d^3 v \nonumber \\
   &\quad= \frac{1}{2} \underbrace{\int v^2 C_{ii}[f_i,f_i] d^3 v}_{=0\text{, collisions conserve energy}}
@@ -288,8 +288,8 @@ Can integrate the drift kinetic equation to give the moment equations:
         + \underbrace{\frac{1}{2} \int v^2 S_i d^3 v}_{S_{i,E} / m_i} \\
 
   & \frac{1}{2} \frac{\partial}{\partial t} \int v^2 f_i d^3 v
-      + \frac{1}{2} v_E^r r} \int v^2 f_i d^3 v
-      + \frac{1}{2} v_E^z z} \int v^2 f_i d^3 v
+      + \frac{1}{2} v_E^r \frac{\partial}{\partial r} \int v^2 f_i d^3 v
+      + \frac{1}{2} v_E^z \frac{\partial}{\partial z} \int v^2 f_i d^3 v
       + \frac{1}{2} b^z \frac{\partial}{\partial z} \int v^2 v_\parallel f_i d^3 v
       + \frac{1}{2} b^z \frac{e}{m_i} \frac{\partial\phi}{\partial z} \int 2 v_\parallel f_i d^3 v \nonumber \\
   &\quad= \frac{1}{2} \int v^2 \left[ -R_\mathrm{CX}(n_n f_i - n_i f_n) + R_\mathrm{ioniz} n_e f_n \right] d^3 v
