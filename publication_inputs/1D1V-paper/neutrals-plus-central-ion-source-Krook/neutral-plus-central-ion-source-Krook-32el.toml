@@ -13,6 +13,10 @@ n_ion_species = 1
 n_neutral_species = 1
 recycling_fraction = 0.5
 
+[reactions]
+charge_exchange_frequency = 1.0
+ionization_frequency = 0.5
+
 [ion_source_1]
 active = true
 z_profile = "gaussian"
