@@ -577,6 +577,11 @@ function get_source_profile(profile_type, width, relative_minimum, coord)
         # Set so that profile can be 1 on the inner/lower boundary
         x = coord.grid
         return @. (1.0 - relative_minimum) * 0.5 * (1.0 - sinpi(x / width)) + relative_minimum
+    elseif profile_type == "sinusoidsourcesink"
+        # Allows negative amplitudes, so that integrated source can be zero for periodic
+        # simulations.
+        x = coord.grid
+        return @. (1.0 - relative_minimum) * sinpi(x / width) + relative_minimum
     else
         error("Unrecognised source profile type '$profile_type'.")
     end
