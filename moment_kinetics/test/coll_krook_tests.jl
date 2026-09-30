@@ -282,9 +282,15 @@ function run_test_with_restart(dkions_test_input, coll_krook_test_input, expecte
         # Ensure that previous simulation finished writing output before restarting the
         # next one from it.
         MPI.Barrier(MPI.COMM_WORLD)
+bd = dkions_input["output"]["base_directory"]
+println("base_directory $bd contains ", readdir(bd))
+rd = joinpath(bd, dkions_input["output"]["run_name"])
+println("and dk run dir $rd contains ", readdir(rd))
 
         # now run the coll_krook simulation restarting from the dkions output
         name_of_restart_file = dkions_name * ".dfns.h5"
+println("restart file name will be ", joinpath(realpath(dkions_input["output"]["base_directory"]),
+                                               dkions_name, name_of_restart_file))
         run_moment_kinetics(coll_krook_input, restart = joinpath(
             realpath(dkions_input["output"]["base_directory"]),
             dkions_name, name_of_restart_file))
