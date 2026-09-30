@@ -2319,6 +2319,7 @@ function reopen_moments_io(file_info)
     error("reopen_moments_io() called by non-block-root block_rank[]=$(block_rank[])")
 end
 
+using HDF5
 """
 setup file i/o for distribution function variables
 """
@@ -2332,6 +2333,7 @@ function setup_dfns_io(prefix, io_input, r, z, vperp, vpa, vzeta, vr, vz, compos
         dfns_prefix = string(prefix, ".dfns")
         parallel_io = io_input.parallel_io
 println("setup_dfns_io, parallel_io=$parallel_io")
+println("HDF5 has parallel? ", HDF5.has_parallel())
         if !parallel_io
             dfns_prefix *= ".$(iblock_index[])"
         end
