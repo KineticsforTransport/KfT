@@ -130,8 +130,6 @@ function check_Chodura_condition(r, z, vperp, vpa, dens, upar, vth, temp_e, comp
     else
         nr = 1
     end
-    nvperp = size(f_lower,2)
-    nvpa = size(f_lower,1)
 
     if temp_e === nothing
         # Assume this is from a Boltzmann electron response simulation
@@ -168,6 +166,8 @@ function check_Chodura_condition(r, z, vperp, vpa, dens, upar, vth, temp_e, comp
                           (size(f_upper, 1), size(f_upper, 2), 1, size(f_upper, 3),
                            size(f_upper, 4), size(f_upper, 5)))
     end
+    nvperp = size(f_lower,2)
+    nvpa = size(f_lower,1)
 
     f_lower = @views get_unnormalised_f_1d(f_lower, dens[1,:,:,:], vth[1,:,:,:],
                                            evolve_density, evolve_p)
