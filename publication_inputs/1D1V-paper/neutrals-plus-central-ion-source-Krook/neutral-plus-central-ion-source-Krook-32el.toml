@@ -73,7 +73,7 @@ initial_temperature = 0.33333333333333333333333
 initial_density = 1.0
 
 [z_IC_neutral_species_1]
-initialization_option = "constant"
+initialization_option = "gaussian"
 density_amplitude = 0.0
 temperature_amplitude = 0.0
 density_phase = 0.0
