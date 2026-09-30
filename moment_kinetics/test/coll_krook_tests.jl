@@ -279,6 +279,10 @@ function run_test_with_restart(dkions_test_input, coll_krook_test_input, expecte
         # run simulation
         run_moment_kinetics(dkions_input)
 
+        # Ensure that previous simulation finished writing output before restarting the
+        # next one from it.
+        MPI.Barrier(MPI.COMM_WORLD)
+
         # now run the coll_krook simulation restarting from the dkions output
         name_of_restart_file = dkions_name * ".dfns.h5"
         run_moment_kinetics(coll_krook_input, restart = joinpath(
