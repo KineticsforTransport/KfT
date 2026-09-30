@@ -11,16 +11,6 @@ T_e = 1.0
 n_ion_species = 1
 n_neutral_species = 0
 
-[ion_source_1]
-active = true
-z_profile = "sinusoidsourcesink"
-z_width = 0.25
-z_profile_T = "sinusoid"
-z_width_T = 0.5
-z_relative_minimum_T = 0.9
-source_strength = 0.1
-source_T = 1.05263157895 # = 1/0.95
-
 [reference_params]
 Bref = 1.0
 Lref = 20.0
@@ -31,7 +21,6 @@ Tref = 100.0
 ngrid = 6
 discretization = "chebyshev_pseudospectral"
 nelement = 255
-#nelement_local = 2
 L = 1.0
 bc = "periodic"
 
@@ -39,7 +28,7 @@ bc = "periodic"
 ngrid = 5
 discretization = "chebyshev_pseudospectral"
 nelement = 512
-L = 50.0
+L = 30.0
 element_spacing_option = "coarse_tails8"
 bc = "zero"
 
@@ -49,27 +38,27 @@ initial_density = 1.0
 
 [z_IC_ion_species_1]
 initialization_option = "gaussian"
-density_amplitude = 0.0
+width = 0.125
+density_amplitude = 0.1
 temperature_amplitude = 0.0
 density_phase = 0.0
-upar_amplitude = 1.0
+upar_amplitude = 0.0
 temperature_phase = 0.0
 upar_phase = 0.0
 
 [timestepping]
 type = "Fekete4(3)"
-nstep = 1000000000
+nstep = 1000000
 dt = 1.0e-6
-#minimum_dt = 1.0e-5
-#maximum_dt = 1.0e-4
+minimum_dt = 1.0e-7
+maximum_dt = 1.0e-4
 max_increase_factor = 1.001
 rtol = 1.0e-7
-atol = 1.0e-15
+atol = 1.0e-17
 step_update_prefactor = 0.1
-nwrite = 1000000
-nwrite_dfns = 1000000
-steady_state_residual = true
-converged_residual_value = 1.0e-6
+nwrite = 100000
+nwrite_dfns = 100000
+exact_output_times = true
 
 [ion_numerical_dissipation]
 force_minimum_pdf_value = 0.0
