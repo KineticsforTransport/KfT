@@ -168,7 +168,7 @@ to.
 """
 function get_backup_filename(filename)
     if !isfile(filename)
-        throw(MKFileNotFound("Requested to restart from $filename, but this file does not exist"))
+        throw(MKFileNotFound("Proc $(global_rank[]) Requested to restart from $filename, but this file does not exist"))
     end
     counter = 1
     temp, extension = splitext(filename)

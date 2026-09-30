@@ -231,6 +231,7 @@ parallel loop ranges, and are only used by the tests in `debug_test/`.
 
     # Set up MPI
     initialize_comms!()
+println("Proc $(global_rank[]) A restart=$restart ", isfile(restart))
 
     if global_rank[] == 0
         println("Starting setup   ", Dates.format(now(), dateformat"H:MM:SS"))
@@ -310,6 +311,7 @@ parallel loop ranges, and are only used by the tests in `debug_test/`.
             restart_filename = restart
         end
 
+println("Proc $(global_rank[]) B restart_filename=$restart_filename ", isfile(restart_filename))
         backup_prefix_iblock, _, _ =
             get_prefix_iblock_and_move_existing_file(restart_filename,
                                                      io_input.output_dir)
