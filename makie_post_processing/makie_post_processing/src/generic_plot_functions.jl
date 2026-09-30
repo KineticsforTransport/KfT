@@ -1717,7 +1717,7 @@ end
 """
     plot_1d(xcoord, data; ax=nothing, xlabel=nothing, ylabel=nothing, title=nothing,
             yscale=nothing, transform=identity, axis_args=Dict{Symbol,Any}(),
-            kwargs...)
+            scatter::Bool=false, kwargs...)
 
 Make a 1d plot of `data` vs `xcoord`.
 
@@ -1737,14 +1737,17 @@ If `ax` is passed, the plot will be added to that existing `Axis`, otherwise a n
 `axis_args` are passed as keyword arguments to `get_1d_ax()`, and from there to the `Axis`
 constructor.
 
-Other `kwargs` are passed to Makie's `lines!()` function.
+If `scatter=true` is passed, make a scatter plot (`scatter!()`) instead of a line plot
+(`lines!()`).
+
+Other `kwargs` are passed to Makie's `lines!()` or `scatter!()` function.
 
 If `ax` is not passed, returns the `Figure`, otherwise returns the object returned by
 `lines!()`.
 """
 function plot_1d(xcoord, data; ax=nothing, xlabel=nothing, ylabel=nothing, title=nothing,
                  yscale=nothing, transform=identity, axis_args=Dict{Symbol,Any}(),
-                 kwargs...)
+                 scatter::Bool=false, kwargs...)
     if ax === nothing
         fig, ax = get_1d_ax(; axis_args...)
     else
@@ -1769,7 +1772,11 @@ function plot_1d(xcoord, data; ax=nothing, xlabel=nothing, ylabel=nothing, title
         data = transform.(data)
     end
 
-    l = lines!(ax, xcoord, data; kwargs...)
+    if scatter
+        l = scatter!(ax, xcoord, data; kwargs...)
+    else
+        l = lines!(ax, xcoord, data; kwargs...)
+    end
 
     if yscale !== nothing
         ax.yscale = yscale
@@ -1911,7 +1918,7 @@ end
     animate_1d(xcoord, data; frame_index=nothing, ax=nothing, fig=nothing,
                xlabel=nothing, ylabel=nothing, title=nothing, yscale=nothing,
                transform=identity, outfile=nothing, ylims=nothing,
-               axis_args=Dict{Symbol,Any}(), kwargs...)
+               scatter::Bool=false, axis_args=Dict{Symbol,Any}(), kwargs...)
 
 Make a 1d animation of `data` vs `xcoord`.
 
@@ -1944,7 +1951,11 @@ can be saved.
 `axis_args` are passed as keyword arguments to `get_1d_ax()`, and from there to the `Axis`
 constructor.
 
-Other `kwargs` are passed to Makie's `lines!()` function.
+
+If `scatter=true` is passed, make a scatter plot (`scatter!()`) instead of a line plot
+(`lines!()`).
+
+Other `kwargs` are passed to Makie's `lines!()` or `scatter!()` function.
 
 If `ax` is not passed, returns the `Figure`, otherwise returns the object returned by
 `lines!()`.
@@ -1952,7 +1963,7 @@ If `ax` is not passed, returns the `Figure`, otherwise returns the object return
 function animate_1d(xcoord, data; frame_index=nothing, ax=nothing, fig=nothing,
                     xlabel=nothing, ylabel=nothing, title=nothing, yscale=nothing,
                     transform=identity, ylims=nothing, outfile=nothing,
-                    axis_args=Dict{Symbol,Any}(), kwargs...)
+                    scatter::Bool=false, axis_args=Dict{Symbol,Any}(), kwargs...)
 
     if frame_index === nothing
         ind = Observable(1)
@@ -2056,7 +2067,11 @@ function animate_1d(xcoord, data; frame_index=nothing, ax=nothing, fig=nothing,
     else
         line_data = @lift(@view data[:,$ind])
     end
-    lines!(ax, xcoord, line_data; kwargs...)
+    if scatter
+        scatter!(ax, xcoord, line_data; kwargs...)
+    else
+        lines!(ax, xcoord, line_data; kwargs...)
+    end
 
     if outfile !== nothing
         if fig === nothing
