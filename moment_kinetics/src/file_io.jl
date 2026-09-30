@@ -363,9 +363,11 @@ function setup_io_input(input_dict, timestepping_section, warn_unexpected::Bool;
         error("When passing a Dict directly for input, it is required to set `run_name` "
               * "in the `[output]` section")
     end
+println("io_settings A ", io_settings["parallel_io"])
     if io_settings["parallel_io"] == ""
         io_settings["parallel_io"] = io_has_parallel(Val(io_settings["binary_format"]))
     end
+println("io_settings B ", io_settings["parallel_io"])
     # Make copy of the section to avoid modifying the passed-in Dict
     io_settings = copy(io_settings)
     run_id = string(uuid4())
@@ -2329,6 +2331,7 @@ function setup_dfns_io(prefix, io_input, r, z, vperp, vpa, vzeta, vr, vz, compos
     @serial_region begin
         dfns_prefix = string(prefix, ".dfns")
         parallel_io = io_input.parallel_io
+println("setup_dfns_io, parallel_io=$parallel_io")
         if !parallel_io
             dfns_prefix *= ".$(iblock_index[])"
         end
