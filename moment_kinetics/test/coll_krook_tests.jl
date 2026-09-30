@@ -318,7 +318,7 @@ end
 
 function runtests()
     # Create a temporary directory for test output
-    test_output_directory = "temptest" #get_MPI_tempdir()
+    test_output_directory = get_MPI_tempdir()
 
     @testset "coll_krook tests" verbose=use_verbose begin
         println("coll_krook tests")
