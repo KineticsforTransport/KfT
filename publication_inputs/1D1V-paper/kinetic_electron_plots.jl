@@ -3,6 +3,7 @@ using makie_post_processing.CairoMakie
 
 function plot_ke_case(case)
     output_directory = joinpath("comparison_plots", "compare-workstation-kinetic-electrons")
+    figsize = (600, 400)
 
     ri = get_run_info(joinpath("runs-workstation", case); dfns=true)
 
@@ -26,17 +27,17 @@ function plot_ke_case(case)
 
     z = ri.z.grid
 
-    fign = Figure(; size=(1200,800))
+    fign = Figure(; size=figsize)
     axn = Axis(fign[1,1]; xlabel=L"z", ylabel=L"n")
     ln = lines!(axn, z, n)
     save(prefix * "density.pdf", fign)
 
-    figu = Figure(; size=(1200,800))
+    figu = Figure(; size=figsize)
     axu = Axis(figu[1,1]; xlabel=L"z", ylabel=L"u_\parallel")
     lu = lines!(axu, z, u)
     save(prefix * "parallel_flow.pdf", figu)
 
-    figT = Figure(; size=(1200,800))
+    figT = Figure(; size=figsize)
     axT = Axis(figT[1,1]; xlabel=L"z", ylabel=L"T")
     lT = lines!(axT, z, Ti; label=L"T_{i,\parallel}")
     lines!(axT, z, Te; label=L"T_{e,\parallel}")
