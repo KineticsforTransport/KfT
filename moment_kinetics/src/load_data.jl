@@ -70,9 +70,10 @@ const em_variables = ("phi", "Er", "Ez", "vEr", "vEz")
 const ion_moment_variables = ("density", "parallel_flow", "pressure", "parallel_pressure",
                               "perpendicular_pressure", "thermal_speed", "temperature",
                               "parallel_temperature", "perpendicular_temperature",
-                              "parallel_heat_flux", "collision_frequency_ii",
-                              "Krook_collision_frequency_ii", "sound_speed",
-                              "mach_number", "total_energy", "total_energy_flux")
+                              "parallel_particle_flux", "parallel_heat_flux",
+                              "collision_frequency_ii", "Krook_collision_frequency_ii",
+                              "sound_speed", "mach_number", "total_energy",
+                              "total_energy_flux")
 const ion_moment_gradient_variables = ("ddens_dr", "ddens_dr_upwind", "ddens_dz",
                                        "ddens_dz_upwind", "dupar_dr", "dupar_dr_upwind",
                                        "dupar_dz", "dupar_dz_upwind", "dp_dr_upwind",
@@ -83,6 +84,7 @@ const ion_moment_ddt_variables = ("ddens_dt", "dnupar_dt", "dupar_dt", "dp_dt", 
 const electron_moment_variables = ("electron_density", "electron_parallel_flow",
                                    "electron_pressure", "electron_parallel_pressure",
                                    "electron_thermal_speed", "electron_temperature",
+                                   "electron_parallel_particle_flux",
                                    "electron_parallel_heat_flux",
                                    "collision_frequency_ee", "collision_frequency_ei")
 const electron_moment_ddt_variables = ("electron_dp_dt", "electron_dvth_dt")
@@ -91,8 +93,9 @@ const electron_moment_gradient_variables = ("electron_ddens_dz", "electron_dupar
                                             "electron_dT_dz", "electron_dqpar_dz")
 const neutral_moment_variables = ("density_neutral", "uz_neutral", "p_neutral",
                                   "pz_neutral", "thermal_speed_neutral",
-                                  "temperature_neutral", "qz_neutral",
-                                  "total_energy_neutral", "total_energy_flux_neutral")
+                                  "temperature_neutral", "z_particle_flux_neutral",
+                                  "qz_neutral", "total_energy_neutral",
+                                  "total_energy_flux_neutral")
 const neutral_moment_gradient_variables = ("neutral_ddens_dz", "neutral_ddens_dz_upwind",
                                            "neutral_duz_dz", "neutral_duz_dz_upwind",
                                            "neutral_dp_dz", "neutral_dp_dz_upwind",
@@ -5332,6 +5335,27 @@ const get_variable_funcs = Dict{String,Any}(
             variable = upar ./ cs
             return variable
         end,
+    "parallel_particle_flux" => (run_info; kwargs...) -> begin
+        n = get_variable(run_info, "density"; kwargs...)
+        upar = get_variable(run_info, "parallel_flow"; kwargs...)
+
+        variable = @. n * upar
+        return variable
+    end,
+    "electron_parallel_particle_flux" => (run_info; kwargs...) -> begin
+        n = get_variable(run_info, "electron_density"; kwargs...)
+        upar = get_variable(run_info, "electron_parallel_flow"; kwargs...)
+
+        variable = @. n * upar
+        return variable
+    end,
+    "z_particle_flux_neutral" => (run_info; kwargs...) -> begin
+        n = get_variable(run_info, "density_neutral"; kwargs...)
+        uz = get_variable(run_info, "uz_neutral"; kwargs...)
+
+        variable = @. n * uz
+        return variable
+    end,
     "total_energy" => (run_info; kwargs...) -> begin
             p = get_variable(run_info, "pressure"; kwargs...)
             upar = get_variable(run_info, "parallel_flow"; kwargs...)
