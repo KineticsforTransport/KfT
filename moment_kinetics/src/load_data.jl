@@ -84,6 +84,7 @@ const ion_moment_ddt_variables = ("ddens_dt", "dnupar_dt", "dupar_dt", "dp_dt", 
 const electron_moment_variables = ("electron_density", "electron_parallel_flow",
                                    "electron_pressure", "electron_parallel_pressure",
                                    "electron_thermal_speed", "electron_temperature",
+                                   "electron_parallel_temperature",
                                    "electron_parallel_particle_flux",
                                    "electron_parallel_heat_flux",
                                    "collision_frequency_ee", "collision_frequency_ei")
@@ -4625,6 +4626,12 @@ const get_variable_funcs = Dict{String,Any}(
     "parallel_temperature" => (run_info; kwargs...) -> begin
             parallel_pressure = get_variable(run_info, "parallel_pressure"; kwargs...)
             density = get_variable(run_info, "density"; kwargs...)
+            variable = parallel_pressure ./ density
+            return variable
+        end,
+    "electron_parallel_temperature" => (run_info; kwargs...) -> begin
+            parallel_pressure = get_variable(run_info, "electron_parallel_pressure"; kwargs...)
+            density = get_variable(run_info, "electron_density"; kwargs...)
             variable = parallel_pressure ./ density
             return variable
         end,
