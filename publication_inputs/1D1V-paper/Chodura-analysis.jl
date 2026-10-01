@@ -2,22 +2,21 @@ using makie_post_processing
 using makie_post_processing.CairoMakie
 using makie_post_processing: plot_f_unnorm_vs_vpa, input_dict_dfns,
                              check_Chodura_condition
-using makie_post_processing.moment_kinetics.input_structs: boltzmann_electron_response
+using makie_post_processing.moment_kinetics.input_structs: boltzmann_electron_response,
+                                                           boltzmann_electron_response_with_simple_sheath
 
-function plot_f_over_vpa2(case, xmax, ymax)
-    N_list = [32, 64, 128, 256]
-
+function plot_f_over_vpa2(case, xmax, ymax, N_list)
     fig = Figure()
     ax = Axis(fig[1,1]; limits=(-0.5, xmax, 0.0, ymax))
 
     for N ∈ N_list
-        ri = get_run_info(joinpath("runs-archer", "$(case)-$(N)el"); dfns=true)
+        ri = get_run_info("$(case)-$(N)el"; dfns=true)
 
-        if ri.composition.electron_physics === boltzmann_electron_response
+        if ri.composition.electron_physics ∈ (boltzmann_electron_response,
+                                              boltzmann_electron_response_with_simple_sheath)
             temp_e = nothing
         else
-            error("Need to get appropriate electron temperature - parallel or full "
-                  * "temperature?")
+            temp_e = get_variable(ri, "electron_parallel_temperature")
         end
 
         f_lower = get_variable(ri, "f", iz=1)
@@ -41,27 +40,44 @@ function plot_f_over_vpa2(case, xmax, ymax)
         #l = plot_f_unnorm_vs_vpa(ri; f_over_vpa2=true, input=f_input, is=1,
         #                         ax=ax, label=ri.run_name, scatter=true, markersize=5)
 
-        if extra_offset_upper > 0
+        if extra_offset_upper[1,end] > 0
             vlines!(ax, cutoff_upper[1,end]; linestyle=:dash, color=l.color)
         end
     end
 
     Legend(fig[2,1], ax; tellwidth=false, tellheight=true)
 
-    if occursin("fullf", case)
-        output_dir = joinpath("comparison_plots", "compare-archer-$case")
+    if occursin("kinetic-electrons", case)
+        output_dir = joinpath("comparison_plots", "compare-workstation-kinetic-electrons")
+        if occursin("wall", case)
+            plot_name = "wall_plus_central_f_over_vpa2.pdf"
+        elseif occursin("central", case)
+            plot_name = "central_f_over_vpa2.pdf"
+        elseif occursin("flat", case)
+            plot_name = "flat_f_over_vpa2.pdf"
+        else
+            error("Unrecognised kinetic electron case \"$case\"")
+        end
+    elseif occursin("fullf", case)
+        output_dir = joinpath("comparison_plots", "compare-archer-$(basename(case))")
+        plot_name = "f_over_vpa2.pdf"
     else
-        output_dir = joinpath("comparison_plots", "compare-archer-$case-mk")
+        output_dir = joinpath("comparison_plots", "compare-archer-$(basename(case))-mk")
+        plot_name = "f_over_vpa2.pdf"
     end
-    save(joinpath(output_dir, "f_over_vpa2.pdf"), fig)
+    save(joinpath(output_dir, plot_name), fig)
 
     return fig, ax
 end
 
 function Chodura_analysis()
-    plot_f_over_vpa2("central-ion-source-Krook", 3.0, 0.6)
-    plot_f_over_vpa2("flat-ion-source-Krook", 3.0, 0.6)
-    plot_f_over_vpa2("wall-plus-central-ion-source-Krook", 3.0, 2.0)
+    plot_f_over_vpa2(joinpath("runs-archer", "central-ion-source-Krook"), 3.0, 0.6, [32, 64, 128, 256])
+    plot_f_over_vpa2(joinpath("runs-archer", "flat-ion-source-Krook"), 3.0, 0.6, [32, 64, 128, 256])
+    plot_f_over_vpa2(joinpath("runs-archer", "wall-plus-central-ion-source-Krook"), 3.0, 2.0, [32, 64, 128, 256])
+
+    plot_f_over_vpa2(joinpath("runs-workstation", "central-ion-source-Krook--kinetic-electrons"), 3.0, 0.6, [32])
+    plot_f_over_vpa2(joinpath("runs-workstation", "flat-ion-source-Krook--kinetic-electrons"), 3.0, 0.6, [32])
+    plot_f_over_vpa2(joinpath("runs-workstation", "wall-plus-central-ion-source-Krook--kinetic-electrons"), 3.0, 2.0, [32])
 
     return nothing
 end
