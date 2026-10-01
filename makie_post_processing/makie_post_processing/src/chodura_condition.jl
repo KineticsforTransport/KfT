@@ -1,5 +1,7 @@
 using Dates
 using moment_kinetics.analysis: check_Chodura_condition
+using moment_kinetics.input_structs: boltzmann_electron_response,
+                                     boltzmann_electron_response_with_simple_sheath
 
 """
     Chodura_condition_plots(run_info::Vector{Any}; plot_prefix)
@@ -302,7 +304,12 @@ function Chodura_condition_plots(run_info; plot_prefix=nothing, output_prefix=no
     density = get_variable(run_info, "density")
     upar = get_variable(run_info, "parallel_flow")
     vth = get_variable(run_info, "thermal_speed")
-    temp_e = get_variable(run_info, "electron_temperature")
+    if ri.composition.electron_physics ∈ (boltzmann_electron_response,
+                                          boltzmann_electron_response_with_simple_sheath)
+        temp_e = nothing
+    else
+        temp_e = get_variable(run_info, "electron_parallel_temperature")
+    end
     Er = get_variable(run_info, "Er")
     f_lower = get_variable(run_info, "f", iz=1)
     f_upper = get_variable(run_info, "f", iz=run_info.z.n_global)
