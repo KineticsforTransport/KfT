@@ -918,7 +918,9 @@ function init_density!(dens, z, r, spec, n_species)
         for ir ∈ 1:r.n
             if spec[is].z_IC.initialization_option == "gaussian"
                 # initial condition is an unshifted Gaussian
-                @. dens[:,ir,is] = spec[is].initial_density + exp(-(z.grid/spec[is].z_IC.width)^2)
+                @. dens[:,ir,is] =
+                    (spec[is].initial_density
+                     + spec[is].z_IC.density_amplitude * exp(-(z.grid/spec[is].z_IC.width)^2))
             elseif spec[is].z_IC.initialization_option == "sinusoid"
                 # initial condition is sinusoid in z
                 @. dens[:,ir,is] =
