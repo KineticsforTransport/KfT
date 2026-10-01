@@ -3,6 +3,7 @@ using LaTeXStrings
 using makie_post_processing
 using makie_post_processing: regrid_variable, _run_info_to_coords
 using makie_post_processing.CairoMakie
+using makie_post_processing.moment_kinetics.calculus: integral_nd
 
 function get_error(ri, ri_highres, variable_name::String, atol::Number)
     v_highres = get_variable(ri_highres, variable_name; it=-1)
@@ -16,7 +17,20 @@ function get_error(ri, ri_highres, variable_name::String, atol::Number)
     println("      max differences ", extrema(v_highres .- v))
     minind = argmin(err)
 
-    error_rms = sqrt(sum(err.^2) / length(err))
+    error_integrand = err.^2
+
+    z = ri_highres.z
+    if ndims(err) == 2
+        # Dims = {z,r}
+        error_rms = sqrt(integral_nd(@view(error_integrand[:,1]), z) / z.L)
+    elseif ndims(err) == 3
+        # Dims = {z,r,species}
+        error_rms = sqrt(integral_nd(@view(error_integrand[:,1,1]), z) / z.L)
+    elseif ndims(err) == 5
+        # Dims = {vpa,vperp,z,r,species}
+        vpa = ri_highres.vpa
+        error_rms = sqrt(integral_nd(@view(error_integrand[:,1,:,1]), vpa, z) / (vpa.L * z.L))
+    end
     error_max = maximum(abs.(err))
 
     #return error_rms, error_max
@@ -60,7 +74,7 @@ function plot_error_scaling(case::String, variable_name::String, ax_rms, ax_max,
     s = scatter!(ax_rms, lowres_N_list, error_rms_list; marker=:x, label=variable_name)
 
     # Plot N^(-2) scaling to see if it fits.
-    scaling_line_rms = @. error_rms_list[1] * (lowres_N_list[1] / lowres_N_list)^2
+    scaling_line_rms = @. error_rms_list[end] * (lowres_N_list[end] / lowres_N_list)^2
     lines!(ax_rms, lowres_N_list, scaling_line_rms; color=s.color, linestyle=:dot)
 
     # Plots for max errors.
@@ -70,7 +84,7 @@ function plot_error_scaling(case::String, variable_name::String, ax_rms, ax_max,
     s = scatter!(ax_max, lowres_N_list, error_max_list; marker=:x, label=variable_name)
 
     # Plot N^(-2) scaling to see if it fits.
-    scaling_line_max = @. error_max_list[1] * (lowres_N_list[1] / lowres_N_list)^2
+    scaling_line_max = @. error_max_list[end] * (lowres_N_list[end] / lowres_N_list)^2
     lines!(ax_max, lowres_N_list, scaling_line_max; color=s.color, linestyle=:dot)
 
     return nothing
@@ -107,7 +121,10 @@ function make_convergence_plots(case)
 end
 
 function make_all_convergence_plots()
-    make_convergence_plots("wall-plus-central-ion-source-Krook")
+    for case ∈ ["central-ion-source-Krook", "flat-ion-source-Krook",
+                "wall-plus-central-ion-source-Krook"]
+        make_convergence_plots(case)
+    end
     return nothing
 end
 
