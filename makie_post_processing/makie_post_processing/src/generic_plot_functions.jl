@@ -3223,69 +3223,10 @@ is the case for heatmap/image.
 
 `ys` be an array of size (nx,ny) or a vector of size (ny).
 
-`kwargs` are passed to Makie's `mesh()` function.
-
-Code adapted from: https://github.com/MakieOrg/Makie.jl/issues/742#issuecomment-1415809653
+`kwargs` are passed to Makie's `surface!()` function.
 """
-function irregular_heatmap!(ax, xs, ys, zs; kwargs...)
-    if xs isa Observable
-        ndims_x = ndims(xs.val)
-        if ndims_x == 1
-            nx = length(xs.val)
-        else
-            nx = size(xs.val, 1)
-        end
-    else
-        ndims_x = ndims(xs)
-        if ndims(xs) == 1
-            nx = length(xs)
-        else
-            nx = size(xs, 1)
-        end
-    end
-    if ys isa Observable
-        ndims_y = ndims(ys.val)
-        if ndims_y == 1
-            ny = length(ys.val)
-        else
-            ny = size(ys.val, 2)
-        end
-    else
-        ndims_y = ndims(ys)
-        if ndims_y == 1
-            ny = length(ys)
-        else
-            ny = size(ys, 2)
-        end
-    end
-
-    if zs isa Observable
-        ni, nj = size(zs.val)
-    else
-        ni, nj = size(zs)
-    end
-    @assert (nx == ni+1) & (ny == nj+1) "Expected nx, ny = ni+1, nj+1; got nx=$nx, ny=$ny, ni=$ni, nj=$nj.  nx/y are size(xs)/size(ys), ni/j are size(zs)."
-
-    if ndims_x == 1
-        # Copy to an array of size (nx,ny)
-        if xs isa Observable
-            xs = lift(x->repeat(x, 1, ny), x)
-        else
-            xs = repeat(xs, 1, ny)
-        end
-    end
-    if ndims_y == 1
-        # Copy to an array of size (nx,ny)
-        if ys isa Observable
-            ys = lift(x->repeat(x', nx, 1), ys)
-        else
-            ys = repeat(ys', nx, 1)
-        end
-    end
-
-    vertices, faces, colors = curvilinear_grid_mesh(xs, ys, zeros(nx, ny), zs)
-
-    return mesh!(ax, vertices, faces; color = colors, shading = NoShading, kwargs...)
+function irregular_heatmap!(ax, xs, ys, zs; shading=NoShading, kwargs...)
+    return surface!(ax, xs, ys, zeros(size(zs)); color=zs, shading, kwargs...)
 end
 
 """
