@@ -304,8 +304,8 @@ function Chodura_condition_plots(run_info; plot_prefix=nothing, output_prefix=no
     density = get_variable(run_info, "density")
     upar = get_variable(run_info, "parallel_flow")
     vth = get_variable(run_info, "thermal_speed")
-    if ri.composition.electron_physics ∈ (boltzmann_electron_response,
-                                          boltzmann_electron_response_with_simple_sheath)
+    if run_info.composition.electron_physics ∈ (boltzmann_electron_response,
+                                                boltzmann_electron_response_with_simple_sheath)
         temp_e = nothing
     else
         temp_e = get_variable(run_info, "electron_parallel_temperature")
