@@ -50,11 +50,11 @@ function plot_f_over_vpa2(case, xmax, ymax, N_list)
     if occursin("kinetic-electrons", case)
         output_dir = joinpath("comparison_plots", "compare-workstation-kinetic-electrons")
         if occursin("wall", case)
-            plot_name = "wall_plus_central_f_over_vpa2.pdf"
+            plot_name = "KE_wall_plus_central_f_over_vpa2.pdf"
         elseif occursin("central", case)
-            plot_name = "central_f_over_vpa2.pdf"
+            plot_name = "KE_central_f_over_vpa2.pdf"
         elseif occursin("flat", case)
-            plot_name = "flat_f_over_vpa2.pdf"
+            plot_name = "KE_flat_f_over_vpa2.pdf"
         else
             error("Unrecognised kinetic electron case \"$case\"")
         end
@@ -75,9 +75,9 @@ function Chodura_analysis()
     plot_f_over_vpa2(joinpath("runs-archer", "flat-ion-source-Krook"), 3.0, 0.6, [32, 64, 128, 256])
     plot_f_over_vpa2(joinpath("runs-archer", "wall-plus-central-ion-source-Krook"), 3.0, 2.0, [32, 64, 128, 256])
 
-    plot_f_over_vpa2(joinpath("runs-workstation", "central-ion-source-Krook--kinetic-electrons"), 3.0, 0.6, [32])
-    plot_f_over_vpa2(joinpath("runs-workstation", "flat-ion-source-Krook--kinetic-electrons"), 3.0, 0.6, [32])
-    plot_f_over_vpa2(joinpath("runs-workstation", "wall-plus-central-ion-source-Krook--kinetic-electrons"), 3.0, 2.0, [32])
+    plot_f_over_vpa2(joinpath("runs-workstation", "central-ion-source-Krook--kinetic-electrons"), 3.0, 3.0, [32])
+    plot_f_over_vpa2(joinpath("runs-workstation", "flat-ion-source-Krook--kinetic-electrons"), 3.0, 3.0, [32])
+    plot_f_over_vpa2(joinpath("runs-workstation", "wall-plus-central-ion-source-Krook--kinetic-electrons"), 3.0, 50.0, [32])
 
     return nothing
 end
