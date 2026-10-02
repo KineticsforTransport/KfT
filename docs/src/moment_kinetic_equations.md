@@ -1240,7 +1240,7 @@ $\bar{F}_s(t,z,w_\parallel,w_\perp) = \frac{v_{Ti}}{n_i} \bar{f}_s(t,z,v_\parall
 Finally
 ```math
 \begin{align}
-&\frac{\partial \bar{F}_i}{\partial t} + \dot{z} \frac{\partial \bar{F}_i}{\partial z} + \dot{w}_\parallel \frac{\partial \bar{F}_i}{\partial w_\parallel} + \dot{w}_\perp \frac{\partial \bar{F}_i}{\partial w_\perp}
+&\frac{\partial \bar{F}_i}{\partial t} + \dot{z} \frac{\partial \bar{F}_i}{\partial z} + \dot{w}_\parallel \frac{\partial \bar{F}_i}{\partial w_\parallel}
     = \dot{\bar{F}}_i + \bar{\mathcal{C}}_i + \frac{v_{Ti}}{n_i} \bar{S}_i \\
 \end{align}
 ```
