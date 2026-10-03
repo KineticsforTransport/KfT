@@ -3252,7 +3252,12 @@ is the case for heatmap/image.
 `kwargs` are passed to Makie's `surface!()` function.
 """
 function irregular_heatmap!(ax, xs, ys, zs; shading=NoShading, kwargs...)
-    return surface!(ax, xs, ys, zeros(size(zs)); color=zs, shading, kwargs...)
+    if isa(zs, Observable)
+        s = size(zs.val)
+    else
+        s = size(zs)
+    end
+    return surface!(ax, xs, ys, zeros(s); color=zs, shading, kwargs...)
 end
 
 """
