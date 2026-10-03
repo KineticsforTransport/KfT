@@ -260,17 +260,17 @@ for (dim1, dim2) ∈ two_dimension_combinations
              """
                  $($function_name_str)(run_info::Vector{Any}, var_name; is=1, data=nothing,
                  $($spaces)input=nothing, outfile=nothing, colorscale=identity,
-                 $($spaces)transform=identity, axis_args=Dict{Symbol,Any}(),
-                 $($spaces)it=nothing, ir=nothing, iz=nothing, ivperp=nothing,
-                 $($spaces)ivpa=nothing, ivzeta=nothing, ivr=nothing, ivz=nothing,
-                 $($spaces)kwargs...)
+                 $($spaces)transform=identity, transpose_axes=false,
+                 $($spaces)axis_args=Dict{Symbol,Any}(), it=nothing, ir=nothing, iz=nothing,
+                 $($spaces)ivperp=nothing, ivpa=nothing, ivzeta=nothing, ivr=nothing,
+                 $($spaces)ivz=nothing, kwargs...)
                  $($function_name_str)(run_info, var_name; is=1, data=nothing,
                  $($spaces)input=nothing, ax=nothing,
                  $($spaces)colorbar_place=nothing, title=nothing,
                  $($spaces)outfile=nothing, colorscale=identity, transform=identity,
-                 $($spaces)axis_args=Dict{Symbol,Any}(), it=nothing, ir=nothing,
-                 $($spaces)iz=nothing, ivperp=nothing, ivpa=nothing, ivzeta=nothing,
-                 $($spaces)ivr=nothing, ivz=nothing, kwargs...)
+                 $($spaces)transpose_axes=false, axis_args=Dict{Symbol,Any}(), it=nothing,
+                 $($spaces)ir=nothing, iz=nothing, ivperp=nothing, ivpa=nothing,
+                 $($spaces)ivzeta=nothing, ivr=nothing, ivz=nothing, kwargs...)
 
              Plot `var_name` from the run(s) represented by `run_info` (as returned by
              [`get_run_info`](@ref))vs $($dim1_str) and $($dim2_str).
@@ -292,6 +292,8 @@ for (dim1, dim2) ∈ two_dimension_combinations
              using a log scale on data that may contain some negative values it might be
              useful to pass `transform=abs` (to plot the absolute value) or
              `transform=positive_or_nan` (to ignore any negative or zero values).
+
+             `transpose_axes=true` can be passed to transpose_axes the axes of the plot.
 
              `axis_args` are passed as keyword arguments to `get_2d_ax()`, and from there
              to the `Axis` constructor.
@@ -1300,18 +1302,18 @@ for (dim1, dim2) ∈ two_dimension_combinations_no_t
              """
                  $($function_name_str)(run_info::Vector{Any}, var_name; is=1, data=nothing,
                  $($spaces)input=nothing, outfile=nothing, colorscale=identity,
-                 $($spaces)transform=identity, axis_args=Dict{Symbol,Any}(),
-                 $($spaces)it=nothing, ir=nothing, iz=nothing, ivperp=nothing,
-                 $($spaces)ivpa=nothing, ivzeta=nothing, ivr=nothing, ivz=nothing,
-                 $($spaces)kwargs...)
+                 $($spaces)transform=identity, transpose_axes=false,
+                 $($spaces)axis_args=Dict{Symbol,Any}(),it=nothing, ir=nothing, iz=nothing,
+                 $($spaces)ivperp=nothing, ivpa=nothing, ivzeta=nothing, ivr=nothing,
+                 $($spaces)ivz=nothing, kwargs...)
                  $($function_name_str)(run_info, var_name; is=1, data=nothing,
                  $($spaces)input=nothing, frame_index=nothing, ax=nothing,
                  $($spaces)fig=nothing, colorbar_place=colorbar_place,
                  $($spaces)title=nothing, outfile=nothing, colorscale=identity,
-                 $($spaces)transform=identity, axis_args=Dict{Symbol,Any}(),
-                 $($spaces)it=nothing, ir=nothing, iz=nothing, ivperp=nothing,
-                 $($spaces)ivpa=nothing, ivzeta=nothing, ivr=nothing, ivz=nothing,
-                 $($spaces)kwargs...)
+                 $($spaces)transform=identity, transpose_axes=false,
+                 $($spaces)axis_args=Dict{Symbol,Any}(), it=nothing, ir=nothing, iz=nothing,
+                 $($spaces)ivperp=nothing, ivpa=nothing, ivzeta=nothing, ivr=nothing,
+                 $($spaces)ivz=nothing, kwargs...)
 
              Animate `var_name` from the run(s) represented by `run_info` (as returned by
              [`get_run_info`](@ref))vs $($dim1_str) and $($dim2_str).
@@ -1331,6 +1333,8 @@ for (dim1, dim2) ∈ two_dimension_combinations_no_t
              using a log scale on data that may contain some negative values it might be
              useful to pass `transform=abs` (to plot the absolute value) or
              `transform=positive_or_nan` (to ignore any negative or zero values).
+
+             `transpose_axes=true` can be passed to transpose_axes the axes of the plot.
 
              `axis_args` are passed as keyword arguments to `get_2d_ax()`, and from there
              to the `Axis` constructor.
@@ -1792,8 +1796,8 @@ end
 """
     plot_2d(xcoord, ycoord, data; ax=nothing, colorbar_place=nothing, xlabel=nothing,
             ylabel=nothing, title=nothing, colormap="reverse_deep",
-            colorscale=nothing, transform=identity, axis_args=Dict{Symbol,Any}(),
-            kwargs...)
+            colorscale=nothing, transform=identity, transpose_axes=false,
+            axis_args=Dict{Symbol,Any}(), kwargs...)
 
 Make a 2d plot of `data` vs `xcoord` and `ycoord`.
 
@@ -1806,6 +1810,8 @@ Make a 2d plot of `data` vs `xcoord` and `ycoord`.
 before it is plotted. For example when using a log scale on data that may contain some
 negative values it might be useful to pass `transform=abs` (to plot the absolute value) or
 `transform=positive_or_nan` (to ignore any negative or zero values).
+
+`transpose_axes=true` can be passed to transpose_axes the axes of the plot.
 
 If `ax` is passed, the plot will be added to that existing `Axis`, otherwise a new
 `Figure` and `Axis` will be created.
@@ -1830,8 +1836,8 @@ If `ax` is not passed, returns the `Figure`, otherwise returns the object return
 """
 function plot_2d(xcoord, ycoord, data; ax=nothing, colorbar_place=nothing, xlabel=nothing,
                  ylabel=nothing, title=nothing, colormap="reverse_deep",
-                 colorscale=nothing, transform=identity, axis_args=Dict{Symbol,Any}(),
-                 kwargs...)
+                 colorscale=nothing, transform=identity, transpose_axes=false,
+                 axis_args=Dict{Symbol,Any}(), kwargs...)
     if ax === nothing
         fig, ax, colorbar_place = get_2d_ax(; axis_args...)
     else
@@ -1895,10 +1901,18 @@ function plot_2d(xcoord, ycoord, data; ax=nothing, colorbar_place=nothing, xlabe
     else
         ndims_y = ndims(ycoord)
     end
-    if ndims_x == 1 && ndims_y == 1
-        hm = heatmap!(ax, xcoord, ycoord, data; colormap=colormap, kwargs...)
+    if transpose_axes
+        if ndims_x == 1 && ndims_y == 1
+            hm = heatmap!(ax, ycoord, xcoord, data'; colormap=colormap, kwargs...)
+        else
+            hm = irregular_heatmap!(ax, ycoord', xcoord', data'; colormap=colormap, kwargs...)
+        end
     else
-        hm = irregular_heatmap!(ax, xcoord, ycoord, data; colormap=colormap, kwargs...)
+        if ndims_x == 1 && ndims_y == 1
+            hm = heatmap!(ax, xcoord, ycoord, data; colormap=colormap, kwargs...)
+        else
+            hm = irregular_heatmap!(ax, xcoord, ycoord, data; colormap=colormap, kwargs...)
+        end
     end
 
     if colorbar_place === nothing
@@ -2087,7 +2101,8 @@ end
     animate_2d(xcoord, ycoord, data; frame_index=nothing, ax=nothing, fig=nothing,
                colorbar_place=nothing, xlabel=nothing, ylabel=nothing, title=nothing,
                outfile=nothing, colormap="reverse_deep", colorscale=nothing,
-               transform=identity, axis_args=Dict{Symbol,Any}(), kwargs...)
+               transform=identity, transpose_axes=false, axis_args=Dict{Symbol,Any}(),
+               kwargs...)
 
 Make a 2d animation of `data` vs `xcoord` and `ycoord`.
 
@@ -2100,6 +2115,8 @@ Make a 2d animation of `data` vs `xcoord` and `ycoord`.
 before it is plotted. For example when using a log scale on data that may contain some
 negative values it might be useful to pass `transform=abs` (to plot the absolute value) or
 `transform=positive_or_nan` (to ignore any negative or zero values).
+
+`transpose_axes=true` can be passed to transpose_axes the axes of the plot.
 
 If `ax` is passed, the animation will be added to that existing `Axis`, otherwise a new
 `Figure` and `Axis` will be created. If `ax` is passed, you should also pass an
@@ -2132,7 +2149,8 @@ If `ax` is not passed, returns the `Figure`, otherwise returns the object return
 function animate_2d(xcoord, ycoord, data; frame_index=nothing, ax=nothing, fig=nothing,
                     colorbar_place=nothing, xlabel=nothing, ylabel=nothing, title=nothing,
                     outfile=nothing, colormap="reverse_deep", colorscale=nothing,
-                    transform=identity, axis_args=Dict{Symbol,Any}(), kwargs...)
+                    transform=identity, transpose_axes=false, axis_args=Dict{Symbol,Any}(),
+                    kwargs...)
     colormap = parse_colormap(colormap)
 
     if ax === nothing
@@ -2178,10 +2196,18 @@ function animate_2d(xcoord, ycoord, data; frame_index=nothing, ax=nothing, fig=n
         # non-identical limits
         kwargs = tuple(kwargs..., :colorrange=>(1.0 - 1.0e-3, 1.0 + 1.0e-3))
     end
-    if ndims(xcoord) == 1 && ndims(ycoord) == 1
-        hm = heatmap!(ax, xcoord, ycoord, heatmap_data; colormap=colormap, kwargs...)
+    if transpose_axes
+        if ndims(xcoord) == 1 && ndims(ycoord) == 1
+            hm = heatmap!(ax, ycoord, xcoord, heatmap_data'; colormap=colormap, kwargs...)
+        else
+            hm = irregular_heatmap!(ax, ycoord', xcoord', heatmap_data'; colormap=colormap, kwargs...)
+        end
     else
-        hm = irregular_heatmap!(ax, xcoord, ycoord, heatmap_data; colormap=colormap, kwargs...)
+        if ndims(xcoord) == 1 && ndims(ycoord) == 1
+            hm = heatmap!(ax, xcoord, ycoord, heatmap_data; colormap=colormap, kwargs...)
+        else
+            hm = irregular_heatmap!(ax, xcoord, ycoord, heatmap_data; colormap=colormap, kwargs...)
+        end
     end
     Colorbar(colorbar_place, hm)
 
