@@ -192,15 +192,18 @@ struct io_moments_info{Tfile, Ttime, Tphi, Tmomi, Tmome, Tmomn, Tchodura_lower,
     external_source_electron_pressure_amplitude::Texte4
 
     # handles for constraint coefficients
-    ion_constraints_A_coefficient::Tconstri
-    ion_constraints_B_coefficient::Tconstri
-    ion_constraints_C_coefficient::Tconstri
-    neutral_constraints_A_coefficient::Tconstrn
-    neutral_constraints_B_coefficient::Tconstrn
-    neutral_constraints_C_coefficient::Tconstrn
-    electron_constraints_A_coefficient::Tconstre
-    electron_constraints_B_coefficient::Tconstre
-    electron_constraints_C_coefficient::Tconstre
+    ion_constraints_absAminus1_coefficient_sum::Tconstri
+    ion_constraints_absB_coefficient_sum::Tconstri
+    ion_constraints_absC_coefficient_sum::Tconstri
+    ion_constraints_count::Tint
+    neutral_constraints_absAminus1_coefficient_sum::Tconstrn
+    neutral_constraints_absB_coefficient_sum::Tconstrn
+    neutral_constraints_absC_coefficient_sum::Tconstrn
+    neutral_constraints_count::Tint
+    electron_constraints_absAminus1_coefficient_sum::Tconstre
+    electron_constraints_absB_coefficient_sum::Tconstre
+    electron_constraints_absC_coefficient_sum::Tconstre
+    electron_constraints_count::Tint
 
     # cumulative wall clock time taken by the run
     time_for_run::Ttime
@@ -316,9 +319,10 @@ struct io_initial_electron_info{Tfile, Tfe, Tmom, Texte1, Texte2, Texte3, Texte4
     external_source_electron_momentum_amplitude::Texte3
     external_source_electron_pressure_amplitude::Texte4
     # handles for constraint coefficients
-    electron_constraints_A_coefficient::Tconstr
-    electron_constraints_B_coefficient::Tconstr
-    electron_constraints_C_coefficient::Tconstr
+    electron_constraints_absAminus1_coefficient_sum::Tconstr
+    electron_constraints_absB_coefficient_sum::Tconstr
+    electron_constraints_absC_coefficient_sum::Tconstr
+    electron_constraints_count::Telectronint
     # Electrostatic potential stored to save the value set by the electron boundary
     # condition.
     phi::Tmom
@@ -583,10 +587,11 @@ function setup_electron_io(io_input, vpa, vperp, z, r, composition, collisions,
         external_source_electron_T_array, external_source_electron_density_amplitude,
         external_source_electron_momentum_amplitude,
         external_source_electron_pressure_amplitude,
-        electron_constraints_A_coefficient, electron_constraints_B_coefficient,
-        electron_constraints_C_coefficient, io_electron_step_counter, io_electron_dt,
-        io_electron_previous_dt, io_electron_failure_counter,
-        io_electron_dt_before_last_fail =
+        electron_constraints_absAminus1_coefficient_sum,
+        electron_constraints_absB_coefficient_sum,
+        electron_constraints_absC_coefficient_sum, electron_constraints_count,
+        io_electron_step_counter, io_electron_dt, io_electron_previous_dt,
+        io_electron_failure_counter, io_electron_dt_before_last_fail =
             define_dynamic_electron_moment_variables!(fid, r, z, parallel_io,
                                                       external_source_settings,
                                                       evolve_density, evolve_upar,
@@ -670,9 +675,10 @@ function reopen_initial_electron_io(file_info, ir)
                                         getvar("external_source_electron_density_amplitude"),
                                         getvar("external_source_electron_momentum_amplitude"),
                                         getvar("external_source_electron_pressure_amplitude"),
-                                        getvar("electron_constraints_A_coefficient"),
-                                        getvar("electron_constraints_B_coefficient"),
-                                        getvar("electron_constraints_C_coefficient"),
+                                        getvar("electron_constraints_absAminus1_coefficient_sum"),
+                                        getvar("electron_constraints_absB_coefficient_sum"),
+                                        getvar("electron_constraints_absC_coefficient_sum"),
+                                        getvar("electron_constraints_count"),
                                         getvar("phi"),
                                         getvar("electron_step_counter"),
                                         getvar("electron_local_pseudotime"),
@@ -1152,8 +1158,9 @@ function define_dynamic_moment_variables!(fid, n_ion_species, n_neutral_species,
         external_source_amplitude, external_source_T_array,
         external_source_density_amplitude, external_source_momentum_amplitude,
         external_source_pressure_amplitude, external_source_controller_integral,
-        io_chodura_lower, io_chodura_upper, ion_constraints_A_coefficient,
-        ion_constraints_B_coefficient, ion_constraints_C_coefficient =
+        io_chodura_lower, io_chodura_upper, ion_constraints_absAminus1_coefficient_sum,
+        ion_constraints_absB_coefficient_sum, ion_constraints_absC_coefficient_sum,
+        ion_constraints_count, =
             define_dynamic_ion_moment_variables!(fid, n_ion_species, r, z, parallel_io,
                                                  external_source_settings, evolve_density,
                                                  evolve_upar, evolve_p,
@@ -1168,10 +1175,12 @@ function define_dynamic_moment_variables!(fid, n_ion_species, n_neutral_species,
         external_source_electron_T_array, external_source_electron_density_amplitude,
         external_source_electron_momentum_amplitude,
         external_source_electron_pressure_amplitude,
-        electron_constraints_A_coefficient, electron_constraints_B_coefficient,
-        electron_constraints_C_coefficient, io_electron_step_counter,
-        io_electron_cumulative_pseudotime, io_electron_dt, io_electron_previous_dt,
-        io_electron_failure_counter, io_electron_dt_before_last_fail =
+        electron_constraints_absAminus1_coefficient_sum,
+        electron_constraints_absB_coefficient_sum,
+        electron_constraints_absC_coefficient_sum, electron_constraints_count,
+        io_electron_step_counter, io_electron_cumulative_pseudotime, io_electron_dt,
+        io_electron_previous_dt, io_electron_failure_counter,
+        io_electron_dt_before_last_fail =
             define_dynamic_electron_moment_variables!(fid, r, z, parallel_io,
                                                       external_source_settings,
                                                       evolve_density, evolve_upar,
@@ -1188,8 +1197,10 @@ function define_dynamic_moment_variables!(fid, n_ion_species, n_neutral_species,
         external_source_neutral_T_array, external_source_neutral_density_amplitude,
         external_source_neutral_momentum_amplitude,
         external_source_neutral_pressure_amplitude,
-        external_source_neutral_controller_integral, neutral_constraints_A_coefficient,
-        neutral_constraints_B_coefficient, neutral_constraints_C_coefficient =
+        external_source_neutral_controller_integral,
+        neutral_constraints_absAminus1_coefficient_sum,
+        neutral_constraints_absB_coefficient_sum,
+        neutral_constraints_absC_coefficient_sum, neutral_constraints_count =
             define_dynamic_neutral_moment_variables!(fid, n_neutral_species, r, z,
                                                      parallel_io,
                                                      external_source_settings,
@@ -1293,15 +1304,18 @@ function define_dynamic_moment_variables!(fid, n_ion_species, n_neutral_species,
                                external_source_electron_density_amplitude,
                                external_source_electron_momentum_amplitude,
                                external_source_electron_pressure_amplitude,
-                               ion_constraints_A_coefficient,
-                               ion_constraints_B_coefficient,
-                               ion_constraints_C_coefficient,
-                               neutral_constraints_A_coefficient,
-                               neutral_constraints_B_coefficient,
-                               neutral_constraints_C_coefficient,
-                               electron_constraints_A_coefficient,
-                               electron_constraints_B_coefficient,
-                               electron_constraints_C_coefficient,
+                               ion_constraints_absAminus1_coefficient_sum,
+                               ion_constraints_absB_coefficient_sum,
+                               ion_constraints_absC_coefficient_sum,
+                               ion_constraints_count,
+                               neutral_constraints_absAminus1_coefficient_sum,
+                               neutral_constraints_absB_coefficient_sum,
+                               neutral_constraints_absC_coefficient_sum,
+                               neutral_constraints_count,
+                               electron_constraints_absAminus1_coefficient_sum,
+                               electron_constraints_absB_coefficient_sum,
+                               electron_constraints_absC_coefficient_sum,
+                               electron_constraints_count,
                                io_time_for_run, io_step_counter, io_dt, io_previous_dt,
                                io_failure_counter, io_dt_before_last_fail,
                                io_electron_step_counter,
@@ -1541,22 +1555,26 @@ function define_dynamic_ion_moment_variables!(fid, n_ion_species, r::coordinate,
     end
 
     if evolve_density || evolve_upar || evolve_p
-        ion_constraints_A_coefficient =
-            create_dynamic_variable!(dynamic, "ion_constraints_A_coefficient", mk_float,
+        ion_constraints_absAminus1_coefficient_sum =
+            create_dynamic_variable!(dynamic, "ion_constraints_absAminus1_coefficient_sum", mk_float,
                                      z, r, ion_species_coord; parallel_io=parallel_io,
-                                     description="'A' coefficient enforcing density constraint for ions")
-        ion_constraints_B_coefficient =
-            create_dynamic_variable!(dynamic, "ion_constraints_B_coefficient", mk_float,
+                                     description="sum of 'abs(A-1)' coefficient enforcing density constraint for ions")
+        ion_constraints_absB_coefficient_sum =
+            create_dynamic_variable!(dynamic, "ion_constraints_absB_coefficient_sum", mk_float,
                                      z, r, ion_species_coord; parallel_io=parallel_io,
-                                     description="'B' coefficient enforcing flow constraint for ions")
-        ion_constraints_C_coefficient =
-            create_dynamic_variable!(dynamic, "ion_constraints_C_coefficient", mk_float,
+                                     description="sum of 'abs(B)' coefficient enforcing flow constraint for ions")
+        ion_constraints_absC_coefficient_sum =
+            create_dynamic_variable!(dynamic, "ion_constraints_absC_coefficient_sum", mk_float,
                                      z, r, ion_species_coord; parallel_io=parallel_io,
-                                     description="'C' coefficient enforcing pressure constraint for ions")
+                                     description="sum of 'abs(C)' coefficient enforcing pressure constraint for ions")
+        ion_constraints_count =
+            create_dynamic_variable!(dynamic, "ion_constraints_count", mk_int; parallel_io=parallel_io,
+                                     description="number of times constraint for ions have been enforced")
     else
-           ion_constraints_A_coefficient = nothing
-           ion_constraints_B_coefficient = nothing
-           ion_constraints_C_coefficient = nothing
+        ion_constraints_absAminus1_coefficient_sum = nothing
+        ion_constraints_absB_coefficient_sum = nothing
+        ion_constraints_absC_coefficient_sum = nothing
+        ion_constraints_count = nothing
     end
 
     return io_density, io_density_loworder, io_density_start_last_timestep, io_upar,
@@ -1565,8 +1583,9 @@ function define_dynamic_ion_moment_variables!(fid, n_ion_species, r::coordinate,
            external_source_amplitude, external_source_T_array, external_source_density_amplitude,
            external_source_momentum_amplitude, external_source_pressure_amplitude,
            external_source_controller_integral, io_chodura_lower, io_chodura_upper,
-           ion_constraints_A_coefficient, ion_constraints_B_coefficient,
-           ion_constraints_C_coefficient
+           ion_constraints_absAminus1_coefficient_sum,
+           ion_constraints_absB_coefficient_sum, ion_constraints_absC_coefficient_sum,
+           ion_constraints_count
 end
 
 """
@@ -1719,18 +1738,21 @@ function define_dynamic_electron_moment_variables!(fid, r::coordinate, z::coordi
         external_source_electron_pressure_amplitude = nothing
     end
 
-    electron_constraints_A_coefficient =
-        create_dynamic_variable!(dynamic, "electron_constraints_A_coefficient", mk_float, z, io_r;
+    electron_constraints_absAminus1_coefficient_sum =
+        create_dynamic_variable!(dynamic, "electron_constraints_absAminus1_coefficient_sum", mk_float, z, io_r;
                                  parallel_io=parallel_io,
                                  description="'A' coefficient enforcing density constraint for electrons")
-    electron_constraints_B_coefficient =
-        create_dynamic_variable!(dynamic, "electron_constraints_B_coefficient", mk_float, z, io_r;
+    electron_constraints_absB_coefficient_sum =
+        create_dynamic_variable!(dynamic, "electron_constraints_absB_coefficient_sum", mk_float, z, io_r;
                                  parallel_io=parallel_io,
                                  description="'B' coefficient enforcing flow constraint for electrons")
-    electron_constraints_C_coefficient =
-        create_dynamic_variable!(dynamic, "electron_constraints_C_coefficient", mk_float, z, io_r;
+    electron_constraints_absC_coefficient_sum =
+        create_dynamic_variable!(dynamic, "electron_constraints_absC_coefficient_sum", mk_float, z, io_r;
                                  parallel_io=parallel_io,
                                  description="'C' coefficient enforcing pressure constraint for electrons")
+    electron_constraints_count =
+        create_dynamic_variable!(dynamic, "electron_constraints_count", mk_int; parallel_io=parallel_io,
+                                 description="number of times constraint for electrons have been enforced")
 
     if electron_physics ∈ (kinetic_electrons, kinetic_electrons_with_temperature_equation)
         io_electron_step_counter = create_dynamic_variable!(
@@ -1792,10 +1814,12 @@ function define_dynamic_electron_moment_variables!(fid, r::coordinate, z::coordi
            external_source_electron_density_amplitude,
            external_source_electron_momentum_amplitude,
            external_source_electron_pressure_amplitude,
-           electron_constraints_A_coefficient, electron_constraints_B_coefficient,
-           electron_constraints_C_coefficient, io_electron_step_counter,
-           io_electron_cumulative_pseudotime, io_electron_dt, io_electron_previous_dt,
-           io_electron_failure_counter, io_electron_dt_before_last_fail
+           electron_constraints_absAminus1_coefficient_sum,
+           electron_constraints_absB_coefficient_sum,
+           electron_constraints_absC_coefficient_sum, electron_constraints_count,
+           io_electron_step_counter, io_electron_cumulative_pseudotime, io_electron_dt,
+           io_electron_previous_dt, io_electron_failure_counter,
+           io_electron_dt_before_last_fail
 end
 
 """
@@ -1966,25 +1990,29 @@ function define_dynamic_neutral_moment_variables!(fid, n_neutral_species, r::coo
     end
 
     if evolve_density || evolve_upar || evolve_p
-        neutral_constraints_A_coefficient =
-            create_dynamic_variable!(dynamic, "neutral_constraints_A_coefficient",
+        neutral_constraints_absAminus1_coefficient_sum =
+            create_dynamic_variable!(dynamic, "neutral_constraints_absAminus1_coefficient_sum",
                                      mk_float, z, r, neutral_species_coord;
                                      parallel_io=parallel_io,
                                      description="'A' coefficient enforcing density constraint for neutrals")
-        neutral_constraints_B_coefficient =
-            create_dynamic_variable!(dynamic, "neutral_constraints_B_coefficient",
+        neutral_constraints_absB_coefficient_sum =
+            create_dynamic_variable!(dynamic, "neutral_constraints_absB_coefficient_sum",
                                      mk_float, z, r, neutral_species_coord;
                                      parallel_io=parallel_io,
                                      description="'B' coefficient enforcing flow constraint for neutrals")
-        neutral_constraints_C_coefficient =
-            create_dynamic_variable!(dynamic, "neutral_constraints_C_coefficient",
+        neutral_constraints_absC_coefficient_sum =
+            create_dynamic_variable!(dynamic, "neutral_constraints_absC_coefficient_sum",
                                      mk_float, z, r, neutral_species_coord;
                                      parallel_io=parallel_io,
                                      description="'C' coefficient enforcing pressure constraint for neutrals")
+        neutral_constraints_count =
+            create_dynamic_variable!(dynamic, "neutral_constraints_count", mk_int; parallel_io=parallel_io,
+                                     description="number of times constraint for neutrals have been enforced")
     else
-           neutral_constraints_A_coefficient = nothing
-           neutral_constraints_B_coefficient = nothing
-           neutral_constraints_C_coefficient = nothing
+        neutral_constraints_absAminus1_coefficient_sum = nothing
+        neutral_constraints_absB_coefficient_sum = nothing
+        neutral_constraints_absC_coefficient_sum = nothing
+        neutral_constraints_count = nothing
     end
 
     return io_density_neutral, io_density_neutral_loworder,
@@ -1995,8 +2023,10 @@ function define_dynamic_neutral_moment_variables!(fid, n_neutral_species, r::coo
            external_source_neutral_T_array, external_source_neutral_density_amplitude,
            external_source_neutral_momentum_amplitude,
            external_source_neutral_pressure_amplitude,
-           external_source_neutral_controller_integral, neutral_constraints_A_coefficient,
-           neutral_constraints_B_coefficient, neutral_constraints_C_coefficient
+           external_source_neutral_controller_integral,
+           neutral_constraints_absAminus1_coefficient_sum,
+           neutral_constraints_absB_coefficient_sum,
+           neutral_constraints_absC_coefficient_sum, neutral_constraints_count
 end
 
 """
@@ -2293,15 +2323,18 @@ function reopen_moments_io(file_info)
                                getvar("external_source_electron_density_amplitude"),
                                getvar("external_source_electron_momentum_amplitude"),
                                getvar("external_source_electron_pressure_amplitude"),
-                               getvar("ion_constraints_A_coefficient"),
-                               getvar("ion_constraints_B_coefficient"),
-                               getvar("ion_constraints_C_coefficient"),
-                               getvar("neutral_constraints_A_coefficient"),
-                               getvar("neutral_constraints_B_coefficient"),
-                               getvar("neutral_constraints_C_coefficient"),
-                               getvar("electron_constraints_A_coefficient"),
-                               getvar("electron_constraints_B_coefficient"),
-                               getvar("electron_constraints_C_coefficient"),
+                               getvar("ion_constraints_absAminus1_coefficient_sum"),
+                               getvar("ion_constraints_absB_coefficient_sum"),
+                               getvar("ion_constraints_absC_coefficient_sum"),
+                               getvar("ion_constraints_count"),
+                               getvar("neutral_constraints_absAminus1_coefficient_sum"),
+                               getvar("neutral_constraints_absB_coefficient_sum"),
+                               getvar("neutral_constraints_absC_coefficient_sum"),
+                               getvar("neutral_constraints_count"),
+                               getvar("electron_constraints_absAminus1_coefficient_sum"),
+                               getvar("electron_constraints_absB_coefficient_sum"),
+                               getvar("electron_constraints_absC_coefficient_sum"),
+                               getvar("electron_constraints_count"),
                                timing["time_for_run"], getvar("step_counter"),
                                getvar("dt"), getvar("previous_dt"), getvar("failure_counter"),
                                getvar("dt_before_last_fail"),getvar("electron_step_counter"),
@@ -2470,15 +2503,18 @@ function reopen_dfns_io(file_info)
                                      getvar("external_source_electron_density_amplitude"),
                                      getvar("external_source_electron_momentum_amplitude"),
                                      getvar("external_source_electron_pressure_amplitude"),
-                                     getvar("ion_constraints_A_coefficient"),
-                                     getvar("ion_constraints_B_coefficient"),
-                                     getvar("ion_constraints_C_coefficient"),
-                                     getvar("neutral_constraints_A_coefficient"),
-                                     getvar("neutral_constraints_B_coefficient"),
-                                     getvar("neutral_constraints_C_coefficient"),
-                                     getvar("electron_constraints_A_coefficient"),
-                                     getvar("electron_constraints_B_coefficient"),
-                                     getvar("electron_constraints_C_coefficient"),
+                                     getvar("ion_constraints_absAminus1_coefficient_sum"),
+                                     getvar("ion_constraints_absB_coefficient_sum"),
+                                     getvar("ion_constraints_absC_coefficient_sum"),
+                                     getvar("ion_constraints_count"),
+                                     getvar("neutral_constraints_absAminus1_coefficient_sum"),
+                                     getvar("neutral_constraints_absB_coefficient_sum"),
+                                     getvar("neutral_constraints_absC_coefficient_sum"),
+                                     getvar("neutral_constraints_count"),
+                                     getvar("electron_constraints_absAminus1_coefficient_sum"),
+                                     getvar("electron_constraints_absB_coefficient_sum"),
+                                     getvar("electron_constraints_absC_coefficient_sum"),
+                                     getvar("electron_constraints_count"),
                                      timing["time_for_run"], getvar("step_counter"),
                                      getvar("dt"), getvar("previous_dt"),
                                      getvar("failure_counter"),
@@ -3114,15 +3150,17 @@ function write_ion_moments_data_to_binary(scratch, moments, n_ion_species, t_par
             end
         end
         if moments.evolve_density || moments.evolve_upar || moments.evolve_p
-            append_to_dynamic_var(io_moments.ion_constraints_A_coefficient,
-                                  moments.ion.constraints_A_coefficient, t_idx,
+            append_to_dynamic_var(io_moments.ion_constraints_absAminus1_coefficient_sum,
+                                  moments.ion.constraints_A_coefficient_sum, t_idx,
                                   parallel_io, z, r, n_ion_species)
-            append_to_dynamic_var(io_moments.ion_constraints_B_coefficient,
-                                  moments.ion.constraints_B_coefficient, t_idx,
+            append_to_dynamic_var(io_moments.ion_constraints_absB_coefficient_sum,
+                                  moments.ion.constraints_B_coefficient_sum, t_idx,
                                   parallel_io, z, r, n_ion_species)
-            append_to_dynamic_var(io_moments.ion_constraints_C_coefficient,
-                                  moments.ion.constraints_C_coefficient, t_idx,
+            append_to_dynamic_var(io_moments.ion_constraints_absC_coefficient_sum,
+                                  moments.ion.constraints_C_coefficient_sum, t_idx,
                                   parallel_io, z, r, n_ion_species)
+            append_to_dynamic_var(io_moments.ion_constraints_count,
+                                  moments.ion.constraints_count[], t_idx, parallel_io)
         end
     end
 
@@ -3226,15 +3264,17 @@ function write_electron_moments_data_to_binary(scratch, moments, t_params, elect
                                   get_from_ir(moments.electron.external_source_pressure_amplitude),
                                   t_idx, parallel_io, z, r, n_sources)
         end
-        append_to_dynamic_var(io_moments.electron_constraints_A_coefficient,
-                              get_from_ir(moments.electron.constraints_A_coefficient),
-                              t_idx, parallel_io, z, r)
-        append_to_dynamic_var(io_moments.electron_constraints_B_coefficient,
-                              get_from_ir(moments.electron.constraints_B_coefficient),
-                              t_idx, parallel_io, z, r)
-        append_to_dynamic_var(io_moments.electron_constraints_C_coefficient,
-                              get_from_ir(moments.electron.constraints_C_coefficient),
-                              t_idx, parallel_io, z, r)
+        append_to_dynamic_var(io_moments.electron_constraints_absAminus1_coefficient_sum,
+                              moments.electron.constraints_A_coefficient_sum, t_idx,
+                              parallel_io, z, r)
+        append_to_dynamic_var(io_moments.electron_constraints_absB_coefficient_sum,
+                              moments.electron.constraints_B_coefficient_sum, t_idx,
+                              parallel_io, z, r)
+        append_to_dynamic_var(io_moments.electron_constraints_absC_coefficient_sum,
+                              moments.electron.constraints_C_coefficient_sum, t_idx,
+                              parallel_io, z, r)
+        append_to_dynamic_var(io_moments.electron_constraints_count,
+                              moments.electron.constraints_count[], t_idx, parallel_io)
 
         if electron_t_params !== nothing
             # Save timestepping info
@@ -3407,15 +3447,17 @@ function write_neutral_moments_data_to_binary(scratch, moments, n_neutral_specie
             end
         end
         if moments.evolve_density || moments.evolve_upar || moments.evolve_p
-            append_to_dynamic_var(io_moments.neutral_constraints_A_coefficient,
-                                  moments.neutral.constraints_A_coefficient, t_idx,
+            append_to_dynamic_var(io_moments.neutral_constraints_absAminus1_coefficient_sum,
+                                  moments.neutral.constraints_A_coefficient_sum, t_idx,
                                   parallel_io, z, r, n_neutral_species)
-            append_to_dynamic_var(io_moments.neutral_constraints_B_coefficient,
-                                  moments.neutral.constraints_B_coefficient, t_idx,
+            append_to_dynamic_var(io_moments.neutral_constraints_absB_coefficient_sum,
+                                  moments.neutral.constraints_B_coefficient_sum, t_idx,
                                   parallel_io, z, r, n_neutral_species)
-            append_to_dynamic_var(io_moments.neutral_constraints_C_coefficient,
-                                  moments.neutral.constraints_C_coefficient, t_idx,
+            append_to_dynamic_var(io_moments.neutral_constraints_absC_coefficient_sum,
+                                  moments.neutral.constraints_C_coefficient_sum, t_idx,
                                   parallel_io, z, r, n_neutral_species)
+            append_to_dynamic_var(io_moments.neutral_constraints_count,
+                                  moments.neutral.constraints_count[], t_idx, parallel_io)
         end
     end
 

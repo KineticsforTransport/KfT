@@ -127,14 +127,19 @@ end
         return nothing
     end
 
-    A = moments.electron.constraints_A_coefficient
-    B = moments.electron.constraints_B_coefficient
-    C = moments.electron.constraints_C_coefficient
+    A_sum = moments.electron.constraints_A_coefficient_sum
+    B_sum = moments.electron.constraints_B_coefficient_sum
+    C_sum = moments.electron.constraints_C_coefficient_sum
     @begin_r_z_region()
     @loop_r_z ir iz begin
-        A[iz,ir], B[iz,ir], C[iz,ir] =
+        A, B, C =
             hard_force_moment_constraints!(@view(f[:,:,iz,ir]), moments, vpa, vperp)
+
+        A_sum[iz,ir] += abs(A - 1.0)
+        B_sum[iz,ir] += abs(B)
+        C_sum[iz,ir] += abs(C)
     end
+    moments.electron.constraints_count[] += 1
 end
 @timeit global_timer hard_force_moment_constraints!(
                          f::AbstractArray{mk_float,5}, moments, vpa, vperp) = begin
@@ -143,14 +148,18 @@ end
         return nothing
     end
 
-    A = moments.ion.constraints_A_coefficient
-    B = moments.ion.constraints_B_coefficient
-    C = moments.ion.constraints_C_coefficient
+    A_sum = moments.ion.constraints_A_coefficient_sum
+    B_sum = moments.ion.constraints_B_coefficient_sum
+    C_sum = moments.ion.constraints_C_coefficient_sum
     @begin_s_r_z_region()
     @loop_s_r_z is ir iz begin
-        A[iz,ir,is], B[iz,ir,is], C[iz,ir,is] =
+        A, B, C =
             hard_force_moment_constraints!(@view(f[:,:,iz,ir,is]), moments, vpa, vperp)
+        A_sum[iz,ir,is] += abs(A - 1.0)
+        B_sum[iz,ir,is] += abs(B)
+        C_sum[iz,ir,is] += abs(C)
     end
+    moments.ion.constraints_count[] += 1
 end
 
 """
@@ -263,14 +272,18 @@ end
         return nothing
     end
 
-    A = moments.neutral.constraints_A_coefficient
-    B = moments.neutral.constraints_B_coefficient
-    C = moments.neutral.constraints_C_coefficient
+    A_sum = moments.neutral.constraints_A_coefficient_sum
+    B_sum = moments.neutral.constraints_B_coefficient_sum
+    C_sum = moments.neutral.constraints_C_coefficient_sum
     @begin_sn_r_z_region()
     @loop_sn_r_z isn ir iz begin
-        A[iz,ir,isn], B[iz,ir,isn], C[iz,ir,isn] =
+        A, B, C =
             hard_force_moment_constraints_neutral!(@view(f[:,:,:,iz,ir,isn]), moments, vz)
+        A_sum[iz,ir,isn] += abs(A - 1.0)
+        B_sum[iz,ir,isn] += abs(B)
+        C_sum[iz,ir,isn] += abs(C)
     end
+    moments.neutral.constraints_count[] += 1
 end
 
 """

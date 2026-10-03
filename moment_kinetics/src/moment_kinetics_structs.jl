@@ -208,15 +208,18 @@ struct moments_ion_substruct{ndim_moment_wall}
     external_source_pressure_amplitude::MPISharedArray{mk_float,ndim_moment}
     # Integral term for the PID controller of the external source term
     external_source_controller_integral::MPISharedArray{mk_float,ndim_moment}
-    # Store coefficient 'A' from applying moment constraints so we can write it out as a
-    # diagnostic
-    constraints_A_coefficient::Union{MPISharedArray{mk_float,ndim_moment},Nothing}
-    # Store coefficient 'B' from applying moment constraints so we can write it out as a
-    # diagnostic
-    constraints_B_coefficient::Union{MPISharedArray{mk_float,ndim_moment},Nothing}
-    # Store coefficient 'C' from applying moment constraints so we can write it out as a
-    # diagnostic
-    constraints_C_coefficient::Union{MPISharedArray{mk_float,ndim_moment},Nothing}
+    # Accumulate deviations from 1 of coefficient 'A' from applying moment constraints so
+    # we can write out the average devation as a diagnostic
+    constraints_A_coefficient_sum::Union{MPISharedArray{mk_float,ndim_moment},Nothing}
+    # Accumulate absolute values of coefficient 'B' from applying moment constraints so we
+    # can write out the average devation as a diagnostic
+    constraints_B_coefficient_sum::Union{MPISharedArray{mk_float,ndim_moment},Nothing}
+    # Accumulate absolute values of coefficient 'C' from applying moment constraints so we
+    # can write out the average devation as a diagnostic
+    constraints_C_coefficient_sum::Union{MPISharedArray{mk_float,ndim_moment},Nothing}
+    # Count number of applications of the constraints so that we can calculate the average
+    # deviation for output.
+    constraints_count::Ref{mk_int}
 end
 
 """
@@ -292,15 +295,18 @@ struct moments_electron_substruct{ndim_moment_electron_source}
     dT_dt::Union{MPISharedArray{mk_float,ndim_moment_electron},Nothing}
     # Time derivative of the thermal speed
     dvth_dt::Union{MPISharedArray{mk_float,ndim_moment_electron},Nothing}
-    # Store coefficient 'A' from applying moment constraints so we can write it out as a
-    # diagnostic
-    constraints_A_coefficient::Union{MPISharedArray{mk_float,ndim_moment_electron},Nothing}
-    # Store coefficient 'B' from applying moment constraints so we can write it out as a
-    # diagnostic
-    constraints_B_coefficient::Union{MPISharedArray{mk_float,ndim_moment_electron},Nothing}
-    # Store coefficient 'C' from applying moment constraints so we can write it out as a
-    # diagnostic
-    constraints_C_coefficient::Union{MPISharedArray{mk_float,ndim_moment_electron},Nothing}
+    # Accumulate deviations from 1 of coefficient 'A' from applying moment constraints so
+    # we can write out the average devation as a diagnostic
+    constraints_A_coefficient_sum::MPISharedArray{mk_float,ndim_moment_electron}
+    # Accumulate absolute values of coefficient 'B' from applying moment constraints so we
+    # can write out the average devation as a diagnostic
+    constraints_B_coefficient_sum::MPISharedArray{mk_float,ndim_moment_electron}
+    # Accumulate absolute values of coefficient 'C' from applying moment constraints so we
+    # can write out the average devation as a diagnostic
+    constraints_C_coefficient_sum::MPISharedArray{mk_float,ndim_moment_electron}
+    # Count number of applications of the constraints so that we can calculate the average
+    # deviation for output.
+    constraints_count::Ref{mk_int}
 end
 
 """
@@ -400,15 +406,18 @@ struct moments_neutral_substruct
     external_source_pressure_amplitude::MPISharedArray{mk_float,ndim_moment}
     # Integral term for the PID controller of the external source term
     external_source_controller_integral::MPISharedArray{mk_float,ndim_moment}
-    # Store coefficient 'A' from applying moment constraints so we can write it out as a
-    # diagnostic
-    constraints_A_coefficient::Union{MPISharedArray{mk_float,ndim_moment},Nothing}
-    # Store coefficient 'B' from applying moment constraints so we can write it out as a
-    # diagnostic
-    constraints_B_coefficient::Union{MPISharedArray{mk_float,ndim_moment},Nothing}
-    # Store coefficient 'C' from applying moment constraints so we can write it out as a
-    # diagnostic
-    constraints_C_coefficient::Union{MPISharedArray{mk_float,ndim_moment},Nothing}
+    # Accumulate deviations from 1 of coefficient 'A' from applying moment constraints so
+    # we can write out the average devation as a diagnostic
+    constraints_A_coefficient_sum::Union{MPISharedArray{mk_float,ndim_moment},Nothing}
+    # Accumulate absolute values of coefficient 'B' from applying moment constraints so we
+    # can write out the average devation as a diagnostic
+    constraints_B_coefficient_sum::Union{MPISharedArray{mk_float,ndim_moment},Nothing}
+    # Accumulate absolute values of coefficient 'C' from applying moment constraints so we
+    # can write out the average devation as a diagnostic
+    constraints_C_coefficient_sum::Union{MPISharedArray{mk_float,ndim_moment},Nothing}
+    # Count number of applications of the constraints so that we can calculate the average
+    # deviation for output.
+    constraints_count::Ref{mk_int}
 end
 
 """

@@ -2501,21 +2501,26 @@ function apply_electron_bc_and_constraints_no_r!(
     end
 
     @begin_anyzv_z_region()
-    A = moments.electron.constraints_A_coefficient
-    B = moments.electron.constraints_B_coefficient
-    C = moments.electron.constraints_C_coefficient
+    A_sum = moments.electron.constraints_A_coefficient_sum
+    B_sum = moments.electron.constraints_B_coefficient_sum
+    C_sum = moments.electron.constraints_C_coefficient_sum
+    constraints_count = moments.electron.constraints_count
     skip_first = z.irank == 0 && !z.periodic
     skip_last = z.irank == z.nrank - 1 && !z.periodic
     @loop_z iz begin
         if (iz == 1 && skip_first) || (iz == z.n && skip_last)
             continue
         end
-        (A[iz,ir], B[iz,ir], C[iz,ir]) =
+        A, B, C
             @views hard_force_moment_constraints!(f_electron[:,:,iz],
                                                   (evolve_density=true,
                                                    evolve_upar=true,
                                                    evolve_p=true,
                                                    enforce_conservation=true), vpa, vperp)
+        A_sum[iz,ir] += abs(A - 1.0)
+        B_sum[iz,ir] += abs(B)
+        C_sum[iz,ir] += abs(C)
+        constraints_count[] += 1
     end
 
     return ""
@@ -3269,9 +3274,9 @@ end
             # update the electrostatic potential at the boundary to be the value corresponding to the updated cutoff velocity
             phi[1] = 0.5 * me_over_mi * vcut^2
 
-            moments.electron.constraints_A_coefficient[1,ir] = A
-            moments.electron.constraints_B_coefficient[1,ir] = 0.0
-            moments.electron.constraints_C_coefficient[1,ir] = C
+            moments.electron.constraints_A_coefficient_sum[1,ir] += abs(A - 1.0)
+            #moments.electron.constraints_B_coefficient_sum[1,ir] += 0.0
+            moments.electron.constraints_C_coefficient_sum[1,ir] += abs(C)
 
             # Ensure the part of f for 0≤v_∥≤vcut has its first 3 moments symmetric with
             # vcut≤v_∥≤0 (i.e. even moments are the same, odd moments are equal but opposite
@@ -3477,9 +3482,9 @@ end
             # update the electrostatic potential at the boundary to be the value corresponding to the updated cutoff velocity
             phi[end] = 0.5 * me_over_mi * vcut^2
 
-            moments.electron.constraints_A_coefficient[end,ir] = A
-            moments.electron.constraints_B_coefficient[end,ir] = 0.0
-            moments.electron.constraints_C_coefficient[end,ir] = C
+            moments.electron.constraints_A_coefficient_sum[end,ir] += abs(A - 1)
+            #moments.electron.constraints_B_coefficient_sum[end,ir] += 0.0
+            moments.electron.constraints_C_coefficient_sum[end,ir] += abs(C)
 
             # Ensure the part of f for -vcut≤v_∥≤0 has its first 3 moments symmetric with
             # 0≤v_∥≤vcut  (i.e. even moments are the same, odd moments are equal but opposite
