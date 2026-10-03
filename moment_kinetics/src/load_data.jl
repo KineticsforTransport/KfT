@@ -4399,13 +4399,14 @@ function get_per_step_from_cumulative_variable(run_info, varname::AbstractString
     # because there was a restart where the cumulative variable started over, and so we
     # need to offset the remaining data by the previous value.
     # Need to iterate backwards to avoid double-counting.
-    for i ∈ length(variable):-1:2
-        if variable[i] < variable[i-1]
-            selectdim(variable, tdim, i:size(variable, tdim)) .+= selectdim(variable, tdim, i-1)
+    nt = size(variable, tdim)
+    for i ∈ nt:-1:2
+        if any(selectdim(variable, tdim, i) .< selectdim(variable, tdim, i-1))
+            selectdim(variable, tdim, i:nt) .+= selectdim(variable, tdim, i-1)
         end
     end
 
-    for i ∈ size(variable, tdim):-1:2
+    for i ∈ nt:-1:2
         selectdim(variable, tdim, i) .-= selectdim(variable, tdim, i-1)
     end
 
