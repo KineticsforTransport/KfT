@@ -1277,7 +1277,10 @@ shared-memory-parallelised loop.
                         pdf[:,:,:,ir,is], z, vperp, vpa, density[:,ir,is], upar[:,ir,is],
                         p[:,ir,is], fields.vEz[:,ir,is], geometry.bzed[:,ir],
                         moments.evolve_upar, moments.evolve_p, zero, fields.phi[:,ir],
-                        vpavperp_buffer)
+                        vpavperp_buffer,
+                        moments.ion.constraints_A_coefficient_sum[:,ir,is],
+                        moments.ion.constraints_B_coefficient_sum[:,ir,is],
+                        moments.ion.constraints_C_coefficient_sum[:,ir,is])
                 end
             else
                 @loop_r ir begin
@@ -1853,7 +1856,9 @@ enforce boundary conditions on neutral particle f in z
                     density[:,ir,isn], ion_flux_0, ion_flux_L, z_boundaries,
                     T_wall_over_m, composition.recycling_fraction, moments.evolve_p,
                     moments.evolve_upar, moments.evolve_density, zero,
-                    pdf_buffer[:,:,:,ir,isn])
+                    pdf_buffer[:,:,:,ir,isn],
+                    moments.neutral.constraints_A_coefficient_sum[:,ir,isn],
+                    moments.neutral.constraints_B_coefficient_sum[:,ir,isn])
             end
         end
     end
@@ -2012,7 +2017,9 @@ function get_ion_z_boundary_cutoff_indices(density, upar, vEz, bz, vth0, vthL,
 end
 function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::coordinate,
                                    density, upar, p, vEz, bz, evolve_upar, evolve_p, zero,
-                                   phi, vpavperp_buffer)
+                                   phi, vpavperp_buffer, constraints_A_coefficient_sum,
+                                   constraints_B_coefficient_sum,
+                                   constraints_C_coefficient_sum)
     if z.irank != 0 && z.irank != z.nrank - 1
         # No z-boundary in this block
         return nothing
@@ -2194,11 +2201,18 @@ function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::c
 
             A = 1.0 / (I0 - I1*J1/J2)
             B = -A*I1/J2
+            C = 0.0
             @. f = A*f + B*vpa.grid*vpa.scratch2*f
         elseif evolve_density
             I0 = integral((vperp,vpa)->(1), f, vperp, vpa)
-            @. f = f / I0
+            A = 1.0 / I0
+            B = 0.0
+            C = 0.0
+            @. f = f * A
         end
+        constraints_A_coefficient_sum[iz] += abs(A - 1.0)
+        constraints_B_coefficient_sum[iz] += abs(B)
+        constraints_C_coefficient_sum[iz] += abs(C)
     end
 end
 
@@ -2244,7 +2258,9 @@ i.e., the incoming flux of neutrals equals the sum of the ion/neutral outgoing f
 function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, uz, density, wall_flux_0,
                                   wall_flux_L, z_boundaries, T_wall_over_m,
                                   recycling_fraction, evolve_p, evolve_upar,
-                                  evolve_density, zero, pdf_buffer)
+                                  evolve_density, zero, pdf_buffer,
+                                  constraints_A_coefficient_sum,
+                                  constraints_B_coefficient_sum)
 
     # Reduce the ion flux by `recycling_fraction` to account for ions absorbed by the
     # wall.
@@ -2315,6 +2331,9 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, uz, density, wall_f
                     - pdf_integral_1 / knudsen_integral_1 * knudsen_integral_0)
             N_out = (uz - N_in * pdf_integral_1) / knudsen_integral_1
 
+            # N_in is similar to 'A' in the bulk correction coefficients.
+            constraints_A_coefficient_sum[1] += abs(N_in - 1.0)
+
             @loop_vz ivz begin
                 if vz.grid[ivz] >= -zero
                     @views @. pdf[ivz,:,:,1] = N_out * knudsen_cosine[ivz,:,:]
@@ -2347,6 +2366,9 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, uz, density, wall_f
                    (pdf_integral_0
                     - pdf_integral_1 / knudsen_integral_1 * knudsen_integral_0)
             N_out = (uz - N_in * pdf_integral_1) / knudsen_integral_1
+
+            # N_in is similar to 'A' in the bulk correction coefficients.
+            constraints_A_coefficient_sum[end] += abs(N_in - 1.0)
 
             @loop_vz ivz begin
                 if vz.grid[ivz] <= zero
@@ -2426,6 +2448,11 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, uz, density, wall_f
                 for ivz ∈ zero_vz_ind+1:vz.n
                     pdf[ivz,:,:,1] .= N_out*vz.scratch[ivz]
                 end
+
+                # N_out does not really have an 'expected' value (?), so there is no
+                # corresponding 'correction coefficient' to record. N_in is similar to 'A' in
+                # the bulk correction coefficients.
+                constraints_A_coefficient_sum[1] += abs(N_in - 1.0)
             else
                 @. vz.scratch4 = vz.grid * vz.grid * vz.scratch
                 knudsen_integral_2 = integrate_over_positive_vz(vz.scratch4, vz.scratch2, vz.wgts, vz.scratch3, vr.grid, vr.wgts, vzeta.grid, vzeta.wgts)
@@ -2490,6 +2517,13 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, uz, density, wall_f
                 for ivz ∈ zero_vz_ind+1:vz.n
                     @. pdf[ivz,:,:,1] = N_out*vz.scratch[ivz]
                 end
+
+                # N_out does not really have an 'expected' value (?), so there is no
+                # corresponding 'correction coefficient' to record. N_in is similar to 'A' in
+                # the bulk correction coefficients. C here is similar to 'B' in the bulk
+                # correction coefficients.
+                constraints_A_coefficient_sum[1] += abs(N_in - 1.0)
+                constraints_B_coefficient_sum[1] += abs(C)
             end
         end
 
@@ -2556,6 +2590,11 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, uz, density, wall_f
                 for ivz ∈ 1:zero_vz_ind-1
                     @. pdf[ivz,:,:,end] = N_out*vz.scratch[ivz]
                 end
+
+                # N_out does not really have an 'expected' value (?), so there is no
+                # corresponding 'correction coefficient' to record. N_in is similar to 'A' in
+                # the bulk correction coefficients.
+                constraints_A_coefficient_sum[end] += abs(N_in - 1.0)
             else
                 @. vz.scratch4 = vz.grid * vz.grid * vz.scratch
                 knudsen_integral_2 = integrate_over_negative_vz(vz.scratch4, vz.scratch2, vz.wgts, vz.scratch3, vr.grid, vr.wgts, vzeta.grid, vzeta.wgts)
@@ -2620,6 +2659,13 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, uz, density, wall_f
                 for ivz ∈ 1:zero_vz_ind-1
                     @. pdf[ivz,:,:,end] = N_out*vz.scratch[ivz]
                 end
+
+                # N_out does not really have an 'expected' value (?), so there is no
+                # corresponding 'correction coefficient' to record. N_in is similar to 'A' in
+                # the bulk correction coefficients. C here is similar to 'B' in the bulk
+                # correction coefficients.
+                constraints_A_coefficient_sum[end] += abs(N_in - 1.0)
+                constraints_B_coefficient_sum[end] += abs(C)
             end
         end
     end

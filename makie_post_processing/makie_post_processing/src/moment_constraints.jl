@@ -162,19 +162,18 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                             suffix = ""
                         end
 
-                        varname = "ion_constraints_A_coefficient"
-                        label = prefix * "(A-1)" * suffix
+                        varname = "ion_constraints_absAminus1_coefficient"
+                        label = prefix * "mean(abs(A-1))" * suffix
                         data = get_variable(ri, varname; it=it0, is=is, ir=ir0)
-                        data .-= 1.0
                         plot_vs_z(ri, varname; label=label, data=data, ax=ax, input=input)
 
-                        varname = "ion_constraints_B_coefficient"
-                        label = prefix * "B" * suffix
+                        varname = "ion_constraints_absB_coefficient"
+                        label = prefix * "mean(abs(B))" * suffix
                         plot_vs_z(ri, varname; label=label, ax=ax, it=it0, is=is, ir=ir0,
                                   input=input)
 
-                        varname = "ion_constraints_C_coefficient"
-                        label = prefix * "C" * suffix
+                        varname = "ion_constraints_absC_coefficient"
+                        label = prefix * "mean(abs(C))" * suffix
                         plot_vs_z(ri, varname; label=label, ax=ax, it=it0, is=is, ir=ir0,
                                   input=input)
                     end
@@ -210,19 +209,18 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                             suffix = ""
                         end
 
-                        varname = "neutral_constraints_A_coefficient"
-                        label = prefix * "(A-1)" * suffix
+                        varname = "neutral_constraints_absAminus1_coefficient"
+                        label = prefix * "mean(abs(A-1))" * suffix
                         data = get_variable(ri, varname; it=it0, is=is, ir=ir0)
-                        data .-= 1.0
                         plot_vs_z(ri, varname; label=label, data=data, ax=ax, input=input)
 
-                        varname = "neutral_constraints_B_coefficient"
-                        label = prefix * "B" * suffix
+                        varname = "neutral_constraints_absB_coefficient"
+                        label = prefix * "mean(abs(B))" * suffix
                         plot_vs_z(ri, varname; label=label, ax=ax, it=it0, is=is, ir=ir0,
                                   input=input)
 
-                        varname = "neutral_constraints_C_coefficient"
-                        label = prefix * "C" * suffix
+                        varname = "neutral_constraints_absC_coefficient"
+                        label = prefix * "mean(abs(C))" * suffix
                         plot_vs_z(ri, varname; label=label, ax=ax, it=it0, is=is, ir=ir0,
                                   input=input)
                     end
@@ -248,19 +246,18 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         prefix = ""
                     end
 
-                    varname = "electron_constraints_A_coefficient"
-                    label = prefix * "(A-1)"
+                    varname = "electron_constraints_absAminus1_coefficient"
+                    label = prefix * "mean(abs((A-1))"
                     data = get_variable(ri, varname; it=it0, ir=ir0)
-                    data .-= 1.0
                     plot_vs_z(ri, varname; label=label, data=data, ax=ax, input=input)
 
-                    varname = "electron_constraints_B_coefficient"
-                    label = prefix * "B"
+                    varname = "electron_constraints_absB_coefficient"
+                    label = prefix * "mean(abs(B))"
                     plot_vs_z(ri, varname; label=label, ax=ax, it=it0, ir=ir0,
                               input=input)
 
-                    varname = "electron_constraints_C_coefficient"
-                    label = prefix * "C"
+                    varname = "electron_constraints_absC_coefficient"
+                    label = prefix * "mean(abs(C))"
                     plot_vs_z(ri, varname; label=label, ax=ax, it=it0, ir=ir0,
                               input=input)
                 end
@@ -305,7 +302,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                             suffix = ""
                         end
 
-                        varname = "ion_constraints_A_coefficient"
+                        varname = "ion_constraints_absAminus1_coefficient"
                         label = prefix * "(A-1)" * suffix
                         data = get_variable(ri, varname; is=is, ir=ir0)
                         data .-= 1.0
@@ -314,7 +311,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         animate_vs_z(ri, varname; label=label, data=data,
                                      frame_index=frame_index, ax=ax, input=input)
 
-                        varname = "ion_constraints_B_coefficient"
+                        varname = "ion_constraints_absB_coefficient"
                         label = prefix * "B" * suffix
                         data = get_variable(ri, varname; is=is, ir=ir0)
                         ymin = min(ymin, minimum(data[:,2:end]))
@@ -323,7 +320,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                                      frame_index=frame_index, ax=ax, is=is, ir=ir0,
                                      input=input)
 
-                        varname = "ion_constraints_C_coefficient"
+                        varname = "ion_constraints_absC_coefficient"
                         label = prefix * "C" * suffix
                         data = get_variable(ri, varname; is=is, ir=ir0)
                         ymin = min(ymin, minimum(data[:,2:end]))
@@ -373,7 +370,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                             suffix = ""
                         end
 
-                        varname = "neutral_constraints_A_coefficient"
+                        varname = "neutral_constraints_absAminus1_coefficient"
                         label = prefix * "(A-1)" * suffix
                         data = get_variable(ri, varname; is=is, ir=ir0)
                         data .-= 1.0
@@ -382,7 +379,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         animate_vs_z(ri, varname; label=label, data=data,
                                      frame_index=frame_index, ax=ax, input=input)
 
-                        varname = "neutral_constraints_B_coefficient"
+                        varname = "neutral_constraints_absB_coefficient"
                         label = prefix * "B" * suffix
                         data = get_variable(ri, varname; is=is, ir=ir0)
                         ymin = min(ymin, minimum(data[:,2:end]))
@@ -391,7 +388,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                                      frame_index=frame_index, ax=ax, is=is, ir=ir0,
                                      input=input)
 
-                        varname = "neutral_constraints_C_coefficient"
+                        varname = "neutral_constraints_absC_coefficient"
                         label = prefix * "C" * suffix
                         data = get_variable(ri, varname; is=is, ir=ir0)
                         ymin = min(ymin, minimum(data[:,2:end]))
@@ -431,7 +428,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         prefix = ""
                     end
 
-                    varname = "electron_constraints_A_coefficient"
+                    varname = "electron_constraints_absAminus1_coefficient"
                     label = prefix * "(A-1)"
                     data = get_variable(ri, varname; ir=ir0)
                     data .-= 1.0
@@ -440,7 +437,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                     animate_vs_z(ri, varname; label=label, data=data,
                                  frame_index=frame_index, ax=ax, input=input)
 
-                    varname = "electron_constraints_B_coefficient"
+                    varname = "electron_constraints_absB_coefficient"
                     label = prefix * "B"
                     data = get_variable(ri, varname; ir=ir0)
                     ymin = min(ymin, minimum(data[:,2:end]))
@@ -448,7 +445,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                     animate_vs_z(ri, varname; label=label, data=data,
                                  frame_index=frame_index, ax=ax, ir=ir0, input=input)
 
-                    varname = "electron_constraints_C_coefficient"
+                    varname = "electron_constraints_absC_coefficient"
                     label = prefix * "C"
                     data = get_variable(ri, varname; ir=ir0)
                     ymin = min(ymin, minimum(data[:,2:end]))
