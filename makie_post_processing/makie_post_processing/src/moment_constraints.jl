@@ -137,6 +137,8 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
 
         it0 = input.it0
         ir0 = input.ir0
+        yscale = log10
+        transform = x->positive_or_nan(x; epsilon=1.0e-15)
 
         if input.plot
             if any(ri.evolve_density || ri.evolve_upar || ri.evolve_p
@@ -165,17 +167,18 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         varname = "ion_constraints_absAminus1_coefficient"
                         label = prefix * "mean(abs(A-1))" * suffix
                         data = get_variable(ri, varname; it=it0, is=is, ir=ir0)
-                        plot_vs_z(ri, varname; label=label, data=data, ax=ax, input=input)
+                        plot_vs_z(ri, varname; label=label, data=data, ax=ax, input=input,
+                                  yscale, transform)
 
                         varname = "ion_constraints_absB_coefficient"
                         label = prefix * "mean(abs(B))" * suffix
                         plot_vs_z(ri, varname; label=label, ax=ax, it=it0, is=is, ir=ir0,
-                                  input=input)
+                                  input=input, yscale, transform)
 
                         varname = "ion_constraints_absC_coefficient"
                         label = prefix * "mean(abs(C))" * suffix
                         plot_vs_z(ri, varname; label=label, ax=ax, it=it0, is=is, ir=ir0,
-                                  input=input)
+                                  input=input, yscale, transform)
                     end
                 end
                 put_legend_below(fig, ax)
@@ -212,17 +215,18 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         varname = "neutral_constraints_absAminus1_coefficient"
                         label = prefix * "mean(abs(A-1))" * suffix
                         data = get_variable(ri, varname; it=it0, is=is, ir=ir0)
-                        plot_vs_z(ri, varname; label=label, data=data, ax=ax, input=input)
+                        plot_vs_z(ri, varname; label=label, data=data, ax=ax, input=input,
+                                  yscale, transform)
 
                         varname = "neutral_constraints_absB_coefficient"
                         label = prefix * "mean(abs(B))" * suffix
                         plot_vs_z(ri, varname; label=label, ax=ax, it=it0, is=is, ir=ir0,
-                                  input=input)
+                                  input=input, yscale, transform)
 
                         varname = "neutral_constraints_absC_coefficient"
                         label = prefix * "mean(abs(C))" * suffix
                         plot_vs_z(ri, varname; label=label, ax=ax, it=it0, is=is, ir=ir0,
-                                  input=input)
+                                  input=input, yscale, transform)
                     end
                 end
                 put_legend_below(fig, ax)
@@ -249,17 +253,18 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                     varname = "electron_constraints_absAminus1_coefficient"
                     label = prefix * "mean(abs((A-1))"
                     data = get_variable(ri, varname; it=it0, ir=ir0)
-                    plot_vs_z(ri, varname; label=label, data=data, ax=ax, input=input)
+                    plot_vs_z(ri, varname; label=label, data=data, ax=ax, input=input,
+                              yscale, transform)
 
                     varname = "electron_constraints_absB_coefficient"
                     label = prefix * "mean(abs(B))"
                     plot_vs_z(ri, varname; label=label, ax=ax, it=it0, ir=ir0,
-                              input=input)
+                              input=input, yscale, transform)
 
                     varname = "electron_constraints_absC_coefficient"
                     label = prefix * "mean(abs(C))"
                     plot_vs_z(ri, varname; label=label, ax=ax, it=it0, ir=ir0,
-                              input=input)
+                              input=input, yscale, transform)
                 end
                 put_legend_below(fig, ax)
                 # Ensure the first row width is 3/4 of the column width so that
@@ -309,7 +314,8 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         ymin = min(ymin, minimum(data[:,2:end]))
                         ymax = max(ymax, maximum(data[:,2:end]))
                         animate_vs_z(ri, varname; label=label, data=data,
-                                     frame_index=frame_index, ax=ax, input=input)
+                                     frame_index=frame_index, ax=ax, input=input, yscale,
+                                     transform)
 
                         varname = "ion_constraints_absB_coefficient"
                         label = prefix * "B" * suffix
@@ -318,7 +324,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         ymax = max(ymax, maximum(data[:,2:end]))
                         animate_vs_z(ri, varname; label=label, data=data,
                                      frame_index=frame_index, ax=ax, is=is, ir=ir0,
-                                     input=input)
+                                     input=input, yscale, transform)
 
                         varname = "ion_constraints_absC_coefficient"
                         label = prefix * "C" * suffix
@@ -327,7 +333,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         ymax = max(ymax, maximum(data[:,2:end]))
                         animate_vs_z(ri, varname; label=label, data=data,
                                      frame_index=frame_index, ax=ax, is=is, ir=ir0,
-                                     input=input)
+                                     input=input, yscale, transform)
                     end
                 end
                 put_legend_below(fig, ax)
@@ -377,7 +383,8 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         ymin = min(ymin, minimum(data[:,2:end]))
                         ymax = max(ymax, maximum(data[:,2:end]))
                         animate_vs_z(ri, varname; label=label, data=data,
-                                     frame_index=frame_index, ax=ax, input=input)
+                                     frame_index=frame_index, ax=ax, input=input, yscale,
+                                     transform)
 
                         varname = "neutral_constraints_absB_coefficient"
                         label = prefix * "B" * suffix
@@ -386,7 +393,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         ymax = max(ymax, maximum(data[:,2:end]))
                         animate_vs_z(ri, varname; label=label, data=data,
                                      frame_index=frame_index, ax=ax, is=is, ir=ir0,
-                                     input=input)
+                                     input=input, yscale, transform)
 
                         varname = "neutral_constraints_absC_coefficient"
                         label = prefix * "C" * suffix
@@ -395,7 +402,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         ymax = max(ymax, maximum(data[:,2:end]))
                         animate_vs_z(ri, varname; label=label, data=data,
                                      frame_index=frame_index, ax=ax, is=is, ir=ir0,
-                                     input=input)
+                                     input=input, yscale, transform)
                     end
                 end
                 put_legend_below(fig, ax)
@@ -435,7 +442,8 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                     ymin = min(ymin, minimum(data[:,2:end]))
                     ymax = max(ymax, maximum(data[:,2:end]))
                     animate_vs_z(ri, varname; label=label, data=data,
-                                 frame_index=frame_index, ax=ax, input=input)
+                                 frame_index=frame_index, ax=ax, input=input, yscale,
+                                 transform)
 
                     varname = "electron_constraints_absB_coefficient"
                     label = prefix * "B"
@@ -443,7 +451,8 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                     ymin = min(ymin, minimum(data[:,2:end]))
                     ymax = max(ymax, maximum(data[:,2:end]))
                     animate_vs_z(ri, varname; label=label, data=data,
-                                 frame_index=frame_index, ax=ax, ir=ir0, input=input)
+                                 frame_index=frame_index, ax=ax, ir=ir0, input=input,
+                                 yscale, transform)
 
                     varname = "electron_constraints_absC_coefficient"
                     label = prefix * "C"
@@ -451,7 +460,8 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                     ymin = min(ymin, minimum(data[:,2:end]))
                     ymax = max(ymax, maximum(data[:,2:end]))
                     animate_vs_z(ri, varname; label=label, data=data,
-                                 frame_index=frame_index, ax=ax, ir=ir0, input=input)
+                                 frame_index=frame_index, ax=ax, ir=ir0, input=input,
+                                 yscale, transform)
                 end
                 put_legend_below(fig, ax)
                 # Ensure the first row width is 3/4 of the column width so that
