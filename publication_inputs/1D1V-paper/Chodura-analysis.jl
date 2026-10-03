@@ -10,7 +10,12 @@ function plot_f_over_vpa2(case, xmax, ymax, N_list)
     ax = Axis(fig[1,1]; limits=(-0.5, xmax, 0.0, ymax))
 
     for N ∈ N_list
-        ri = get_run_info("$(case)-$(N)el"; dfns=true)
+        if occursin("wall-plus-central-ion-source-Krook--kinetic-electrons", case)
+            run_path = "$(case)-$(N)el-minimum_dt1e-7"
+        else
+            run_path = "$(case)-$(N)el"
+        end
+        ri = get_run_info(run_path; dfns=true)
 
         if ri.composition.electron_physics ∈ (boltzmann_electron_response,
                                               boltzmann_electron_response_with_simple_sheath)
