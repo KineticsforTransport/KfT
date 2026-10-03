@@ -165,9 +165,10 @@ function init_pdf_and_moments!(pdf, moments, fields, geometry, composition, r, z
                 @. moments.ion.pperp = moments.ion.p
             end
             if moments.evolve_density || moments.evolve_n_upar || moments.evolve_p
-                @. moments.ion.constraints_A_coefficient = 1.0
-                @. moments.ion.constraints_B_coefficient = 0.0
-                @. moments.ion.constraints_C_coefficient = 0.0
+                @. moments.ion.constraints_A_coefficient_sum = 0.0
+                @. moments.ion.constraints_B_coefficient_sum = 0.0
+                @. moments.ion.constraints_C_coefficient_sum = 0.0
+                moments.ion.constraints_count[] = 0
             end
             if n_neutral_species > 0
                 # initialise the neutral density profile
@@ -193,9 +194,10 @@ function init_pdf_and_moments!(pdf, moments, fields, geometry, composition, r, z
                     @. moments.neutral.pzeta = moments.neutral.p
                 end
                 if moments.evolve_density || moments.evolve_n_upar || moments.evolve_p
-                    @. moments.neutral.constraints_A_coefficient = 1.0
-                    @. moments.neutral.constraints_B_coefficient = 0.0
-                    @. moments.neutral.constraints_C_coefficient = 0.0
+                    @. moments.neutral.constraints_A_coefficient_sum = 0.0
+                    @. moments.neutral.constraints_B_coefficient_sum = 0.0
+                    @. moments.neutral.constraints_C_coefficient_sum = 0.0
+                    moments.neutral.constraints_count[] = 0
                 end
             end
         end
@@ -229,9 +231,10 @@ function init_pdf_and_moments!(pdf, moments, fields, geometry, composition, r, z
             moments.electron.pperp .= 0.0
             moments.electron.qpar .= 0.0
             moments.electron.temp .= 0.0
-            moments.electron.constraints_A_coefficient .= 1.0
-            moments.electron.constraints_B_coefficient .= 0.0
-            moments.electron.constraints_C_coefficient .= 0.0
+            moments.electron.constraints_A_coefficient_sum .= 0.0
+            moments.electron.constraints_B_coefficient_sum .= 0.0
+            moments.electron.constraints_C_coefficient_sum .= 0.0
+            moments.electron.constraints_count[] = 0
             if composition.electron_physics ∈ (kinetic_electrons,
                                                kinetic_electrons_with_temperature_equation)
                 pdf.electron.norm .= 0.0
@@ -2007,9 +2010,10 @@ function init_pdf_moments_manufactured_solns!(pdf, moments, vz, vr, vzeta, vpa, 
         moments.electron.pperp .= 0.0
         moments.electron.qpar .= 0.0
         moments.electron.temp .= 0.0
-        moments.electron.constraints_A_coefficient .= 1.0
-        moments.electron.constraints_B_coefficient .= 0.0
-        moments.electron.constraints_C_coefficient .= 0.0
+        moments.electron.constraints_A_coefficient_sum .= 0.0
+        moments.electron.constraints_B_coefficient_sum .= 0.0
+        moments.electron.constraints_C_coefficient_sum .= 0.0
+        moments.electron.constraints_count[] = 0
         if composition.electron_physics ∈ (kinetic_electrons,
                                            kinetic_electrons_with_temperature_equation)
             pdf.electron.norm .= 0.0

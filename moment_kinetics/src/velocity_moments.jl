@@ -36,7 +36,7 @@ export get_rmom
 
 using LinearAlgebra: dot
 
-using ..type_definitions: mk_float
+using ..type_definitions: mk_float, mk_int
 using ..array_allocation: allocate_shared_float, allocate_bool, allocate_float
 using ..calculus: integral
 using ..chebyshev: chebyshev_info
@@ -248,13 +248,20 @@ function create_moments_ion(z, r, composition, evolve_density, evolve_n_upar,
     end
 
     if evolve_density || evolve_n_upar || evolve_p
-        constraints_A_coefficient = allocate_shared_float(z, r, composition.ion_species_coord)
-        constraints_B_coefficient = allocate_shared_float(z, r, composition.ion_species_coord)
-        constraints_C_coefficient = allocate_shared_float(z, r, composition.ion_species_coord)
+        constraints_A_coefficient_sum = allocate_shared_float(z, r, composition.ion_species_coord)
+        constraints_B_coefficient_sum = allocate_shared_float(z, r, composition.ion_species_coord)
+        constraints_C_coefficient_sum = allocate_shared_float(z, r, composition.ion_species_coord)
+        constraints_count = Ref(mk_int(0))
+        @serial_region begin
+            constraints_A_coefficient_sum .= 0.0
+            constraints_B_coefficient_sum .= 0.0
+            constraints_C_coefficient_sum .= 0.0
+        end
     else
-        constraints_A_coefficient = nothing
-        constraints_B_coefficient = nothing
-        constraints_C_coefficient = nothing
+        constraints_A_coefficient_sum = nothing
+        constraints_B_coefficient_sum = nothing
+        constraints_C_coefficient_sum = nothing
+        constraints_count = nothing
     end
 
     # return struct containing arrays needed to update moments
@@ -266,7 +273,8 @@ function create_moments_ion(z, r, composition, evolve_density, evolve_n_upar,
         dvth_dt, entropy_production, external_source_amplitude, external_source_T_array,
         external_source_density_amplitude, external_source_momentum_amplitude,
         external_source_pressure_amplitude, external_source_controller_integral,
-        constraints_A_coefficient, constraints_B_coefficient, constraints_C_coefficient)
+        constraints_A_coefficient_sum, constraints_B_coefficient_sum,
+        constraints_C_coefficient_sum, constraints_count)
 end
 
 """
@@ -351,13 +359,14 @@ function create_moments_electron(z, r, electron_model, num_diss_params, n_source
     dT_dz = allocate_shared_float(z, r)
     dvth_dz = allocate_shared_float(z, r)
     
-    constraints_A_coefficient = allocate_shared_float(z, r)
-    constraints_B_coefficient = allocate_shared_float(z, r)
-    constraints_C_coefficient = allocate_shared_float(z, r)
+    constraints_A_coefficient_sum = allocate_shared_float(z, r)
+    constraints_B_coefficient_sum = allocate_shared_float(z, r)
+    constraints_C_coefficient_sum = allocate_shared_float(z, r)
+    constraints_count = Ref(mk_int(0))
     @serial_region begin
-        constraints_A_coefficient .= 1.0
-        constraints_B_coefficient .= 0.0
-        constraints_C_coefficient .= 0.0
+        constraints_A_coefficient_sum .= 0.0
+        constraints_B_coefficient_sum .= 0.0
+        constraints_C_coefficient_sum .= 0.0
     end
 
     # return struct containing arrays needed to update moments
@@ -366,7 +375,8 @@ function create_moments_electron(z, r, electron_model, num_diss_params, n_source
         external_source_density_amplitude, external_source_momentum_amplitude,
         external_source_pressure_amplitude, v_norm_fac, ddens_dz, dupar_dz, dp_dz,
         d2p_dz2, dppar_dz, dqpar_dz, dT_dz, dT_dz_upwind, dvth_dz, dp_dt, dT_dt, dvth_dt,
-        constraints_A_coefficient, constraints_B_coefficient, constraints_C_coefficient)
+        constraints_A_coefficient_sum, constraints_B_coefficient_sum,
+        constraints_C_coefficient_sum, constraints_count)
 end
 
 # neutral particles have natural mean velocities 
@@ -519,13 +529,20 @@ function create_moments_neutral(z, r, composition, evolve_density, evolve_n_upar
     end
 
     if evolve_density || evolve_n_upar || evolve_p
-        constraints_A_coefficient = allocate_shared_float(z, r, composition.neutral_species_coord)
-        constraints_B_coefficient = allocate_shared_float(z, r, composition.neutral_species_coord)
-        constraints_C_coefficient = allocate_shared_float(z, r, composition.neutral_species_coord)
+        constraints_A_coefficient_sum = allocate_shared_float(z, r, composition.neutral_species_coord)
+        constraints_B_coefficient_sum = allocate_shared_float(z, r, composition.neutral_species_coord)
+        constraints_C_coefficient_sum = allocate_shared_float(z, r, composition.neutral_species_coord)
+        constraints_count = Ref(mk_int(0))
+        @serial_region begin
+            constraints_A_coefficient_sum .= 0.0
+            constraints_B_coefficient_sum .= 0.0
+            constraints_C_coefficient_sum .= 0.0
+        end
     else
-        constraints_A_coefficient = nothing
-        constraints_B_coefficient = nothing
-        constraints_C_coefficient = nothing
+        constraints_A_coefficient_sum = nothing
+        constraints_B_coefficient_sum = nothing
+        constraints_C_coefficient_sum = nothing
+        constraints_count = nothing
     end
 
     # return struct containing arrays needed to update moments
@@ -535,7 +552,8 @@ function create_moments_neutral(z, r, composition, evolve_density, evolve_n_upar
         dnuz_dt, dp_dt, dvth_dt, external_source_amplitude, external_source_T_array,
         external_source_density_amplitude, external_source_momentum_amplitude,
         external_source_pressure_amplitude, external_source_controller_integral,
-        constraints_A_coefficient, constraints_B_coefficient, constraints_C_coefficient)
+        constraints_A_coefficient_sum, constraints_B_coefficient_sum,
+        constraints_C_coefficient_sum, constraints_count)
 end
 
 """
