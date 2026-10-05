@@ -342,6 +342,9 @@ function setup_time_info(t_input, n_variables, code_time, dt_reload,
                                         mk_float(t_input["CFL_prefactor"]),
                                         t_input["split_operators"])
 
+    # Allow input option to disable adaptive timestepping if it was not wanted.
+    adaptive = adaptive && t_input["adaptive"]
+
     is_electron = (electron === nothing)
 
     if !adaptive
