@@ -205,6 +205,7 @@ function mk_input(input_dict=OptionsDict("output" => OptionsDict("run_name" => "
         nwrite_dfns=-1,
         exact_output_times=false,
         type="SSPRK4",
+        adaptive=true, # Default to using adaptive timestepping if the 'type' supports it.
         split_operators=false,
         add_random_noise=-1.0,
         random_noise_seed=-1,
@@ -254,6 +255,7 @@ function mk_input(input_dict=OptionsDict("output" => OptionsDict("run_name" => "
         nwrite=-1,
         nwrite_dfns=-1,
         type=timestepping_section["type"],
+        adaptive=true, # Default to using adaptive timestepping if the 'type' supports it.
         split_operators=false,
         converged_residual_value=1.0e-3,
         rtol=timestepping_section["rtol"],
