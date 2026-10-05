@@ -1257,7 +1257,7 @@ $\dot v_\perp = 0$, giving
 \dot{w}_\parallel &=
   \frac{\dot{v}_\parallel}{v_{Ti}}
   - \frac{1}{v_{Ti}} \left( \frac{\partial u_{i\parallel}}{\partial t} + \dot{r} \frac{\partial u_{i\parallel}}{\partial r} + \dot{z} \frac{\partial u_{i\parallel}}{\partial z} \right)
-  + \frac{w_\parallel}{v_{Ti}} \left( \frac{\partial v_{Ti}}{\partial t} + \dot{r} \frac{\partial v_{Ti}}{\partial r} + \dot{z} \frac{\partial v_{Ti}}{\partial z} \right) \\
+  - \frac{w_\parallel}{v_{Ti}} \left( \frac{\partial v_{Ti}}{\partial t} + \dot{r} \frac{\partial v_{Ti}}{\partial r} + \dot{z} \frac{\partial v_{Ti}}{\partial z} \right) \\
 
 \frac{\dot{\bar{F}}_i}{\bar{F}_i} &= \frac{3}{v_{Ti}} \left( \frac{\partial v_{Ti}}{\partial t} + \dot{r} \frac{\partial v_{Ti}}{\partial r} + \dot{z} \frac{\partial v_{Ti}}{\partial z} \right)
                    - \frac{1}{n_i} \left( \frac{\partial n_i}{\partial t} + \dot{r} \frac{\partial n_i}{\partial r} + \dot{z} \frac{\partial n_i}{\partial z} \right)
