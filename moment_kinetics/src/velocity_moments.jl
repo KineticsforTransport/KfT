@@ -266,7 +266,7 @@ function create_moments_ion(z, r, composition, evolve_density, evolve_upar,
         constraints_A_coefficient_sum = nothing
         constraints_B_coefficient_sum = nothing
         constraints_C_coefficient_sum = nothing
-        constraints_count = nothing
+        constraints_count = Ref(mk_int(0))
     end
 
     # return struct containing arrays needed to update moments
@@ -578,7 +578,7 @@ function create_moments_neutral(z, r, composition, evolve_density, evolve_upar,
         constraints_A_coefficient_sum = nothing
         constraints_B_coefficient_sum = nothing
         constraints_C_coefficient_sum = nothing
-        constraints_count = nothing
+        constraints_count = Ref(mk_int(0))
     end
 
     # return struct containing arrays needed to update moments

@@ -83,8 +83,8 @@ moments & fields only
 struct io_moments_info{Tfile, Ttime, Tphi, Tmomi, Tmome, Tmomn, Tchodura_lower,
                        Tchodura_upper, Texti1, Texti2, Texti3, Texti4,
                        Texti5, Textn1, Textn2, Textn3, Textn4, Textn5, Texte1, Texte2,
-                       Texte3, Texte4, Tconstri, Tconstrn, Tconstre, Tint, Telectrontime,
-                       Telectronint, Tnldiagnostics}
+                       Texte3, Texte4, Tconstri, Tconstrci, Tconstrn, Tconstrcn, Tconstre,
+                       Tconstrce, Tint, Telectrontime, Telectronint, Tnldiagnostics}
     # file identifier for the binary file to which data is written
     fid::Tfile
     # handle for the time variable
@@ -195,15 +195,15 @@ struct io_moments_info{Tfile, Ttime, Tphi, Tmomi, Tmome, Tmomn, Tchodura_lower,
     ion_constraints_absAminus1_coefficient_sum::Tconstri
     ion_constraints_absB_coefficient_sum::Tconstri
     ion_constraints_absC_coefficient_sum::Tconstri
-    ion_constraints_count::Tint
+    ion_constraints_count::Tconstrci
     neutral_constraints_absAminus1_coefficient_sum::Tconstrn
     neutral_constraints_absB_coefficient_sum::Tconstrn
     neutral_constraints_absC_coefficient_sum::Tconstrn
-    neutral_constraints_count::Tint
+    neutral_constraints_count::Tconstrcn
     electron_constraints_absAminus1_coefficient_sum::Tconstre
     electron_constraints_absB_coefficient_sum::Tconstre
     electron_constraints_absC_coefficient_sum::Tconstre
-    electron_constraints_count::Tint
+    electron_constraints_count::Tconstrce
 
     # cumulative wall clock time taken by the run
     time_for_run::Ttime
