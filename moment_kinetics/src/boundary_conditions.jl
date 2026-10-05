@@ -1857,8 +1857,8 @@ enforce boundary conditions on neutral particle f in z
                     T_wall_over_m, composition.recycling_fraction, moments.evolve_p,
                     moments.evolve_upar, moments.evolve_density, zero,
                     pdf_buffer[:,:,:,ir,isn],
-                    moments.neutral.constraints_A_coefficient_sum[:,ir,isn],
-                    moments.neutral.constraints_B_coefficient_sum[:,ir,isn])
+                    moments.neutral.constraints_A_coefficient_sum === nothing ? nothing : moments.neutral.constraints_A_coefficient_sum[:,ir,isn],
+                    moments.neutral.constraints_B_coefficient_sum === nothing ? nothing : moments.neutral.constraints_B_coefficient_sum[:,ir,isn])
             end
         end
     end
