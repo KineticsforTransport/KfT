@@ -2511,7 +2511,7 @@ function apply_electron_bc_and_constraints_no_r!(
         if (iz == 1 && skip_first) || (iz == z.n && skip_last)
             continue
         end
-        A, B, C
+        A, B, C =
             @views hard_force_moment_constraints!(f_electron[:,:,iz],
                                                   (evolve_density=true,
                                                    evolve_upar=true,
