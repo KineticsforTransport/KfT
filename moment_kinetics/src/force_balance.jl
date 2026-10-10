@@ -31,6 +31,7 @@ to update the parallel particle flux dens*upar for each species
     dupar_dz_upwind = moments.ion.dupar_dz_upwind
     dupar_dz = moments.ion.dupar_dz
     dppar_dz = moments.ion.dppar_dz
+    p = moments.ion.p
     ppar = moments.ion.ppar
     pperp = moments.ion.pperp
     Ez = fields.Ez
@@ -216,6 +217,7 @@ end
     if ionization !== nothing
         result += ionization * density * density_neutral * uz_neutral
     end
+    return result
 end
 
 @timeit global_timer neutral_force_balance!(

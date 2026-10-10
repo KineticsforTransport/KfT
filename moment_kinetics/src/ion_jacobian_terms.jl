@@ -124,7 +124,7 @@ function get_ion_sub_terms_evolve_nup(
     bzed = ConstantTerm(@view geometry.bzed[:,ir]; z=z)
     Bmag = ConstantTerm(@view geometry.Bmag[:,ir]; z=z)
     dBdz = ConstantTerm(@view geometry.dBdz[:,ir]; z=z)
-    mu = 0.5 * wperp^2 * vth^2 / Bmag
+    mu = 0.5 * wperp^2 * vth^2 * Bmag^(-1)
 
     r_speed = ConstantTerm(r_speed_array; vpa=vpa, vperp=vperp, z=z)
     alpha_speed = ConstantTerm(alpha_speed_array; vpa=vpa, vperp=vperp, z=z)

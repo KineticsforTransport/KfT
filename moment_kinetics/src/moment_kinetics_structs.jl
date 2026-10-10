@@ -748,6 +748,8 @@ end
     wperp
     wpa
     bzed
+    dBdz
+    mu
     r_speed
     alpha_speed
     z_speed

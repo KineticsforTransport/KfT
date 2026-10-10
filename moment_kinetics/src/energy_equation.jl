@@ -38,8 +38,8 @@ evolve the parallel pressure by solving the energy equation
 
     @loop_s_r_z is ir iz begin
         dp_dt[iz,ir,is] = get_dpdt_inner_main(upar[iz,ir,is], p[iz,ir,is], ppar[iz,ir,is],
-                                              pperp[iz,ir,is], dupar_dz[iz,ir,is],
-                                              dp_dr_upwind[iz,ir,is],
+                                              pperp[iz,ir,is], qpar[iz],
+                                              dupar_dz[iz,ir,is], dp_dr_upwind[iz,ir,is],
                                               dp_dz_upwind[iz,ir,is], dqpar_dz[iz,ir,is],
                                               bz[iz,ir], Bmag[iz,ir], dBdr[iz,ir],
                                               dBdz[iz,ir], vEr[iz,ir], vEz[iz,ir])
@@ -72,10 +72,10 @@ evolve the parallel pressure by solving the energy equation
         if charge_exchange !== nothing || ionization !== nothing
             @loop_s_r_z is ir iz begin
                 dp_dt[iz,ir,is] +=
-                    get_ion_reactions_inner(charge_exchange, ionization,
-                                            density[iz,ir,is], upar[iz,ir,is],
-                                            p[iz,ir,is], density_neutral[iz,ir,is],
-                                            uz_neutral[iz,ir,is], p_neutral[iz,ir,is])
+                    get_dpdt_reactions_inner(charge_exchange, ionization,
+                                             density[iz,ir,is], upar[iz,ir,is],
+                                             p[iz,ir,is], density_neutral[iz,ir,is],
+                                             uz_neutral[iz,ir,is], p_neutral[iz,ir,is])
             end
         end
     end
@@ -113,9 +113,9 @@ function energy_equation_no_sr!(fvec, moments, fields, collisions, dt, compositi
 
     @loop_z iz begin
         dp_dt[iz] = get_dpdt_inner_main(upar[iz], p[iz], ppar[iz], pperp[iz],
-                                        dupar_dz[iz], dp_dr_upwind[iz], dp_dz_upwind[iz],
-                                        dqpar_dz[iz], bz[iz], Bmag[iz], dBdr[iz],
-                                        dBdz[iz], vEr[iz], vEz[iz])
+                                        qpar[iz], dupar_dz[iz], dp_dr_upwind[iz],
+                                        dp_dz_upwind[iz], dqpar_dz[iz], bz[iz], Bmag[iz],
+                                        dBdr[iz], dBdz[iz], vEr[iz], vEz[iz])
     end
 
 
@@ -155,7 +155,7 @@ function energy_equation_no_sr!(fvec, moments, fields, collisions, dt, compositi
     return nothing
 end
 
-@inline function get_dpdt_inner_main(upar, p, ppar, pperp, dupar_dz, dp_dr_upwind,
+@inline function get_dpdt_inner_main(upar, p, ppar, pperp, qpar, dupar_dz, dp_dr_upwind,
                                      dp_dz_upwind, dqpar_dz, bz, Bmag, dBdr, dBdz, vEr,
                                      vEz)
     return -(vEr * dp_dr_upwind
@@ -164,7 +164,7 @@ end
              + 2.0/3.0 * bz * dqpar_dz
              + 2.0/3.0 * bz * ppar * dupar_dz
              - 2.0/3.0 * (1/Bmag) * ((2 * pperp + 0.5 * ppar) *
-                                     (vEr * dBdr[iz,ir] + (vEz + bz * upar) * dBdz)
+                                     (vEr * dBdr + (vEz + bz * upar) * dBdz)
                                      + bz * dBdz * qpar))
 end
 
