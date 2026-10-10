@@ -191,9 +191,11 @@ electron_test_input = OptionsDict("output" => OptionsDict("run_name" => "jacobia
                                  )
 
 const ion_test_input = deepcopy(electron_test_input)
+pop!(ion_test_input["composition"], "electron_physics")
 pop!(ion_test_input["timestepping"], "kinetic_electron_solver")
 pop!(ion_test_input["timestepping"], "kinetic_electron_preconditioner")
 ion_test_input["timestepping"]["kinetic_ion_solver"] = "implicit_ion_parallel_dynamics"
+ion_test_input["timestepping"]["dt"] = dt
 
 function get_mk_state(test_input)
     # Reset timers in case there was a previous run which did not clean them up.
@@ -410,6 +412,7 @@ function test_get_ion_pdf_term(test_input::AbstractDict, label::String,
         vpa_speed = @view vpa_advect[:,:,:,ir,is]
         vperp_advect = advection_structs.vperp_advect
         vperp_speed = @view vperp_advect[:,:,:,ir,is]
+        ion_source_settings = external_source_settings.ion
 
         f = @view pdf.ion.norm[:,:,:,ir,is]
 
@@ -454,6 +457,7 @@ function test_get_ion_pdf_term(test_input::AbstractDict, label::String,
                        num_diss_params, z)
         energy_equation!(dummy_buffer, fvec, moments, fields, collisions, dt, composition,
                          geometry, external_source_settings.ion, num_diss_params)
+        update_derived_ion_moment_time_derivatives!(fvec, moments)
 
         @begin_r_anyzv_region()
         delta_f = allocate_shared_float(vpa, vperp, z; comm=comm_anyzv_subblock[])
@@ -599,9 +603,13 @@ function test_get_ion_pdf_term(test_input::AbstractDict, label::String,
                          uz_neutral=moments.neutral.uz, p_neutral=moments.neutral.p)
             @views rhs_func!(; residual, this_f, fvec=this_fvec, dens, upar=upar_test, p,
                              vth, moments, fields, collisions, composition, geometry,
-                             z_advect, vpa_advect, r, z, vperp, vpa, z_spectral,
-                             vpa_spectral, external_source_settings, num_diss_params,
-                             t_params, scratch_dummy, dt, is, ir)
+                             r_advect, alpha_advect, z_advect, vpa_advect, r, z, vperp,
+                             vpa, z_spectral, vpa_spectral, ion_source_settings,
+                             num_diss_params, t_params, scratch_dummy,
+                             evolve_density=Val(moments.evolve_density),
+                             evolve_upar=Val(moments.evolve_upar),
+                             evolve_p=Val(moments.evolve_p),
+                             dt, t=0.0, is, ir)
             # Now
             #   residual = f_ion_old + dt*RHS(f_ion_newvar)
             # so update to desired residual

@@ -124,8 +124,8 @@ function get_ion_sub_terms_evolve_nup(
     bzed = ConstantTerm(@view geometry.bzed[:,ir]; z=z)
 
     r_speed = ConstantTerm(r_speed_array; vpa=vpa, vperp=vperp, z=z)
-    alpha_speed = ConstantTerm(alpha_speed_array; z=z, vpa=vpa, vperp=vperp)
-    z_speed = ConstantTerm(z_speed_array; z=z, vpa=vpa, vperp=vperp)
+    alpha_speed = ConstantTerm(alpha_speed_array; vpa=vpa, vperp=vperp, z=z)
+    z_speed = ConstantTerm(z_speed_array; vpa=vpa, vperp=vperp, z=z)
 
     # As dupar_dt is a CompoundTerm, only need to keep contributions in dupar_dt_expanded
     # that depend on f - any constant terms would not contribute (their contribution is
@@ -147,9 +147,9 @@ function get_ion_sub_terms_evolve_nup(
     vpa_dissipation_coefficient = num_diss_params.vpa_dissipation_coefficient
 
     return IonSubTerms(; f, df_dz, df_dvperp, df_dvpa, n, dn_dt, dn_dr, dn_dz, upar,
-                       dupar_dt, dupar_dr, dupar_dz, vth, dvth_dt, dvth_dr, dvth_dz,
-                       wpa2_moment_constraint_rhs, third_moment_constraint_rhs,
-                       wperp, wpa, bzed, r_speed, alpha_speed, z_speed, nvperp,
+                       dupar_dt, dupar_dr, dupar_dz, vth, dvth_dt, dvth_dr, dvth_dz, Ez,
+                       wpa2_moment_constraint_rhs, third_moment_constraint_rhs, wperp,
+                       wpa, bzed, r_speed, alpha_speed, z_speed, nvperp,
                        z_dissipation_coefficient, vperp_dissipation_coefficient,
                        vpa_dissipation_coefficient, collisions, external_sources, z, ir)
 end

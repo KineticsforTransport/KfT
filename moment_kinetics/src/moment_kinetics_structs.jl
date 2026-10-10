@@ -746,6 +746,7 @@ end
     dvth_dt
     dvth_dr
     dvth_dz
+    Ez
     wpa2_moment_constraint_rhs
     third_moment_constraint_rhs
     wperp

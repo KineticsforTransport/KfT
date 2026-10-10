@@ -48,6 +48,7 @@ function vpa_advection!(f_out, fvec_in, fields, moments, vpa_advect, r_advect,
     speed_args = get_speed_vpa_inner_args(vpa_advect, fvec_in, moments, fields, r_advect,
                                           alpha_advect, z_advect, geometry, vperp, vpa,
                                           evolve_density, evolve_upar, evolve_p)
+    f_in = fvec_in.pdf
     @loop_s_r is ir begin
         speed_args_sr = get_speed_vpa_inner_views_sr(is, ir, speed_args...)
         @loop_z iz begin
@@ -56,8 +57,7 @@ function vpa_advection!(f_out, fvec_in, fields, moments, vpa_advect, r_advect,
                 speed_args_vperp = get_speed_vpa_inner_views_vperp(ivperp, speed_args_z...)
                 # calculate the advection speed corresponding to current f
                 update_speed_vpa_inner!(speed_args_vperp...)
-                @views advance_f_local!(f_out[:,ivperp,iz,ir,is],
-                                        fvec_in.pdf[:,ivperp,iz,ir,is],
+                @views advance_f_local!(f_out[:,ivperp,iz,ir,is], f_in[:,ivperp,iz,ir,is],
                                         first(speed_args_vperp), vpa, dt, vpa_spectral)
             end
         end
@@ -604,14 +604,17 @@ function get_ion_vpa_advection_term_evolve_nup(sub_terms::IonSubTerms)
     dupar_dt = sub_terms.dupar_dt
     dupar_dr = sub_terms.dupar_dr
     dupar_dz = sub_terms.dupar_dz
+    vth = sub_terms.vth
     dvth_dt = sub_terms.dvth_dt
     dvth_dr = sub_terms.dvth_dr
     dvth_dz = sub_terms.dvth_dz
+    wpa = sub_terms.wpa
+    df_dvpa = sub_terms.df_dvpa
 
     speed = (bz * Ez
              - (dupar_dt + r_speed * dupar_dr + (alpha_speed + z_speed) * dupar_dz)
              - wpa * (dvth_dt + r_speed * dvth_dr + (alpha_speed + z_speed) * dvth_dz)
-            ) / vth
+            ) * vth^(-1)
     term = speed * df_dvpa
 
     return term
