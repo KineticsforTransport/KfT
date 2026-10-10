@@ -56,8 +56,13 @@ using moment_kinetics.moment_constraints: electron_implicit_constraint_forcing!,
                                           hard_force_moment_constraints!
 using moment_kinetics.timer_utils: reset_mk_timers!
 using moment_kinetics.type_definitions: mk_float
-using moment_kinetics.velocity_moments: calculate_electron_moment_derivatives_no_r!
-using moment_kinetics.vpa_advection: get_ion_vpa_advection_term_evolve_nup
+using moment_kinetics.velocity_moments: calculate_electron_moment_derivatives_no_r!,
+                                        update_derived_ion_moment_time_derivatives!,
+                                        update_derived_ion_moment_time_derivatives_no_sr!,
+                                        update_ppar_species_no_sr!,
+                                        calculate_ion_qpar_from_pdf_no_r!
+using moment_kinetics.vpa_advection: get_ion_vpa_advection_term_evolve_nup,
+                                     vpa_advection_no_sr!, update_speed_vpa_no_sr!
 using moment_kinetics.z_advection: get_ion_z_advection_term_evolve_nup,
                                    update_speed_z_no_sr!, z_advection_no_sr!
 
@@ -497,15 +502,17 @@ function test_get_ion_pdf_term(test_input::AbstractDict, label::String,
                                            z_spectral, z)
 
         dpdf_dvpa = @view scratch_dummy.buffer_vpavperpzr_2[:,:,:,ir]
-#        update_speed_vpa_no_sr!(vpa_advect, dens, upar, p, moments,
-#                                composition.me_over_mi, vpa.grid,
-#                                external_source_settings.electron)
-#        #calculate the upwind derivative of the ion pdf w.r.t. wpa
-#        @begin_anyzv_z_vperp_region()
-#        @loop_z_vperp iz ivperp begin
-#            @views derivative!(dpdf_dvpa[:,ivperp,iz], f[:,ivperp,iz], vpa,
-#                               vpa_advect[:,ivperp,iz,ir], vpa_spectral)
-#        end
+        update_speed_vpa_no_sr!(vpa_advect, fields, fvec, moments, r_advect, alpha_advect,
+                                z_advect, vpa, vperp, z, r, composition, collisions,
+                                ion_source_settings, 0.0, geometry,
+                                Val(moments.evolve_density), Val(moments.evolve_upar),
+                                Val(moments.evolve_p), is, ir)
+        #calculate the upwind derivative of the ion pdf w.r.t. wpa
+        @begin_anyzv_z_vperp_region()
+        @loop_z_vperp iz ivperp begin
+            @views derivative!(dpdf_dvpa[:,ivperp,iz], f[:,ivperp,iz], vpa,
+                               vpa_speed[:,ivperp,iz], vpa_spectral)
+        end
 
         dpdf_dvperp = @view scratch_dummy.buffer_vpavperpzr_3[:,:,:,ir]
 #        update_speed_vperp_no_sr!(vperp_advect, dens, upar, p, moments,
@@ -588,11 +595,23 @@ function test_get_ion_pdf_term(test_input::AbstractDict, label::String,
             # For "krook_collisions" upar_test could be different from upar. Do not pass
             # in upar_test here, because we want upar_test to stay fixed at its initial
             # value, not be updated to be equal to ion_upar.
-#            calculate_moments_no_r!(this_f, dens, upar, p, moments, composition,
-#                                    collisions, r, z, vperp, vpa, ir)
-#            calculate_moment_derivatives_no_r!(
-#                moments, dens, upar_test, p, scratch_dummy, z, z_spectral,
-#                num_diss_params.ion.moment_dissipation_coefficient, ir)
+            update_ppar_species_no_sr!(ppar, dens, upar, vth, p, this_f, vpa, vperp, z,
+                                       moments.evolve_density, moments.evolve_upar,
+                                       moments.evolve_p)
+            calculate_ion_qpar_from_pdf_no_r!(qpar, dens, upar, vth, this_f, vpa, vperp,
+                                              z, moments.evolve_density,
+                                              moments.evolve_upar, moments.evolve_p)
+            continuity_equation_no_sr!(fvec, fields, moments, composition, geometry, dt,
+                                       collisions.reactions.ionization_frequency,
+                                       external_source_settings.ion, num_diss_params, is,
+                                       ir)
+            force_balance_no_sr!(moments.ion.dens, fvec, moments, fields, collisions, dt,
+                                 composition, geometry, external_source_settings.ion,
+                                 num_diss_params, z, is, ir)
+            energy_equation_no_sr!(fvec, moments, fields, collisions, dt, composition,
+                                   geometry, external_source_settings.ion,
+                                   num_diss_params, is, ir)
+            update_derived_ion_moment_time_derivatives_no_sr!(fvec, moments, is, ir)
 
             @begin_anyzv_z_vperp_vpa_region()
             @loop_z_vperp_vpa iz ivperp ivpa begin
@@ -2821,13 +2840,16 @@ function run_ion_tests()
                                   z_advection_wrapper!, (2.5e2*epsilon)^2)
 
             function vpa_advection_wrapper!(; kwargs...)
-                vpa_advection!(kwargs[:residual], kwargs[:this_f], kwargs[:dens],
-                                        kwargs[:upar], kwargs[:this_p], kwargs[:moments],
-                                        kwargs[:composition], kwargs[:vpa_advect],
-                                        kwargs[:vpa], kwargs[:vpa_spectral],
-                                        kwargs[:scratch_dummy], kwargs[:dt],
-                                        kwargs[:external_source_settings].electron,
-                                        kwargs[:ir])
+                vpa_advection_no_sr!(kwargs[:residual], kwargs[:fvec], kwargs[:fields],
+                                     kwargs[:moments], kwargs[:vpa_advect],
+                                     kwargs[:r_advect], kwargs[:alpha_advect],
+                                     kwargs[:z_advect], kwargs[:vpa], kwargs[:vperp],
+                                     kwargs[:z], kwargs[:r], kwargs[:dt], kwargs[:t],
+                                     kwargs[:vpa_spectral], kwargs[:composition],
+                                     kwargs[:collisions], kwargs[:ion_source_settings],
+                                     kwargs[:geometry], kwargs[:evolve_density],
+                                     kwargs[:evolve_upar], kwargs[:evolve_p], kwargs[:is],
+                                     kwargs[:ir])
                 return nothing
             end
             test_get_ion_pdf_term(this_test_input, "vpa_advection",
