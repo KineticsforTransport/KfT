@@ -57,8 +57,8 @@ using MPI
 Creates the structs for the pdf and the velocity-space moments
 """
 function allocate_pdf_and_moments(composition, r, z, vperp, vpa, vzeta, vr, vz,
-                                  evolve_moments, collisions, external_source_settings,
-                                  num_diss_params, t_input)
+                                  evolve_moments, external_source_settings,
+                                  num_diss_params)
     pdf = create_pdf(composition, r, z, vperp, vpa, vzeta, vr, vz)
 
     # create the 'moments' struct that contains various v-space moments and other
@@ -77,17 +77,7 @@ function allocate_pdf_and_moments(composition, r, z, vperp, vpa, vzeta, vr, vz,
                                      evolve_moments.pressure,
                                      external_source_settings.neutral, num_diss_params)
 
-    if abs(collisions.reactions.ionization_frequency) > 0.0 || z.bc == "wall"
-        # if ionization collisions are included or wall BCs are enforced, then particle
-        # number is not conserved within each species
-        particle_number_conserved = false
-    else
-        # by default, assumption is that particle number should be conserved for each species
-        particle_number_conserved = true
-    end
-
     moments = moments_struct(ion, electron, neutral, evolve_moments.density,
-                             particle_number_conserved,
                              evolve_moments.moments_conservation,
                              evolve_moments.parallel_flow,
                              evolve_moments.pressure)

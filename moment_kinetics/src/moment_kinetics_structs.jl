@@ -447,10 +447,6 @@ struct moments_struct{Ti<:moments_ion_substruct,Te<:moments_electron_substruct,T
     neutral::Tn
     # flag that indicates if the density should be evolved via continuity equation
     evolve_density::Bool
-    # flag that indicates if particle number should be conserved for each species
-    # effects like ionisation or net particle flux from the domain would lead to
-    # non-conservation
-    particle_number_conserved::Bool
     # flag that indicates if exact particle conservation should be enforced
     enforce_conservation::Bool
     # flag that indicates if the parallel flow should be evolved via force balance
