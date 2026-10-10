@@ -42,17 +42,14 @@ to update the parallel particle flux dens*upar for each species
     dBdr = geometry.dBdr
     @loop_s_r_z is ir iz begin
         dnupar_dt[iz,ir,is] =
-            -(vEr[iz,ir] * (density[iz,ir,is] * dupar_dr_upwind[iz,ir,is]
-                            + upar[iz,ir,is] * ddens_dr_upwind[iz,ir,is])
-              + (vEz[iz,ir] + bz[iz,ir] * upar[iz,ir,is]) * (density[iz,ir,is] * dupar_dz_upwind[iz,ir,is]
-                                                             + upar[iz,ir,is] * ddens_dz_upwind[iz,ir,is])
-              + bz[iz,ir] * density[iz,ir,is] * upar[iz,ir,is] * dupar_dz[iz,ir,is]
-              + bz[iz,ir] * dppar_dz[iz,ir,is]
-              - bz[iz,ir] * Ez[iz,ir] * density[iz,ir,is]
-              + bz[iz,ir] * (1/Bmag[iz,ir]) * dBdz[iz,ir] * (pperp[iz,ir,is] - ppar[iz,ir,is])
-              - (1/Bmag[iz,ir]) * density[iz,ir,is] * upar[iz,ir,is] *
-                (vEr[iz,ir] * dBdr[iz,ir] + (vEz[iz,ir] + bz[iz,ir] * upar[iz,ir,is]) * dBdz[iz,ir]))
-        end
+            get_dnupar_dt_inner_main(density[iz,ir,is], upar[iz,ir,is], pperp[iz,ir,is],
+                                     ppar[iz,ir,is], ddens_dr_upwind[iz,ir,is],
+                                     ddens_dz_upwind[iz,ir,is], dupar_dz[iz,ir,is],
+                                     dupar_dr_upwind[iz,ir,is], dupar_dz_upwind[iz,ir,is],
+                                     dppar_dz[iz,ir,is], Ez[iz,ir], vEr[iz,ir],
+                                     vEz[iz,ir], bz[iz,ir], Bmag[iz,ir], dBdr[iz,ir],
+                                     dBdz[iz,ir])
+    end
 
     for index ∈ eachindex(ion_source_settings)
         if ion_source_settings[index].active
@@ -76,15 +73,15 @@ to update the parallel particle flux dens*upar for each species
         # account for collisional friction between ions and neutrals
         charge_exchange = collisions.reactions.charge_exchange_frequency
         ionization = collisions.reactions.ionization_frequency
-        if charge_exchange !== nothing
+        if charge_exchange !== nothing || ionization !== nothing
+            density_neutral = fvec.density_neutral
+            uz_neutral = fvec.uz_neutral
             @loop_s_r_z is ir iz begin
-                dnupar_dt[iz,ir,is] += charge_exchange*density[iz,ir,is]*fvec.density_neutral[iz,ir,is]*(fvec.uz_neutral[iz,ir,is]-upar[iz,ir,is])
-            end
-        end
-        # account for ionization collisions
-        if ionization !== nothing
-            @loop_s_r_z is ir iz begin
-                dnupar_dt[iz,ir,is] += ionization*density[iz,ir,is]*fvec.density_neutral[iz,ir,is]*fvec.uz_neutral[iz,ir,is]
+                dnupar_dt[iz,ir,is] +=
+                    get_dnupardt_reactions_inner(charge_exchange, ionization,
+                                                 density[iz,ir,is], upar[iz,ir,is],
+                                                 p[iz,ir,is], density_neutral[iz,ir,is],
+                                                 uz_neutral[iz,ir,is])
             end
         end
     end
@@ -123,6 +120,102 @@ to update the parallel particle flux dens*upar for each species
         end
     end
     return nothing
+end
+
+# This version only calculates dnupar_dt, and does not update a 'new upar'.
+function force_balance_no_sr!(fvec, moments, fields, collisions, dt, composition,
+                              geometry, ion_source_settings, num_diss_params, z, is, ir)
+    @begin_anyzv_z_region()
+
+    dnupar_dt = @view moments.ion.dnupar_dt[:,ir,is]
+
+    # account for momentum flux contribution to force balance
+    density = @view fvec.density[:,ir,is]
+    upar = @view fvec.upar[:,ir,is]
+    ddens_dr_upwind = @view moments.ion.ddens_dr_upwind[:,ir,is]
+    ddens_dz_upwind = @view moments.ion.ddens_dz_upwind[:,ir,is]
+    dupar_dr_upwind = @view moments.ion.dupar_dr_upwind[:,ir,is]
+    dupar_dz_upwind = @view moments.ion.dupar_dz_upwind[:,ir,is]
+    dupar_dz = @view moments.ion.dupar_dz[:,ir,is]
+    dppar_dz = @view moments.ion.dppar_dz[:,ir,is]
+    ppar = @view moments.ion.ppar[:,ir,is]
+    pperp = @view moments.ion.pperp[:,ir,is]
+    Ez = @view fields.Ez[:,ir,is]
+    vEr = @view fields.vEr[:,ir,is]
+    vEz = @view fields.vEz[:,ir,is]
+    bz = @view geometry.bzed[:,ir,is]
+    Bmag = @view geometry.Bmag[:,ir,is]
+    dBdz = @view geometry.dBdz[:,ir,is]
+    dBdr = @view geometry.dBdr[:,ir,is]
+    @loop_z iz begin
+        dnupar_dt[iz] =
+            get_dnupar_dt_inner_main(density[iz], upar[iz], pperp[iz], ppar[iz],
+                                     ddens_dr_upwind[iz], ddens_dz_upwind[iz],
+                                     dupar_dz[iz], dupar_dr_upwind[iz],
+                                     dupar_dz_upwind[iz], dppar_dz[iz], Ez[iz], vEr[iz],
+                                     vEz[iz], bz[iz], Bmag[iz], dBdr[iz], dBdz[iz])
+    end
+
+    for index ∈ eachindex(ion_source_settings)
+        if ion_source_settings[index].active
+            @views source_amplitude = moments.ion.external_source_momentum_amplitude[:,ir,index]
+            @loop_z iz begin
+                dnupar_dt[iz] += source_amplitude[iz]
+            end
+        end
+    end
+
+    # Ad-hoc diffusion to stabilise numerics...
+    diffusion_coefficient = num_diss_params.ion.moment_dissipation_coefficient
+    if diffusion_coefficient > 0.0
+        @loop_z iz begin
+            dnupar_dt[iz] += diffusion_coefficient*moments.ion.d2upar_dz2[iz]*density[iz]
+        end
+    end
+
+    # if neutrals present account for charge exchange and/or ionization collisions
+    if composition.n_neutral_species > 0
+        # account for collisional friction between ions and neutrals
+        charge_exchange = collisions.reactions.charge_exchange_frequency
+        ionization = collisions.reactions.ionization_frequency
+        if charge_exchange !== nothing || ionization !== nothing
+            density_neutral = fvec.density_neutral
+            uz_neutral = fvec.uz_neutral
+            @loop_z iz begin
+                dnupar_dt[iz] +=
+                    get_dnupardt_reactions_inner(charge_exchange, ionization, density[iz],
+                                                 upar[iz], p[iz], density_neutral[iz],
+                                                 uz_neutral[iz])
+            end
+        end
+    end
+
+    return nothing
+end
+
+@inline function get_dnupar_dt_inner_main(density, upar, pperp, ppar, ddens_dr_upwind,
+                                          ddens_dz_upwind, dupar_dz, dupar_dr_upwind,
+                                          dupar_dz_upwind, dppar_dz, Ez, vEr, vEz, bz,
+                                          Bmag, dBdr, dBdz)
+    return -(vEr * (density * dupar_dr_upwind + upar * ddens_dr_upwind)
+             + (vEz + bz * upar) * (density * dupar_dz_upwind + upar * ddens_dz_upwind)
+             + bz * density * upar * dupar_dz
+             + bz * dppar_dz
+             - bz * Ez * density
+             + bz * (1/Bmag) * dBdz * (pperp - ppar)
+             - (1/Bmag) * density * upar *
+             (vEr * dBdr + (vEz + bz * upar) * dBdz))
+end
+
+@inline function get_dnupardt_reactions_inner(charge_exchange, ionization, density, upar, p, density_neutral, uz_neutral)
+    if charge_exchange !== nothing
+        result = charge_exchange * density * density_neutral * (uz_neutral - upar)
+    else
+        result = 0.0
+    end
+    if ionization !== nothing
+        result += ionization * density * density_neutral * uz_neutral
+    end
 end
 
 @timeit global_timer neutral_force_balance!(

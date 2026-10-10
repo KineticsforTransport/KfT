@@ -12,6 +12,7 @@ export update_ppar!
 export update_pperp!
 export update_ion_qpar!
 export update_derived_ion_moment_time_derivatives!
+export update_derived_ion_moment_time_derivatives_no_sr!
 export update_vth!
 export reset_moments_status!
 export update_derived_electron_moment_time_derivatives!
@@ -916,6 +917,50 @@ function update_ppar_species!(ppar, density, upar, vth, p, ff, vpa, vperp, z, r,
     end
     return nothing
 end
+function update_ppar_species_no_sr!(ppar, density, upar, vth, p, ff, vpa, vperp, z,
+                                    evolve_density, evolve_upar, evolve_p)
+    @debug_consistency_checks vpa.n == size(ff, 1) || throw(BoundsError(ff))
+    @debug_consistency_checks vperp.n == size(ff, 2) || throw(BoundsError(ff))
+    @debug_consistency_checks z.n == size(ff, 3) || throw(BoundsError(ff))
+    @debug_consistency_checks z.n == size(ppar, 1) || throw(BoundsError(ppar))
+    if evolve_p
+        # this is the case where the pressure, parallel flow and density are evolved
+        # separately from the shape function; the vpa coordinate
+        # is <(v_∥ - upar_s) / vth_s> and so we set upar = 0 in the call to
+        # get_moment_for_ppar because the mean flow of the shape function is zero
+        if vperp.n == 1
+            @loop_z iz begin
+                ppar[iz] = 3.0 * p[iz]
+            end
+        else
+            @loop_z iz begin
+                ppar[iz] = density[iz] * vth[iz]^2 *
+                              get_moment_for_ppar(@view(ff[:,:,iz]), vpa, vperp, 0.0)
+            end
+        end
+    elseif evolve_upar
+        # this is the case where the parallel flow and density are evolved separately
+        # from the normalized pdf; the vpa coordinate is <v_∥ - upar_s) / c_ref> and so we
+        # set upar = 0 in the call to get_moment_for_ppar because the mean flow of the
+        # normalised ff is zero
+        @loop_z iz begin
+            ppar[iz] = density[iz]*get_moment_for_ppar(@view(ff[:,:,iz]), vpa, vperp, 0.0)
+        end
+    elseif evolve_density
+        # corresponds to case where only the density is evolved separately from the
+        # normalised pdf; the vpa coordinate is v_\parallel / cref.
+        @loop_z iz begin
+            ppar[iz] = density[iz]*get_moment_for_ppar(@view(ff[:,:,iz]), vpa, vperp, upar[iz])
+        end
+    else
+        # When evolve_density = false, the evolved pdf is the 'true' pdf,
+        # and the vpa coordinate is v_∥ / cref.
+        @loop_z iz begin
+            ppar[iz] = get_moment_for_ppar(@view(ff[:,:,iz]), vpa, vperp, upar[iz])
+        end
+    end
+    return nothing
+end
 
 function get_moment_for_ppar(ff, vpa, vperp, upar)
     # Calculate ∫d^3v (vpa-upar)^2 ff
@@ -1075,6 +1120,43 @@ function calculate_ion_qpar_from_pdf!(qpar, density, upar, vth, ff, vpa, vperp, 
             qpar[iz,ir] = 0.5 *
                           integral((vperp,vpa)->((vpa-upar[iz,ir])*((vpa-upar[iz,ir])^2+vperp^2)),
                                    @view(ff[:,:,iz,ir]), vperp, vpa)
+        end
+    end
+    return nothing
+end
+function calculate_ion_qpar_from_pdf_no_r!(qpar, density, upar, vth, ff, vpa, vperp, z,
+                                           evolve_density, evolve_upar, evolve_p)
+    @debug_consistency_checks z.n == size(ff, 3) || throw(BoundsError(ff))
+    @debug_consistency_checks vperp.n == size(ff, 2) || throw(BoundsError(ff))
+    @debug_consistency_checks vpa.n == size(ff, 1) || throw(BoundsError(ff))
+    @debug_consistency_checks z.n == size(qpar, 1) || throw(BoundsError(qpar))
+    if evolve_upar && evolve_p
+        @loop_z iz begin
+            qpar[iz] = 0.5 * density[iz] * vth[iz]^3 *
+                          integral((vperp,vpa)->(vpa*(vpa^2+vperp^2)), @view(ff[:,:,iz]), vperp, vpa)
+        end
+    elseif evolve_upar
+        @loop_z iz begin
+            qpar[iz] = 0.5 * density[iz] *
+                          integral((vperp,vpa)->(vpa*(vpa^2+vperp^2)), @view(ff[:,:,iz]), vperp, vpa)
+        end
+    elseif evolve_p
+        @loop_z iz begin
+            qpar[iz] = 0.5 * density[iz] * vth[iz]^3 *
+                          integral((vperp,vpa)->((vpa-upar[iz]/vth[iz])*((vpa-upar[iz]/vth[iz])^2+vperp^2)),
+                                   @view(ff[:,:,iz]), vperp, vpa)
+        end
+    elseif evolve_density
+        @loop_z iz begin
+            qpar[iz] = 0.5 * density[iz] *
+                          integral((vperp,vpa)->((vpa-upar[iz])*((vpa-upar[iz])^2+vperp^2)),
+                                   @view(ff[:,:,iz]), vperp, vpa)
+        end
+    else
+        @loop_z iz begin
+            qpar[iz] = 0.5 *
+                          integral((vperp,vpa)->((vpa-upar[iz])*((vpa-upar[iz])^2+vperp^2)),
+                                   @view(ff[:,:,iz]), vperp, vpa)
         end
     end
     return nothing
@@ -1311,22 +1393,60 @@ function update_derived_ion_moment_time_derivatives!(fvec_in, moments)
     dupar_dt = moments.ion.dupar_dt
     dvth_dt = moments.ion.dvth_dt
 
-    if dupar_dt !== nothing
-        @loop_s_r_z is ir iz begin
-            dupar_dt[iz,ir,is] = (dnupar_dt[iz,ir,is] - upar[iz,ir,is] * dn_dt[iz,ir,is]) / n[iz,ir,is]
+    @loop_s_r_z is ir iz begin
+        if dupar_dt !== nothing
+            @views dupar_dt[iz,ir,is] =
+                update_dupar_dt_inner!(dupar_dt[iz,ir,is], n[iz,ir,is], dn_dt[iz,ir,is],
+                                       dnupar_dt[iz,ir,is], upar[iz,ir,is])
         end
-    end
-
-    if dvth_dt !== nothing
-        @loop_s_r_z is ir iz begin
-            # vth = sqrt(2*ppar/n)
-            # dvth/dt = 1 / sqrt(2*ppar*n) * dppar/dt - sqrt(ppar/2/n^3) * dn/dt
-            dvth_dt[iz,ir,is] = 0.5 * vth[iz,ir,is] *
-                                (dp_dt[iz,ir,is] / p[iz,ir,is] - dn_dt[iz,ir,is] / n[iz,ir,is])
+        if dvth_dt !== nothing
+            @views dvth_dt[iz,ir,is] =
+                update_dvth_dt_inner!(dvth_dt[iz,ir,is], n[iz,ir,is], dn_dt[iz,ir,is],
+                                      p[iz,ir,is], dp_dt[iz,ir,is], vth[iz,ir,is])
         end
     end
 
     return nothing
+end
+
+function update_derived_ion_moment_time_derivatives_no_sr!(fvec_in, moments, is, ir)
+    @begin_anyzv_z_region()
+
+    n = @view fvec_in.density[:,ir,is]
+    upar = @view fvec_in.upar[:,ir,is]
+    p = @view fvec_in.p[:,ir,is]
+    vth = @view moments.ion.vth[:,ir,is]
+    dn_dt = @view moments.ion.ddens_dt[:,ir,is]
+    dnupar_dt = @view moments.ion.dnupar_dt[:,ir,is]
+    dp_dt = @view moments.ion.dp_dt[:,ir,is]
+
+    dupar_dt = moments.ion.dupar_dt === nothing ? nothing : @view moments.ion.dupar_dt[:,ir,is]
+    dvth_dt = moments.ion.dvth_dt === nothing ? nothing : @view moments.ion.dvth_dt[:,ir,is]
+
+    @loop_z iz begin
+        if dupar_dt !== nothing
+            @views dupar_dt[iz] =
+                update_dupar_dt_inner!(dupar_dt[iz], n[iz], dn_dt[iz], dnupar_dt[iz],
+                                       upar[iz])
+        end
+        if dvth_dt !== nothing
+            @views dvth_dt[iz] =
+                update_dvth_dt_inner!(dvth_dt[iz], n[iz], dn_dt[iz], p[iz], dp_dt[iz],
+                                      vth[iz])
+        end
+    end
+
+    return nothing
+end
+
+@inline function update_dupar_dt_inner!(dupar_dt, n, dn_dt, dnupar_dt, upar)
+    return (dnupar_dt - upar * dn_dt) / n
+end
+
+@inline function update_dvth_dt_inner!(dvth_dt, n, dn_dt, p, dp_dt, vth)
+    # vth = sqrt(2*ppar/n)
+    # dvth/dt = 1 / sqrt(2*ppar*n) * dppar/dt - sqrt(ppar/2/n^3) * dn/dt
+    return 0.5 * vth * (dp_dt / p - dn_dt / n)
 end
 
 """

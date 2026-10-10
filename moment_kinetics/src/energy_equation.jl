@@ -37,14 +37,12 @@ evolve the parallel pressure by solving the energy equation
     dBdr = geometry.dBdr
 
     @loop_s_r_z is ir iz begin
-        dp_dt[iz,ir,is] = -(vEr[iz,ir] * dp_dr_upwind[iz,ir,is]
-                            + (vEz[iz,ir] + bz[iz,ir] * upar[iz,ir,is]) * dp_dz_upwind[iz,ir,is]
-                            + bz[iz,ir] * p[iz,ir,is] * dupar_dz[iz,ir,is]
-                            + 2.0/3.0 * bz[iz,ir] * dqpar_dz[iz,ir,is]
-                            + 2.0/3.0 * bz[iz,ir] * ppar[iz,ir,is] * moments.ion.dupar_dz[iz,ir,is]
-                            - 2.0/3.0 * (1/Bmag[iz,ir]) * ((2 * pperp[iz,ir,is] + 0.5 * ppar[iz,ir,is]) *
-                            (vEr[iz,ir] * dBdr[iz,ir] + (vEz[iz,ir] + bz[iz,ir] * upar[iz,ir,is]) * dBdz[iz,ir])
-                                                 + bz[iz,ir] * dBdz[iz,ir] * qpar[iz,ir,is]))
+        dp_dt[iz,ir,is] = get_dpdt_inner_main(upar[iz,ir,is], p[iz,ir,is], ppar[iz,ir,is],
+                                              pperp[iz,ir,is], dupar_dz[iz,ir,is],
+                                              dp_dr_upwind[iz,ir,is],
+                                              dp_dz_upwind[iz,ir,is], dqpar_dz[iz,ir,is],
+                                              bz[iz,ir], Bmag[iz,ir], dBdr[iz,ir],
+                                              dBdz[iz,ir], vEr[iz,ir], vEz[iz,ir])
     end
 
 
@@ -68,23 +66,16 @@ evolve the parallel pressure by solving the energy equation
     if composition.n_neutral_species > 0
         charge_exchange = collisions.reactions.charge_exchange_frequency
         ionization = collisions.reactions.ionization_frequency
-        if charge_exchange !== nothing
-            @loop_s_r_z is ir iz begin
-                dp_dt[iz,ir,is] -=
-                    charge_exchange*(
-                        fvec.density_neutral[iz,ir,is]*fvec.p[iz,ir,is] -
-                        fvec.density[iz,ir,is]*fvec.p_neutral[iz,ir,is] -
-                        1.0/3.0 * fvec.density[iz,ir,is]*fvec.density_neutral[iz,ir,is] *
-                            (fvec.upar[iz,ir,is] - fvec.uz_neutral[iz,ir,is])^2)
-            end
-        end
-        if ionization !== nothing
+        density_neutral = fvec.density_neutral
+        uz_neutral = fvec.uz_neutral
+        p_neutral = fvec.p_neutral
+        if charge_exchange !== nothing || ionization !== nothing
             @loop_s_r_z is ir iz begin
                 dp_dt[iz,ir,is] +=
-                    ionization*fvec.density[iz,ir,is] * (
-                        fvec.p_neutral[iz,ir,is] +
-                        1.0/3.0 * fvec.density_neutral[iz,ir,is] *
-                            (fvec.upar[iz,ir,is]-fvec.uz_neutral[iz,ir,is])^2)
+                    get_ion_reactions_inner(charge_exchange, ionization,
+                                            density[iz,ir,is], upar[iz,ir,is],
+                                            p[iz,ir,is], density_neutral[iz,ir,is],
+                                            uz_neutral[iz,ir,is], p_neutral[iz,ir,is])
             end
         end
     end
@@ -94,6 +85,105 @@ evolve the parallel pressure by solving the energy equation
     end
 
     return nothing
+end
+
+# This version only calculates dp_dt, and does not update a 'new p'.
+function energy_equation_no_sr!(fvec, moments, fields, collisions, dt, composition,
+                                geometry, ion_source_settings, num_diss_params, is, ir)
+
+    @begin_anyzv_z_region()
+
+    density = @view fvec.density[:,ir,is]
+    upar = @view fvec.upar[:,ir,is]
+    p = @view fvec.p[:,ir,is]
+    ppar = @view moments.ion.ppar[:,ir,is]
+    pperp = @view moments.ion.pperp[:,ir,is]
+    dupar_dz = @view moments.ion.dupar_dz[:,ir,is]
+    dp_dr_upwind = @view moments.ion.dp_dr_upwind[:,ir,is]
+    dp_dz_upwind = @view moments.ion.dp_dz_upwind[:,ir,is]
+    qpar = @view moments.ion.qpar[:,ir,is]
+    dqpar_dz = @view moments.ion.dqpar_dz[:,ir,is]
+    dp_dt = @view moments.ion.dp_dt[:,ir,is]
+    vEr = @view fields.vEr[:,ir]
+    vEz = @view fields.vEz[:,ir]
+    bz = @view geometry.bzed[:,ir]
+    Bmag = @view geometry.Bmag[:,ir]
+    dBdz = @view geometry.dBdz[:,ir]
+    dBdr = @view geometry.dBdr[:,ir]
+
+    @loop_z iz begin
+        dp_dt[iz] = get_dpdt_inner_main(upar[iz], p[iz], ppar[iz], pperp[iz],
+                                        dupar_dz[iz], dp_dr_upwind[iz], dp_dz_upwind[iz],
+                                        dqpar_dz[iz], bz[iz], Bmag[iz], dBdr[iz],
+                                        dBdz[iz], vEr[iz], vEz[iz])
+    end
+
+
+    for index ∈ eachindex(ion_source_settings)
+        if ion_source_settings[index].active
+            @views source_amplitude = moments.ion.external_source_pressure_amplitude[:,ir,index]
+            @loop_z iz begin
+                dp_dt[iz] += source_amplitude[iz]
+            end
+        end
+    end
+
+    diffusion_coefficient = num_diss_params.ion.moment_dissipation_coefficient
+    if diffusion_coefficient > 0.0
+        @loop_z iz begin
+            dp_dt[iz] += diffusion_coefficient*moments.ion.d2p_dz2[iz]
+        end
+    end
+
+    # add in contributions due to charge exchange/ionization collisions
+    if composition.n_neutral_species > 0
+        charge_exchange = collisions.reactions.charge_exchange_frequency
+        ionization = collisions.reactions.ionization_frequency
+        density_neutral = fvec.density_neutral
+        uz_neutral = fvec.uz_neutral
+        p_neutral = fvec.p_neutral
+        if charge_exchange !== nothing || ionization !== nothing
+            @loop_z iz begin
+                dp_dt[iz] +=
+                    get_dpdt_reactions_inner(charge_exchange, ionization, density[iz],
+                                             upar[iz], p[iz], density_neutral[iz],
+                                             uz_neutral[iz], p_neutral[iz])
+            end
+        end
+    end
+
+    return nothing
+end
+
+@inline function get_dpdt_inner_main(upar, p, ppar, pperp, dupar_dz, dp_dr_upwind,
+                                     dp_dz_upwind, dqpar_dz, bz, Bmag, dBdr, dBdz, vEr,
+                                     vEz)
+    return -(vEr * dp_dr_upwind
+             + (vEz + bz * upar) * dp_dz_upwind
+             + bz * p * dupar_dz
+             + 2.0/3.0 * bz * dqpar_dz
+             + 2.0/3.0 * bz * ppar * dupar_dz
+             - 2.0/3.0 * (1/Bmag) * ((2 * pperp + 0.5 * ppar) *
+                                     (vEr * dBdr[iz,ir] + (vEz + bz * upar) * dBdz)
+                                     + bz * dBdz * qpar))
+end
+
+@inline function get_dpdt_reactions_inner(charge_exchange, ionization, density, upar, p,
+                                          density_neutral, uz_neutral, p_neutral)
+    if charge_exchange !== nothing
+        result =
+            - charge_exchange * (
+                 density_neutral * p - density * p_neutral -
+                 1.0/3.0 * density * density_neutral * (upar - uz_neutral)^2)
+    else
+        result = 0.0
+    end
+    if ionization !== nothing
+        result +=
+            ionization*density * (
+                p_neutral + 1.0/3.0 * density_neutral * (upar - uz_neutral)^2)
+    end
+    return result
 end
 
 """
