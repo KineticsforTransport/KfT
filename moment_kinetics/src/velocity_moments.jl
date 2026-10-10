@@ -1819,6 +1819,41 @@ Pre-calculate spatial derivatives of the moments that will be needed for the tim
     return nothing
 end
 
+# This function recalculates only moment derivatives that need to be updated in the
+# shape-function implicit solve, i.e. those for qpar and (if vperp.n>1) ppar, which depend
+# explicitly on the shape function.
+# Function must be called in an anyzv region, so only calculates at given `is`, `ir`
+# indices.
+function calculate_implicit_ion_moment_derivatives!(moments, scratch_dummy, z, vperp,
+                                                    z_spectral, is, ir)
+    if !(moments.evolve_density || moments.evolve_upar || moments.evolve_p)
+        # Nothing to do in this function.
+        return nothing
+    end
+
+    @begin_anyzv_region()
+
+    buffer_r_1 = @view scratch_dummy.buffer_r_1[ir]
+    buffer_r_2 = @view scratch_dummy.buffer_r_2[ir]
+    buffer_r_3 = @view scratch_dummy.buffer_r_3[ir]
+    buffer_r_4 = @view scratch_dummy.buffer_r_4[ir]
+
+    if moments.evolve_upar && vperp.n > 1
+        ppar = @view moments.ion.ppar[:,ir,is]
+        dppar_dz = @view moments.ion.dppar_dz[:,ir,is]
+        @views derivative_z_anyzv!(dppar_dz, ppar, buffer_r_1, buffer_r_2, buffer_r_3,
+                                   buffer_r_4, z_spectral, z)
+    end
+    if moments.evolve_p
+        qpar = @view moments.ion.qpar[:,ir,is]
+        dqpar_dz = @view moments.ion.dqpar_dz[:,ir,is]
+        @views derivative_z_anyzv!(dqpar_dz, qpar, buffer_r_1, buffer_r_2, buffer_r_3,
+                                   buffer_r_4, z_spectral, z)
+    end
+
+    return nothing
+end
+
 """
 Pre-calculate spatial derivatives of the electron moments that will be needed for the time advance
 """
