@@ -122,6 +122,9 @@ function get_ion_sub_terms_evolve_nup(
     dqpar_dz = CompoundTerm(dqpar_dz_expanded, dqpar_dz_array; z=z)
 
     bzed = ConstantTerm(@view geometry.bzed[:,ir]; z=z)
+    Bmag = ConstantTerm(@view geometry.Bmag[:,ir]; z=z)
+    dBdz = ConstantTerm(@view geometry.dBdz[:,ir]; z=z)
+    mu = 0.5 * wperp^2 * vth^2 / Bmag
 
     r_speed = ConstantTerm(r_speed_array; vpa=vpa, vperp=vperp, z=z)
     alpha_speed = ConstantTerm(alpha_speed_array; vpa=vpa, vperp=vperp, z=z)
@@ -149,7 +152,7 @@ function get_ion_sub_terms_evolve_nup(
     return IonSubTerms(; f, df_dz, df_dvperp, df_dvpa, n, dn_dt, dn_dr, dn_dz, upar,
                        dupar_dt, dupar_dr, dupar_dz, vth, dvth_dt, dvth_dr, dvth_dz, Ez,
                        wpa2_moment_constraint_rhs, third_moment_constraint_rhs, wperp,
-                       wpa, bzed, r_speed, alpha_speed, z_speed, nvperp,
+                       wpa, bzed, dBdz, mu, r_speed, alpha_speed, z_speed, nvperp,
                        z_dissipation_coefficient, vperp_dissipation_coefficient,
                        vpa_dissipation_coefficient, collisions, external_sources, z, ir)
 end

@@ -662,11 +662,14 @@ function get_ion_vpa_advection_term_evolve_nup(sub_terms::IonSubTerms)
     dvth_dr = sub_terms.dvth_dr
     dvth_dz = sub_terms.dvth_dz
     wpa = sub_terms.wpa
+    mu = sub_terms.mu
+    dBdz = sub_terms.dBdz
     df_dvpa = sub_terms.df_dvpa
 
     speed = (bz * Ez
              - (dupar_dt + r_speed * dupar_dr + (alpha_speed + z_speed) * dupar_dz)
              - wpa * (dvth_dt + r_speed * dvth_dr + (alpha_speed + z_speed) * dvth_dz)
+             - (mu * bz * dBdz)
             ) * vth^(-1)
     term = speed * df_dvpa
 
