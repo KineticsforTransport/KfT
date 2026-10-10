@@ -22,6 +22,7 @@ export set_defaults_and_check_top_level!, set_defaults_and_check_section!,
 using ..moment_kinetics_structs: coordinate
 using ..type_definitions
 
+using ConcreteStructs
 using DataStructures: SortedDict
 using MPI
 using OrderedCollections: OrderedDict
@@ -551,12 +552,12 @@ end
 #Structs set up for the collision operators so far in use. These will each
 #be contained in the main collisions_input struct below, as substructs.
 
-Base.@kwdef struct reactions
-    charge_exchange_frequency::mk_float = 0.0
-    electron_charge_exchange_frequency::mk_float = 0.0
-    ionization_frequency::mk_float = 0.0
-    electron_ionization_frequency::mk_float = 0.0
-    ionization_energy::mk_float = 0.0
+Base.@kwdef @concrete struct reactions
+    charge_exchange_frequency = 0.0
+    electron_charge_exchange_frequency = 0.0
+    ionization_frequency = 0.0
+    electron_ionization_frequency = 0.0
+    ionization_energy = 0.0
 end
 
 Base.@kwdef struct electron_fluid_collisions

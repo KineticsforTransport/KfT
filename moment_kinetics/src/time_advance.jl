@@ -1533,7 +1533,7 @@ function setup_advance_flags(moments, composition, t_params, collisions,
             end
             # if charge exchange collision frequency non-zero,
             # account for charge exchange collisions
-            if abs(collisions.reactions.charge_exchange_frequency) > 0.0
+            if collisions.reactions.charge_exchange_frequency !== nothing
                 if vperp.n == 1 && vr.n == 1 && vzeta.n == 1
                     advance_ion_cx_1V = !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
                     advance_neutral_cx_1V = true
@@ -1548,7 +1548,7 @@ function setup_advance_flags(moments, composition, t_params, collisions,
             end
             # if ionization collision frequency non-zero,
             # account for ionization collisions
-            if abs(collisions.reactions.ionization_frequency) > 0.0
+            if collisions.reactions.ionization_frequency !== nothing
                 if vperp.n == 1 && vr.n == 1 && vzeta.n == 1
                     advance_ion_ionization_1V = !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
                     advance_neutral_ionization_1V = true
@@ -1733,7 +1733,7 @@ function setup_implicit_advance_flags(moments, composition, t_params, collisions
         advance_z_advection = z.n > 1
         advance_alpha_advection = z.n > 1 && (r.n > 1 || geometry.input.option == "1D-Helical-ITG") # When r.n==1, all the terms in 'alpha advection' vanish, so no need to include alpha_advection.
         advance_r_advection = r.n > 1
-        if abs(collisions.reactions.charge_exchange_frequency) > 0.0
+        if collisions.reactions.charge_exchange_frequency !== nothing
             if vperp.n == 1 && vr.n == 1 && vzeta.n == 1
                 advance_ion_cx_1V = true
             elseif vperp.n > 1 && vr.n > 1 && vzeta.n > 1
@@ -1744,7 +1744,7 @@ function setup_implicit_advance_flags(moments, composition, t_params, collisions
                       * "vpa.n=$(vpa.n), vz.n=$(vz.n)")
             end
         end
-        if abs(collisions.reactions.ionization_frequency) > 0.0
+        if collisions.reactions.ionization_frequency !== nothing
             if vperp.n == 1 && vr.n == 1 && vzeta.n == 1
                 advance_ion_ionization_1V = true
             elseif vperp.n > 1 && vr.n > 1 && vzeta.n > 1
@@ -1764,7 +1764,7 @@ function setup_implicit_advance_flags(moments, composition, t_params, collisions
         advance_vpa_advection = vpa.n > 1 && z.n > 1
         advance_vperp_advection = vperp.n > 1 && z.n > 1
         advance_z_advection = z.n > 1
-        if abs(collisions.reactions.charge_exchange_frequency) > 0.0
+        if collisions.reactions.charge_exchange_frequency !== nothing
             if vperp.n == 1 && vr.n == 1 && vzeta.n == 1
                 advance_ion_cx_1V = true
             elseif vperp.n > 1 && vr.n > 1 && vzeta.n > 1
@@ -1775,7 +1775,7 @@ function setup_implicit_advance_flags(moments, composition, t_params, collisions
                       * "vpa.n=$(vpa.n), vz.n=$(vz.n)")
             end
         end
-        if abs(collisions.reactions.ionization_frequency) > 0.0
+        if collisions.reactions.ionization_frequency !== nothing
             if vperp.n == 1 && vr.n == 1 && vzeta.n == 1
                 advance_ion_ionization_1V = true
             elseif vperp.n > 1 && vr.n > 1 && vzeta.n > 1
@@ -2586,7 +2586,7 @@ function time_advance_split_operators!(pdf, scratch, scratch_implicit, scratch_e
         advance.z_advection = false
         # account for charge exchange collisions between ions and neutrals
         if composition.n_neutral_species > 0
-            if collisions.reactions.charge_exchange_frequency > 0.0
+            if collisions.reactions.charge_exchange_frequency !== nothing
                 advance.ion_cx_collisions = true
                 time_advance_no_splitting!(pdf, scratch, scratch_implicit,
                     scratch_electron, t_params, vpa, z, vpa_spectral, z_spectral,
@@ -2602,7 +2602,7 @@ function time_advance_split_operators!(pdf, scratch, scratch_implicit, scratch_e
                     advance_implicit, istep)
                 advance.neutral_cx_collisions = false
             end
-            if collisions.reactions.ionization_frequency > 0.0
+            if collisions.reactions.ionization_frequency !== nothing
                 advance.ion_ionization_collisions = true
                 time_advance_no_splitting!(pdf, scratch, scratch_implicit,
                     scratch_electron, t_params, z, vpa, z_spectral, vpa_spectral,
@@ -2704,7 +2704,7 @@ function time_advance_split_operators!(pdf, scratch, scratch_implicit, scratch_e
         end
         # account for charge exchange collisions between ions and neutrals
         if composition.n_neutral_species > 0
-            if collisions.reactions.ionization_frequency > 0.0
+            if collisions.reactions.ionization_frequency !== nothing
                 advance.neutral_ionization = true
                 time_advance_no_splitting!(pdf, scratch, scratch_implicit,
                     scratch_electron, t_params, z, vpa, z_spectral, vpa_spectral,
@@ -2720,7 +2720,7 @@ function time_advance_split_operators!(pdf, scratch, scratch_implicit, scratch_e
                     advance_implicit, istep)
                 advance.ion_ionization = false
             end
-            if collisions.reactions.charge_exchange_frequency > 0.0
+            if collisions.reactions.charge_exchange_frequency !== nothing
                 advance.neutral_cx_collisions = true
                 time_advance_no_splitting!(pdf, scratch, scratch_implicit,
                     scratch_electron, t_params, vpa, z, vpa_spectral, z_spectral,

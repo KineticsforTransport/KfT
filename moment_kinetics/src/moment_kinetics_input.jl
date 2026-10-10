@@ -151,9 +151,16 @@ function mk_input(input_dict=OptionsDict("output" => OptionsDict("run_name" => "
 
     manufactured_solns_input = setup_manufactured_solutions(input_dict, warn_unexpected)
 
-    reactions_input = set_defaults_and_check_section!(
-        input_dict, reactions, warn_unexpected
+    reactions_input_dict = set_defaults_and_check_section!(
+        input_dict, "reactions", warn_unexpected;
+        charge_exchange_frequency = 0.0
+        electron_charge_exchange_frequency = 0.0
+        ionization_frequency = 0.0
+        electron_ionization_frequency = 0.0
+        ionization_energy = 0.0
        )
+    reactions_input = reactions(; (v ≤ 0.0 ? k=>nothing : k=>v
+                                   for (k, v) ∈ reactions_input_dict)...)
     electron_fluid_collisions_input = set_defaults_and_check_section!(
         input_dict, electron_fluid_collisions, warn_unexpected
        )
