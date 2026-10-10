@@ -262,8 +262,8 @@ parallel loop ranges, and are only used by the tests in `debug_test/`.
     # Allocate arrays and create the pdf and moments structs
     pdf, moments =
         allocate_pdf_and_moments(composition, r, z, vperp, vpa, vzeta, vr, vz,
-                                 evolve_moments, collisions, external_source_settings,
-                                 num_diss_params, t_input)
+                                 evolve_moments, external_source_settings,
+                                 num_diss_params)
 
     # create structs containing the information needed to treat advection in z, r, vpa, vperp, and vz
     # for ions, electrons and neutrals
