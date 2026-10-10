@@ -47,6 +47,7 @@ function get_ion_sub_terms_evolve_nup(
              dppar_dz_array::AbstractVector{mk_float},
              third_moment_array::AbstractVector{mk_float},
              dthird_moment_dz_array::AbstractVector{mk_float},
+             qpar_array::AbstractVector{mk_float},
              dqpar_dz_array::AbstractVector{mk_float},
              Ez_array::AbstractVector{mk_float},
              collisions, external_sources, geometry, num_diss_params,
@@ -116,6 +117,8 @@ function get_ion_sub_terms_evolve_nup(
                                     derivatives=[:z], z=z)
     third_moment_constraint_rhs = third_moment
 
+    qpar_expanded = third_moment * 0.5 * mi * n * vth^3
+    qpar = CompoundTerm(qpar_expanded, qpar_array; z=z)
     dqpar_dz_expanded = mi * (vth^3 * third_moment * dn_dz
                               + 3 * n * vth^2 * third_moment * dvth_dz
                               + n * vth^3 * dthird_moment_dz)
@@ -139,8 +142,8 @@ function get_ion_sub_terms_evolve_nup(
     # As dvth_dt is a CompoundTerm, only need to keep contributions in dvth_dt_expanded
     # that depend on f - any constant terms would not contribute (their contribution is
     # captured completely by dvth_dt_array).
-    dvth_dt_expanded = get_dvth_dt_expanded_term_evolve_nup(bzed, mi, n, vth, ppar,
-                                                            dupar_dz, dqpar_dz)
+    dvth_dt_expanded = get_dvth_dt_expanded_term_evolve_nup(bzed, mi, n, vth, ppar, qpar,
+                                                            dupar_dz, dqpar_dz, dBdz)
     dvth_dt = CompoundTerm(dvth_dt_expanded, dvth_dt_array; z=z)
 
     nvperp = vperp.n

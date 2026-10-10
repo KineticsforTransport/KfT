@@ -139,6 +139,7 @@ function force_balance_no_sr!(fvec, moments, fields, collisions, dt, composition
     dupar_dz_upwind = @view moments.ion.dupar_dz_upwind[:,ir,is]
     dupar_dz = @view moments.ion.dupar_dz[:,ir,is]
     dppar_dz = @view moments.ion.dppar_dz[:,ir,is]
+    p = @view moments.ion.p[:,ir,is]
     ppar = @view moments.ion.ppar[:,ir,is]
     pperp = @view moments.ion.pperp[:,ir,is]
     Ez = @view fields.Ez[:,ir,is]
