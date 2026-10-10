@@ -15,7 +15,7 @@ using moment_kinetics.boundary_conditions: enforce_v_boundary_condition_local!,
 using moment_kinetics.calculus: derivative!, second_derivative!, integral
 using moment_kinetics.communication
 using moment_kinetics.communication: _anyzv_subblock_synchronize
-using moment_kinetics.continuity: continuity_equation!
+using moment_kinetics.continuity: continuity_equation!, continuity_equation_no_sr!
 using moment_kinetics.derivatives: derivative_z_anyzv!, derivative_z_pdf_vpavperpz!
 using moment_kinetics.electron_fluid_equations: calculate_electron_moments_no_r!,
                                                 electron_energy_equation_no_r!,
@@ -42,10 +42,10 @@ using moment_kinetics.electron_vpa_advection: electron_vpa_advection!,
 using moment_kinetics.electron_z_advection: electron_z_advection!,
                                             update_electron_speed_z!,
                                             get_electron_z_advection_term
-using moment_kinetics.energy_equation: energy_equation!
+using moment_kinetics.energy_equation: energy_equation!, energy_equation_no_sr!
 using moment_kinetics.external_sources: total_external_electron_sources!,
                                         get_total_external_electron_source_term
-using moment_kinetics.force_balance: force_balance!
+using moment_kinetics.force_balance: force_balance!, force_balance_no_sr!
 using moment_kinetics.ion_jacobian_terms: get_ion_sub_terms_evolve_nup
 using moment_kinetics.jacobian_matrices
 using moment_kinetics.krook_collisions: electron_krook_collisions!,
@@ -57,6 +57,7 @@ using moment_kinetics.moment_constraints: electron_implicit_constraint_forcing!,
 using moment_kinetics.timer_utils: reset_mk_timers!
 using moment_kinetics.type_definitions: mk_float
 using moment_kinetics.velocity_moments: calculate_electron_moment_derivatives_no_r!,
+                                        calculate_implicit_ion_moment_derivatives!,
                                         update_derived_ion_moment_time_derivatives!,
                                         update_derived_ion_moment_time_derivatives_no_sr!,
                                         update_ppar_species_no_sr!,
@@ -568,7 +569,7 @@ function test_get_ion_pdf_term(test_input::AbstractDict, label::String,
                                                  dupar_dt, dupar_dr, dupar_dz, vth,
                                                  dvth_dt, dvth_dr, dvth_dz, ppar,
                                                  dppar_dz, third_moment, dthird_moment_dz,
-                                                 dqpar_dz, Ez, collisions,
+                                                 qpar, dqpar_dz, Ez, collisions,
                                                  external_source_settings, geometry,
                                                  num_diss_params.ion, z, vperp, vpa,
                                                  r_speed, alpha_speed, z_speed,
@@ -601,13 +602,15 @@ function test_get_ion_pdf_term(test_input::AbstractDict, label::String,
             calculate_ion_qpar_from_pdf_no_r!(qpar, dens, upar, vth, this_f, vpa, vperp,
                                               z, moments.evolve_density,
                                               moments.evolve_upar, moments.evolve_p)
+            calculate_implicit_ion_moment_derivatives!(moments, scratch_dummy, z, vperp,
+                                                       z_spectral, is, ir)
             continuity_equation_no_sr!(fvec, fields, moments, composition, geometry, dt,
                                        collisions.reactions.ionization_frequency,
                                        external_source_settings.ion, num_diss_params, is,
                                        ir)
-            force_balance_no_sr!(moments.ion.dens, fvec, moments, fields, collisions, dt,
-                                 composition, geometry, external_source_settings.ion,
-                                 num_diss_params, z, is, ir)
+            force_balance_no_sr!(fvec, moments, fields, collisions, dt, composition,
+                                 geometry, external_source_settings.ion, num_diss_params,
+                                 z, is, ir)
             energy_equation_no_sr!(fvec, moments, fields, collisions, dt, composition,
                                    geometry, external_source_settings.ion,
                                    num_diss_params, is, ir)
