@@ -395,7 +395,7 @@ end
             charge_exchange_electron = collisions.reactions.electron_charge_exchange_frequency
             ionization_electron = collisions.reactions.electron_ionization_frequency
             ionization_energy = collisions.reactions.ionization_energy
-            if abs(charge_exchange_electron) > 0.0
+            if charge_exchange_electron !== nothing
                 @loop_sn_z isn iz begin
                     dp_dt[iz] +=
                         me_over_mi * charge_exchange_electron * (
@@ -405,7 +405,7 @@ end
                         (uz_neutral[iz,isn] - electron_upar[iz])^2)
                 end
             end
-            if abs(ionization_electron) > 0.0
+            if ionization_electron !== nothing && ionization_energy !== nothing
                 @loop_sn_z isn iz begin
                     dp_dt[iz] +=
                         -ionization_electron * density_neutral[iz,isn] *
@@ -601,7 +601,7 @@ function calculate_Epar_from_electron_force_balance!(Epar, dens_e, dppar_dz, nu_
         end
     end
     # if there are neutral species evolved and accounting for charge exchange collisions with neutrals
-    if n_neutral_species > 0 && charge_exchange > 0
+    if n_neutral_species > 0 && charge_exchange !== nothing
         @loop_sn_r_z isn ir iz begin
             Epar[iz,ir] += me_over_mi * dens_n[iz,ir] * charge_exchange * (upar_n[iz,ir,isn] - upar_e[iz,ir])
         end

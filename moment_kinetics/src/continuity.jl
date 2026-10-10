@@ -41,7 +41,7 @@ species
 
     # update the density to account for ionization collisions;
     # ionization collisions increase the density for ions and decrease the density for neutrals
-    if composition.n_neutral_species > 0 && ionization > 0.0
+    if composition.n_neutral_species > 0 && ionization !== nothing
         @loop_s_r_z is ir iz begin
             ddens_dt[iz,ir,is] += ionization*fvec_in.density[iz,ir,is]*fvec_in.density_neutral[iz,ir,is]
         end
@@ -91,7 +91,7 @@ species
 
     # update the density to account for ionization collisions;
     # ionization collisions increase the density for ions and decrease the density for neutrals
-    if composition.n_neutral_species > 0 && ionization > 0.0
+    if composition.n_neutral_species > 0 && ionization !== nothing
         @loop_sn_r_z isn ir iz begin
             ddens_dt[iz,ir,isn] -= ionization*fvec_in.density[iz,ir,isn]*fvec_in.density_neutral[iz,ir,isn]
         end

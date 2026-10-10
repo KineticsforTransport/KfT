@@ -4917,11 +4917,11 @@ function get_electron_sub_terms(
         error("electron-ion collision terms for electron_p not yet "
               * "supported in preconditioner")
     end
-    if composition.n_neutral_species > 0 && collisions.reactions.electron_charge_exchange_frequency > 0.0
+    if composition.n_neutral_species > 0 && collisions.reactions.electron_charge_exchange_frequency !== nothing
         error("electron 'charge exchange' terms for electron_p not yet "
               * "supported in preconditioner")
     end
-    if composition.n_neutral_species > 0 && collisions.reactions.electron_ionization_frequency > 0.0
+    if composition.n_neutral_species > 0 && collisions.reactions.electron_ionization_frequency !== nothing
         error("electron ionization terms for electron_p not yet "
               * "supported in preconditioner")
     end

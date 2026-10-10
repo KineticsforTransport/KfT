@@ -68,7 +68,7 @@ evolve the parallel pressure by solving the energy equation
     if composition.n_neutral_species > 0
         charge_exchange = collisions.reactions.charge_exchange_frequency
         ionization = collisions.reactions.ionization_frequency
-        if abs(charge_exchange) > 0.0
+        if charge_exchange !== nothing
             @loop_s_r_z is ir iz begin
                 dp_dt[iz,ir,is] -=
                     charge_exchange*(
@@ -78,7 +78,7 @@ evolve the parallel pressure by solving the energy equation
                             (fvec.upar[iz,ir,is] - fvec.uz_neutral[iz,ir,is])^2)
             end
         end
-        if abs(ionization) > 0.0
+        if ionization !== nothing
             @loop_s_r_z is ir iz begin
                 dp_dt[iz,ir,is] +=
                     ionization*fvec.density[iz,ir,is] * (
@@ -134,7 +134,7 @@ evolve the neutral parallel pressure by solving the energy equation
     if composition.n_neutral_species > 0
         charge_exchange = collisions.reactions.charge_exchange_frequency
         ionization = collisions.reactions.ionization_frequency
-        if abs(charge_exchange) > 0.0
+        if charge_exchange !== nothing
             @loop_sn_r_z isn ir iz begin
                 dp_dt[iz,ir,isn] -=
                     charge_exchange*(
@@ -144,7 +144,7 @@ evolve the neutral parallel pressure by solving the energy equation
                             (fvec.uz_neutral[iz,ir,isn] - fvec.upar[iz,ir,isn])^2)
             end
         end
-        if abs(ionization) > 0.0
+        if ionization !== nothing
             @loop_sn_r_z isn ir iz begin
                 dp_dt[iz,ir,isn] -=
                     ionization*fvec.density[iz,ir,isn]*fvec.p_neutral[iz,ir,isn]
