@@ -17,56 +17,107 @@ flow and/or pressure, and use them to update the pdf
                          pdf_out, fvec_in, moments, r_advect, alpha_advect, z_advect, vpa,
                          vperp, z, r, dt, composition, collisions,
                          ion_source_settings) = begin
+    evolve_density = moments.evolve_density
+    evolve_upar = moments.evolve_upar
+    evolve_p = moments.evolve_p
+    if !evolve_density && !evolve_upar && !evolve_p
+        return nothing
+    end
+    return source_terms!(pdf_out, fvec_in, moments, r_advect, alpha_advect, z_advect, vpa,
+                         vperp, z, r, dt, composition, collisions, ion_source_settings,
+                         Val(evolve_p))
+end
+function source_terms!(pdf_out, fvec_in, moments, r_advect, alpha_advect, z_advect, vpa,
+                       vperp, z, r, dt, composition, collisions, ion_source_settings,
+                       evolve_p::Val)
 
     @begin_s_r_z_vperp_vpa_region()
 
     pdf_in = fvec_in.pdf
-    n = fvec_in.density
-    vth = moments.ion.vth
-    dn_dt = moments.ion.ddens_dt
-    dn_dr = moments.ion.ddens_dr
-    dn_dz = moments.ion.ddens_dz
-    dvth_dr = moments.ion.dvth_dr
-    dvth_dz = moments.ion.dvth_dz
-    if moments.evolve_p
-        if vperp.n == 1
-            # velocity dimension coefficient is 1.0 for 1V, and 3.0 for 3V. Only needed for evolve_p
-            # since vth does not come in to gdot (Fdot) for other cases.
-            v_dim_coeff = 1.0
-        else
-            v_dim_coeff = 3.0
-        end
-        dvth_dt = moments.ion.dvth_dt
-        dvth_dz = moments.ion.dvth_dz
-        @loop_s_r_z is ir iz begin
-            ddt_term = v_dim_coeff / vth[iz,ir,is] * dvth_dt[iz,ir,is] - dn_dt[iz,ir,is] / n[iz,ir,is]
-            rdot_coefficient = v_dim_coeff / vth[iz,ir,is] * dvth_dr[iz,ir,is] - dn_dr[iz,ir,is] / n[iz,ir,is]
-            zdot_coefficient = v_dim_coeff / vth[iz,ir,is] * dvth_dz[iz,ir,is] - dn_dz[iz,ir,is] / n[iz,ir,is]
+    inner_args = get_source_terms_inner_args(vperp, moments.ion.vth, moments.ion.dvth_dt,
+                                             moments.ion.dvth_dr, moments.ion.dvth_dz,
+                                             fvec_in.density, moments.ion.ddens_dt,
+                                             moments.ion.ddens_dr, moments.ion.ddens_dz,
+                                             r_advect, alpha_advect, z_advect, pdf_in, dt,
+                                             evolve_p)
+    @loop_s_r is ir begin
+        inner_args_sr = get_source_terms_inner_args_sr(is, ir, inner_args...)
+        @loop_z iz begin
+            inner_args_z = get_source_terms_inner_args_z(iz, inner_args_sr...)
             @loop_vperp_vpa ivperp ivpa begin
-                pdf_out[ivpa,ivperp,iz,ir,is] +=
-                    dt * (ddt_term
-                          + rdot_coefficient * r_advect[ivpa,ivperp,iz,ir,is]
-                          + zdot_coefficient * (alpha_advect[ivpa,ivperp,iz,ir,is] + z_advect[ivpa,ivperp,iz,ir,is])
-                         ) *
-                    pdf_in[ivpa,ivperp,iz,ir,is]
-            end
-        end
-    elseif moments.evolve_upar || moments.evolve_density
-        @loop_s_r_z is ir iz begin
-            ddt_term = - dn_dt[iz,ir,is] / n[iz,ir,is]
-            rdot_coefficient = - dn_dr[iz,ir,is] / n[iz,ir,is]
-            zdot_coefficient = - dn_dz[iz,ir,is] / n[iz,ir,is]
-            @loop_vperp_vpa ivperp ivpa begin
-                pdf_out[ivpa,ivperp,iz,ir,is] +=
-                    dt * (ddt_term
-                          + rdot_coefficient * r_advect[ivpa,ivperp,iz,ir,is]
-                          + zdot_coefficient * (alpha_advect[ivpa,ivperp,iz,ir,is] + z_advect[ivpa,ivperp,iz,ir,is])
-                         ) *
-                    pdf_in[ivpa,ivperp,iz,ir,is]
+                pdf_out[ivpa,ivperp,iz,ir,is] += get_source_terms_inner(ivperp, ivpa,
+                                                                        inner_args_z...)
             end
         end
     end
+
     return nothing
+end
+
+@inline function get_source_terms_inner_args(vperp, vth, dvth_dt, dvth_dr, dvth_dz, n,
+                                             dn_dt, dn_dr, dn_dz, r_advect, alpha_advect,
+                                             z_advect, pdf_in, dt, evolve_p::Val{true})
+    if vperp.n == 1
+        # velocity dimension coefficient is 1.0 for 1V, and 3.0 for 3V. Only needed for evolve_p
+        # since vth does not come in to gdot (Fdot) for other cases.
+        v_dim_coeff = 1.0
+    else
+        v_dim_coeff = 3.0
+    end
+    return v_dim_coeff, vth, dvth_dt, dvth_dr, dvth_dz, n, dn_dt, dn_dr, dn_dz, r_advect,
+           alpha_advect, z_advect, pdf_in, dt, evolve_p
+end
+@inline function get_source_terms_inner_args(vperp, vth, dvth_dt, dvth_dr, dvth_dz, n,
+                                             dn_dt, dn_dr, dn_dz, r_advect, alpha_advect,
+                                             z_advect, pdf_in, dt, evolve_p::Val{false})
+    return n, dn_dt, dn_dr, dn_dz, r_advect, alpha_advect, z_advect, pdf_in, dt, evolve_p
+end
+
+@inline function get_source_terms_inner_args_sr(is, ir, v_dim_coeff, vth, dvth_dt,
+                                                dvth_dr, dvth_dz, n, dn_dt, dn_dr, dn_dz,
+                                                r_advect, alpha_advect, z_advect, pdf_in,
+                                                dt, evolve_p::Val{true})
+    return @views v_dim_coeff, vth[:,ir,is], dvth_dt[:,ir,is], dvth_dr[:,ir,is],
+                  dvth_dz[:,ir,is], n[:,ir,is], dn_dt[:,ir,is], dn_dr[:,ir,is],
+                  dn_dz[:,ir,is], r_advect[:,:,:,ir,is], alpha_advect[:,:,:,ir,is],
+                  z_advect[:,:,:,ir,is], pdf_in[:,:,:,ir,is], dt, evolve_p
+end
+@inline function get_source_terms_inner_args_sr(is, ir, n, dn_dt, dn_dr, dn_dz, r_advect,
+                                                alpha_advect, z_advect, pdf_in, dt,
+                                                evolve_p::Val{false})
+    return @views n[:,ir,is], dn_dt[:,ir,is], dn_dr[:,ir,is], dn_dz[:,ir,is],
+                  r_advect[:,:,:,ir,is], alpha_advect[:,:,:,ir,is], z_advect[:,:,:,ir,is],
+                  pdf_in[:,:,:,ir,is], dt, evolve_p
+end
+
+@inline function get_source_terms_inner_args_z(iz, v_dim_coeff, vth, dvth_dt, dvth_dr,
+                                               dvth_dz, n, dn_dt, dn_dr, dn_dz, r_advect,
+                                               alpha_advect, z_advect, pdf_in, dt,
+                                               evolve_p::Val{true})
+    ddt_term = v_dim_coeff / vth[iz] * dvth_dt[iz] - dn_dt[iz] / n[iz]
+    rdot_coefficient = v_dim_coeff / vth[iz] * dvth_dr[iz] - dn_dr[iz] / n[iz]
+    zdot_coefficient = v_dim_coeff / vth[iz] * dvth_dz[iz] - dn_dz[iz] / n[iz]
+    return @views ddt_term, rdot_coefficient, zdot_coefficient, r_advect[:,:,iz],
+                  alpha_advect[:,:,iz], z_advect[:,:,iz], pdf_in[:,:,iz], dt
+end
+@inline function get_source_terms_inner_args_z(iz, n, dn_dt, dn_dr, dn_dz, r_advect,
+                                               alpha_advect, z_advect, pdf_in, dt,
+                                               evolve_p::Val{false})
+    ddt_term = - dn_dt[iz] / n[iz]
+    rdot_coefficient = - dn_dr[iz] / n[iz]
+    zdot_coefficient = - dn_dz[iz] / n[iz]
+    return @views ddt_term, rdot_coefficient, zdot_coefficient, r_advect[:,:,iz],
+                  alpha_advect[:,:,iz], z_advect[:,:,iz], pdf_in[:,:,iz], dt
+end
+
+@inline function get_source_terms_inner(ivperp, ivpa, ddt_term, rdot_coefficient,
+                                        zdot_coefficient, r_advect, alpha_advect,
+                                        z_advect, pdf_in, dt)
+    return dt * (ddt_term
+                 + rdot_coefficient * r_advect[ivpa,ivperp]
+                 + zdot_coefficient * (alpha_advect[ivpa,ivperp] + z_advect[ivpa,ivperp])
+                ) *
+           pdf_in[ivpa,ivperp]
 end
 
 """
@@ -76,51 +127,117 @@ flow and/or pressure, and use them to update the pdf
 @timeit global_timer source_terms_neutral!(
                          pdf_out, fvec_in, moments, vz, z, r, dt, composition, collisions,
                          neutral_source_settings) = begin
+    evolve_density = moments.evolve_density
+    evolve_upar = moments.evolve_upar
+    evolve_p = moments.evolve_p
+    if !evolve_density && !evolve_upar && !evolve_p
+        return nothing
+    end
+    return source_terms_neutral!(pdf_out, fvec_in, moments, vz, z, r, dt, composition,
+                                 collisions, neutral_source_settings, Val(evolve_upar),
+                                 Val(evolve_p))
+end
+function source_terms_neutral!(pdf_out, fvec_in, moments, vz, z, r, dt, composition,
+                               collisions, neutral_source_settings, evolve_upar::Val,
+                               evolve_p::Val)
 
     @begin_sn_r_z_vzeta_vr_vz_region()
 
-    pdf_in = fvec_in.pdf_neutral
-    n = fvec_in.density_neutral
-    uz = fvec_in.uz_neutral
-    vth = moments.neutral.vth
-    dn_dt = moments.neutral.ddens_dt
-    dn_dz = moments.neutral.ddens_dz
-    vz_grid = vz.grid
-    if moments.evolve_p
-        dvth_dt = moments.neutral.dvth_dt
-        dvth_dz = moments.neutral.dvth_dz
-        @loop_sn_r_z isn ir iz begin
-            coefficient1 = -(dn_dt[iz,ir,isn] + uz[iz,ir,isn] * dn_dz[iz,ir,isn]) / n[iz,ir,isn] +
-                           (dvth_dt[iz,ir,isn] + uz[iz,ir,isn] * dvth_dz[iz,ir,isn]) / vth[iz,ir,isn]
-            coefficient2 = -vth[iz,ir,isn] * dn_dz[iz,ir,isn] / n[iz,ir,isn] + dvth_dz[iz,ir,isn]
+    inner_args =
+        get_source_terms_neutral_inner_args(vz, moments.neutral.vth,
+                                            moments.neutral.dvth_dt,
+                                            moments.neutral.dvth_dz, fvec_in.uz_neutral,
+                                            fvec_in.density_neutral,
+                                            moments.neutral.ddens_dt,
+                                            moments.neutral.ddens_dz, fvec_in.pdf_neutral,
+                                            dt, evolve_upar, evolve_p)
+
+    @loop_sn_r isn ir begin
+        inner_args_snr = get_source_terms_neutral_inner_args_snr(isn, ir, inner_args...)
+        @loop_z iz begin
+            inner_args_z = get_source_terms_neutral_inner_args_z(iz, inner_args_snr...)
             @loop_vzeta_vr_vz ivzeta ivr ivz begin
                 pdf_out[ivz,ivr,ivzeta,iz,ir,isn] +=
-                    dt * (coefficient1 + vz_grid[ivz] * coefficient2) *
-                    pdf_in[ivz,ivr,ivzeta,iz,ir,isn]
-            end
-        end
-    elseif moments.evolve_upar
-        @loop_sn_r_z isn ir iz begin
-            coefficient1 = -(dn_dt[iz,ir,isn] + uz[iz,ir,isn] * dn_dz[iz,ir,isn]) / n[iz,ir,isn]
-            coefficient2 = -dn_dz[iz,ir,isn] / n[iz,ir,isn]
-            @loop_vzeta_vr_vz ivzeta ivr ivz begin
-                pdf_out[ivz,ivr,ivzeta,iz,ir,isn] +=
-                    dt * (coefficient1 + vz_grid[ivz] * coefficient2) *
-                    pdf_in[ivz,ivr,ivzeta,iz,ir,isn]
-            end
-        end
-    elseif moments.evolve_density
-        @loop_sn_r_z isn ir iz begin
-            coefficient1 = -dn_dt[iz,ir,isn] / n[iz,ir,isn]
-            coefficient2 = -dn_dz[iz,ir,isn] / n[iz,ir,isn]
-            @loop_vzeta_vr_vz ivzeta ivr ivz begin
-                pdf_out[ivz,ivr,ivzeta,iz,ir,isn] +=
-                    dt * (coefficient1 + vz_grid[ivz] * coefficient2) *
-                    pdf_in[ivz,ivr,ivzeta,iz,ir,isn]
+                    get_source_terms_neutral_inner(ivzeta, ivr, ivz, inner_args_z...)
             end
         end
     end
+
     return nothing
+end
+
+@inline function get_source_terms_neutral_inner_args(vz, vth, dvth_dt, dvth_dz, uz, n,
+                                                     dn_dt, dn_dz, pdf_in, dt,
+                                                     evolve_upar::Val{true},
+                                                     evolve_p::Val{true})
+    return vz.grid, vth, dvth_dt, dvth_dz, uz, n, dn_dt, dn_dz, pdf_in, dt, evolve_upar,
+           evolve_p
+end
+@inline function get_source_terms_neutral_inner_args(vz, vth, dvth_dt, dvth_dz, uz, n,
+                                                     dn_dt, dn_dz, pdf_in, dt,
+                                                     evolve_upar::Val{true},
+                                                     evolve_p::Val{false})
+    return vz.grid, uz, n, dn_dt, dn_dz, pdf_in, dt, evolve_upar, evolve_p
+end
+@inline function get_source_terms_neutral_inner_args(vz, vth, dvth_dt, dvth_dz, uz, n,
+                                                     dn_dt, dn_dz, pdf_in, dt,
+                                                     evolve_upar::Val{false},
+                                                     evolve_p::Val{false})
+    return vz.grid, n, dn_dt, dn_dz, pdf_in, dt, evolve_upar, evolve_p
+end
+
+@inline function get_source_terms_neutral_inner_args_snr(isn, ir, vz_grid, vth, dvth_dt,
+                                                         dvth_dz, uz, n, dn_dt, dn_dz,
+                                                         pdf_in, dt,
+                                                         evolve_upar::Val{true},
+                                                         evolve_p::Val{true})
+    return @views vz_grid, vth[:,ir,isn], dvth_dt[:,ir,isn], dvth_dz[:,ir,isn],
+                  uz[:,ir,isn], n[:,ir,isn], dn_dt[:,ir,isn], dn_dz[:,ir,isn],
+                  pdf_in[:,:,:,:,ir,isn], dt, evolve_upar, evolve_p
+end
+@inline function get_source_terms_neutral_inner_args_snr(isn, ir, vz_grid, uz, n, dn_dt, dn_dz,
+                                                         pdf_in, dt,
+                                                         evolve_upar::Val{true},
+                                                         evolve_p::Val{false})
+    return @views vz_grid, uz[:,ir,isn], n[:,ir,isn], dn_dt[:,ir,isn],
+                  dn_dz[:,ir,isn], pdf_in[:,:,:,:,ir,isn], dt, evolve_upar, evolve_p
+end
+@inline function get_source_terms_neutral_inner_args_snr(isn, ir, vz_grid, n, dn_dt, dn_dz,
+                                                         pdf_in, dt,
+                                                         evolve_upar::Val{false},
+                                                         evolve_p::Val{false})
+    return @views vz_grid, n[:,ir,isn], dn_dt[:,ir,isn], dn_dz[:,ir,isn],
+                  pdf_in[:,:,:,:,ir,isn], dt, evolve_upar, evolve_p
+end
+
+@inline function get_source_terms_neutral_inner_args_z(iz, vz_grid, vth, dvth_dt, dvth_dz, uz,
+                                                       n, dn_dt, dn_dz, pdf_in, dt,
+                                                       evolve_upar::Val{true},
+                                                       evolve_p::Val{true})
+    coefficient1 = -(dn_dt[iz] + uz[iz] * dn_dz[iz]) / n[iz] +
+                   (dvth_dt[iz] + uz[iz] * dvth_dz[iz]) / vth[iz]
+    coefficient2 = -vth[iz] * dn_dz[iz] / n[iz] + dvth_dz[iz]
+    return @views vz_grid, coefficient1, coefficient2, pdf_in[:,:,:,iz], dt
+end
+@inline function get_source_terms_neutral_inner_args_z(iz, vz_grid, uz, n, dn_dt, dn_dz,
+                                                       pdf_in, dt, evolve_upar::Val{true},
+                                                       evolve_p::Val{false})
+    coefficient1 = -(dn_dt[iz] + uz[iz] * dn_dz[iz]) / n[iz]
+    coefficient2 = -dn_dz[iz] / n[iz]
+    return @views vz_grid, coefficient1, coefficient2, pdf_in[:,:,:,iz], dt
+end
+@inline function get_source_terms_neutral_inner_args_z(iz, vz_grid, n, dn_dt, dn_dz,
+                                                       pdf_in, dt,
+                                                       evolve_upar::Val{false},
+                                                       evolve_p::Val{false})
+    coefficient1 = -dn_dt[iz] / n[iz]
+    coefficient2 = -dn_dz[iz] / n[iz]
+    return @views vz_grid, coefficient1, coefficient2, pdf_in[:,:,:,iz], dt
+end
+
+@inline function get_source_terms_neutral_inner(ivzeta, ivr, ivz, vz_grid, coefficient1,
+                                                coefficient2, pdf_in, dt)
+    return dt * (coefficient1 + vz_grid[ivz] * coefficient2) * pdf_in[ivz,ivr,ivzeta]
 end
 
 """
