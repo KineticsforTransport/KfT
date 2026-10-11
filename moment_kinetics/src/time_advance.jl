@@ -23,17 +23,27 @@ using ..file_io: write_data_to_ascii, write_all_moments_data_to_binary,
 using ..initial_conditions: initialize_electrons!
 using ..looping
 using ..moment_kinetics_structs: scratch_pdf, scratch_electron_pdf
-using ..velocity_moments: update_moments!, update_moments_neutral!, reset_moments_status!, update_derived_moments!, update_derived_moments_neutral!
-using ..velocity_moments: update_density!, update_upar!, update_ppar!, update_pperp!, update_ion_qpar!, update_vth!, update_derived_ion_moment_time_derivatives!
-using ..velocity_moments: update_neutral_density!, update_neutral_qz!
-using ..velocity_moments: update_neutral_uzeta!, update_neutral_uz!, update_neutral_ur!
-using ..velocity_moments: update_neutral_pzeta!, update_neutral_pz!, update_neutral_pr!, update_derived_neutral_moment_time_derivatives!
-using ..velocity_moments: calculate_ion_moment_derivatives!, calculate_neutral_moment_derivatives!
-using ..velocity_moments: calculate_electron_moment_derivatives!, update_derived_electron_moment_time_derivatives!
+using ..velocity_moments: update_moments!, update_moments_neutral!, reset_moments_status!,
+                          update_derived_moments!, update_derived_moments_neutral!,
+                          update_density!, update_upar!, update_ppar!, update_pperp!,
+                          update_ion_qpar!, update_vth!,
+                          update_derived_ion_moment_time_derivatives!,
+                          update_derived_ion_moment_time_derivatives_no_sr!,
+                          update_ppar_species_no_sr!, calculate_ion_qpar_from_pdf_no_r!,
+                          update_neutral_density!, update_neutral_qz!,
+                          update_neutral_uzeta!, update_neutral_uz!, update_neutral_ur!,
+                          update_neutral_pzeta!, update_neutral_pz!, update_neutral_pr!,
+                          update_derived_neutral_moment_time_derivatives!,
+                          calculate_ion_moment_derivatives!,
+                          calculate_implicit_ion_moment_derivatives!,
+                          calculate_neutral_moment_derivatives!,
+                          calculate_electron_moment_derivatives!,
+                          update_derived_electron_moment_time_derivatives!
 using ..velocity_grid_transforms: vzvrvzeta_to_vpavperp!, vpavperp_to_vzvrvzeta!
 using ..boundary_conditions
 using ..boundary_conditions: get_ion_z_boundary_cutoff_indices, enforce_vperp_boundary_condition!
 using ..boundary_conditions: vpagrid_to_vpa, enforce_v_boundary_condition_local!,
+                             skip_f_ion_bc_points_in_Jacobian,
                              skip_f_electron_bc_points_in_Jacobian,
                              skip_f_electron_bc_points_in_Jacobian_v_solve,
                              skip_f_electron_bc_points_in_Jacobian_z_solve
@@ -42,18 +52,21 @@ using ..moment_constraints: hard_force_moment_constraints!,
                             hard_force_moment_constraints_neutral!,
                             moment_constraints_on_residual!
 using ..advection: setup_advection
-using ..z_advection: update_speed_z!, z_advection!
-using ..alpha_advection: update_speed_alpha!, alpha_advection!
-using ..r_advection: update_speed_r!, r_advection!, r_advection_1D_ITG!
+using ..z_advection: update_speed_z!, z_advection!, z_advection_no_sr!
+using ..alpha_advection: update_speed_alpha!, update_speed_alpha_no_sr!, alpha_advection!
+using ..r_advection: update_speed_r!, update_speed_r_no_sr!, r_advection!,
+                     r_advection_1D_ITG!
 using ..neutral_r_advection: update_speed_neutral_r!, neutral_advection_r!
 using ..neutral_z_advection: update_speed_neutral_z!, neutral_advection_z!
 using ..neutral_vz_advection: update_speed_neutral_vz!, neutral_advection_vz!
 using ..vperp_advection: update_speed_vperp!, vperp_advection!
-using ..vpa_advection: update_speed_vpa!, vpa_advection!, implicit_vpa_advection!
+using ..vpa_advection: update_speed_vpa!, vpa_advection!, vpa_advection_no_sr!,
+                       implicit_vpa_advection!
 using ..charge_exchange: ion_charge_exchange_collisions_1V!,
                          neutral_charge_exchange_collisions_1V!,
                          ion_charge_exchange_collisions_3V!,
-                         neutral_charge_exchange_collisions_3V!
+                         neutral_charge_exchange_collisions_3V!,
+                         charge_exchange_collisions_mk_single_species_r!
 using ..electron_kinetic_equation: update_electron_pdf!, implicit_electron_advance!,
                                    electron_backward_euler!,
                                    electron_kinetic_equation_euler_update!,
@@ -61,23 +74,30 @@ using ..electron_kinetic_equation: update_electron_pdf!, implicit_electron_advan
                                    get_electron_preconditioners
 using ..electron_vpa_advection: update_electron_speed_vpa!
 using ..electron_z_advection: update_electron_speed_z!
+using ..ion_jacobian_terms: get_ion_preconditioners
 using ..ionization: ion_ionization_collisions_1V!, neutral_ionization_collisions_1V!,
-                    ion_ionization_collisions_3V!, neutral_ionization_collisions_3V!
-using ..krook_collisions: krook_collisions!
+                    ion_ionization_collisions_3V!, neutral_ionization_collisions_3V!,
+                    ionization_collisions_mk_ion_no_sr!
+using ..krook_collisions: krook_collisions!, krook_collisions_no_sr!
 using ..maxwell_diffusion: ion_vpa_maxwell_diffusion!, neutral_vz_maxwell_diffusion!
 using ..external_sources
 using ..nonlinear_solvers
 using ..numerical_dissipation: vpa_boundary_buffer_decay!,
                                vpa_boundary_buffer_diffusion!, vpa_dissipation!,
                                z_dissipation!, r_dissipation!, vperp_dissipation!,
+                               vpa_dissipation_no_sr!, z_dissipation_no_sr!,
+                               vperp_dissipation_no_sr!,
                                vz_dissipation_neutral!, z_dissipation_neutral!,
                                r_dissipation_neutral!,
                                vpa_boundary_force_decreasing!, force_minimum_pdf_value!,
                                force_minimum_pdf_value_neutral!
-using ..source_terms: source_terms!, source_terms_neutral!, source_terms_manufactured!
-using ..continuity: continuity_equation!, neutral_continuity_equation!
-using ..force_balance: force_balance!, neutral_force_balance!
-using ..energy_equation: energy_equation!, neutral_energy_equation!
+using ..source_terms: source_terms!, source_terms_no_sr!, source_terms_neutral!,
+                      source_terms_manufactured!
+using ..continuity: continuity_equation!, continuity_equation_no_sr!,
+                    neutral_continuity_equation!
+using ..force_balance: force_balance!, force_balance_no_sr!, neutral_force_balance!
+using ..energy_equation: energy_equation!, energy_equation_no_sr!,
+                         neutral_energy_equation!
 using ..em_fields: setup_em_fields, update_phi!
 using ..fokker_planck: init_fokker_planck_collisions_weak_form, explicit_fokker_planck_collisions_weak_form!
 using ..fokker_planck: explicit_fp_collisions_weak_form_Maxwellian_cross_species!
@@ -153,6 +173,15 @@ struct scratch_dummy_arrays
     buffer_zrs_3::MPISharedArray{mk_float,3}
     buffer_zrs_4::MPISharedArray{mk_float,3}
     buffer_zrs_5::MPISharedArray{mk_float,3}
+
+    buffer_vpavperp_1::MPISharedArray{mk_float,2}
+    buffer_vpavperp_2::MPISharedArray{mk_float,2}
+    buffer_vpavperp_3::MPISharedArray{mk_float,2}
+    buffer_vpavperp_4::MPISharedArray{mk_float,2}
+    buffer_vpavperp_5::MPISharedArray{mk_float,2}
+    buffer_vpavperp_6::MPISharedArray{mk_float,2}
+
+    buffer_vpavperpz_1::MPISharedArray{mk_float,3}
 
     buffer_vpavperpzs_1::MPISharedArray{mk_float,4}
     buffer_vpavperpzs_2::MPISharedArray{mk_float,4}
@@ -491,6 +520,7 @@ function setup_time_info(t_input, n_variables, code_time, dt_reload,
         kinetic_electron_solver = null_kinetic_electrons # This option is only used from the ion time_info struct
         electron_preconditioner_type = nothing
         kinetic_ion_solver = null_kinetic_ions
+        ion_preconditioner_type = nothing
         decrease_dt_iteration_threshold = t_input["decrease_dt_iteration_threshold"]
         increase_dt_iteration_threshold = t_input["increase_dt_iteration_threshold"]
         cap_factor_ion_dt = mk_float(t_input["cap_factor_ion_dt"])
@@ -498,62 +528,66 @@ function setup_time_info(t_input, n_variables, code_time, dt_reload,
         max_pseudotime = t_input["max_pseudotime"]
         include_wall_bc_in_preconditioner = t_input["include_wall_bc_in_preconditioner"]
         electron_t_params = nothing
-    elseif electron === false
-        kinetic_electron_solver = null_kinetic_electrons
-        kinetic_ion_solver = t_input["kinetic_ion_solver"]
-        electron_preconditioner_type = nothing
-        decrease_dt_iteration_threshold = -1
-        increase_dt_iteration_threshold = typemax(mk_int)
-        cap_factor_ion_dt = Inf
-        max_pseudotimesteps = -1
-        max_pseudotime = Inf
-        include_wall_bc_in_preconditioner = false
-        electron_t_params = nothing
     else
-        kinetic_electron_solver = t_input["kinetic_electron_solver"]
-        if kinetic_electron_solver ∈ (implicit_time_evolving,
-                                      implicit_p_implicit_pseudotimestep,
-                                      implicit_steady_state)
-            electron_precon_types = Dict("lu_no_separate_moments" => :electron_lu_no_separate_moments,
-                                         "lu_separate_third_moment" => :electron_lu_separate_third_moment,
-                                         "lu" => :electron_lu,
-                                         "lu_separate_dp_dz_dq_dz" => :electron_lu_separate_dp_dz_dq_dz,
-                                         "adi" => :electron_adi)
-            if t_input["kinetic_electron_preconditioner"] == "default"
-                if block_size[] == 1
-                    electron_precon_option = "lu"
-                else
-                    electron_precon_option = "adi"
-                end
-            else
-                electron_precon_option = t_input["kinetic_electron_preconditioner"]
-            end
-            if kinetic_electron_solver === implicit_steady_state && electron_precon_option != "lu"
-                error("Only LU preconditioner currently supported for "
-                      * "kinetic_electron_solver=\"implicit_steady_state\". Got "
-                      * "kinetic_electron_preconditioner=$electron_precon_option")
-            end
-            electron_preconditioner_type = Val(electron_precon_types[electron_precon_option])
+        if electron === false
+            kinetic_electron_solver = null_kinetic_electrons
+            electron_preconditioner_type = nothing
+            electron_t_params = nothing
         else
-            electron_preconditioner_type = Val(:none)
+            kinetic_electron_solver = t_input["kinetic_electron_solver"]
+            if kinetic_electron_solver ∈ (implicit_time_evolving,
+                                          implicit_p_implicit_pseudotimestep,
+                                          implicit_steady_state)
+                electron_precon_types = Dict("lu_no_separate_moments" => :electron_lu_no_separate_moments,
+                                             "lu_separate_third_moment" => :electron_lu_separate_third_moment,
+                                             "lu" => :electron_lu,
+                                             "lu_separate_dp_dz_dq_dz" => :electron_lu_separate_dp_dz_dq_dz,
+                                             "adi" => :electron_adi)
+                if t_input["kinetic_electron_preconditioner"] == "default"
+                    if block_size[] == 1
+                        electron_precon_option = "lu"
+                    else
+                        electron_precon_option = "adi"
+                    end
+                else
+                    electron_precon_option = t_input["kinetic_electron_preconditioner"]
+                end
+                if kinetic_electron_solver === implicit_steady_state && electron_precon_option != "lu"
+                    error("Only LU preconditioner currently supported for "
+                          * "kinetic_electron_solver=\"implicit_steady_state\". Got "
+                          * "kinetic_electron_preconditioner=$electron_precon_option")
+                end
+                electron_preconditioner_type = Val(electron_precon_types[electron_precon_option])
+            else
+                electron_preconditioner_type = Val(:none)
+            end
+            electron_t_params = electron
+
+            # Check maximum dt for electrons
+            if rk_coefs_implicit !== nothing
+                electron.dt[] = min(electron.dt[], electron.maximum_dt,
+                                    electron.cap_factor_ion_dt * dt[] * rk_coefs_implicit[1,1])
+            else
+                electron.dt[] = min(electron.dt[], electron.maximum_dt)
+            end
+            electron.previous_dt[] = electron.dt[]
         end
+
         kinetic_ion_solver = t_input["kinetic_ion_solver"]
+        ion_precon_types = Dict("parallel_lu" => :ion_parallel_lu,
+                                "none"=>:none)
+        if t_input["kinetic_ion_preconditioner"] == "default"
+            ion_precon_option = "none"
+        else
+            ion_precon_option = t_input["kinetic_ion_preconditioner"]
+        end
+        ion_preconditioner_type = Val(ion_precon_types[ion_precon_option])
         decrease_dt_iteration_threshold = -1
         increase_dt_iteration_threshold = typemax(mk_int)
         cap_factor_ion_dt = Inf
         max_pseudotimesteps = -1
         max_pseudotime = Inf
         include_wall_bc_in_preconditioner = false
-        electron_t_params = electron
-
-        # Check maximum dt for electrons
-        if rk_coefs_implicit !== nothing
-            electron.dt[] = min(electron.dt[], electron.maximum_dt,
-                                electron.cap_factor_ion_dt * dt[] * rk_coefs_implicit[1,1])
-        else
-            electron.dt[] = min(electron.dt[], electron.maximum_dt)
-        end
-        electron.previous_dt[] = electron.dt[]
     end
 
     use_stopnow = (load_preference("moment_kinetics", "use_stopnow", "n") == "y")
@@ -578,9 +612,10 @@ function setup_time_info(t_input, n_variables, code_time, dt_reload,
                      !is_electron && t_input["implicit_braginskii_conduction"],
                      kinetic_electron_solver, electron_preconditioner_type,
                      # read main ion algorithm flag
-                     kinetic_ion_solver,
+                     kinetic_ion_solver, ion_preconditioner_type,
                      # set useful derived parameters
                      !is_electron && (t_input["kinetic_ion_solver"] == full_implicit_ion_advance),
+                     !is_electron && (t_input["kinetic_ion_solver"] == implicit_ion_parallel_dynamics),
                      !is_electron && (t_input["kinetic_ion_solver"] == implicit_ion_vpa_advection),
                      !is_electron && (t_input["kinetic_ion_solver"] == implicit_ion_fp_collisions),
                      mk_float(t_input["constraint_forcing_rate"]),
@@ -593,26 +628,6 @@ function setup_time_info(t_input, n_variables, code_time, dt_reload,
                      mk_float(t_input["converged_residual_value"]),
                      manufactured_solns_input.use_for_advance, t_input["stopfile_name"],
                      use_stopnow, debug_io, electron_t_params)
-end
-
-function get_ion_preconditioners(preconditioner_type, coords, outer_coords;
-                                 boundary_skip_funcs::BSF=nothing) where {BSF}
-    coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ coords)
-    total_size_coords = prod(coord_sizes)
-    outer_coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ outer_coords)
-
-    if preconditioner_type === Val(:lu)
-        # Create dummy LU solver objects so we can create an array for preconditioners.
-        # These will be calculated properly within the time loop.
-        preconditioners = [lu(sparse(1.0*I, total_size_coords, total_size_coords))
-                           for _ ∈ CartesianIndices(reverse(outer_coord_sizes))]
-    elseif preconditioner_type === Val(:none)
-        preconditioners = nothing
-    else
-        error("Unrecognised preconditioner_type=$preconditioner_type")
-    end
-
-    return preconditioners
 end
 
 function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vpa,
@@ -676,7 +691,7 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
     end
 
     if t_params.implicit_ion_advance
-        ion_coords = (s=composition.n_ion_species, r=r, z=z, vperp=vperp, vpa=vpa)
+        ion_coords = (s=composition.ion_species_coord, r=r, z=z, vperp=vperp, vpa=vpa)
         ion_outer_coords = ()
         ion_precon_type = Val(:none)
         nl_solver_ion_advance_params =
@@ -689,11 +704,30 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
         nl_solver_ion_advance_params = nothing
     end
 
+    if t_params.implicit_ion_parallel_dynamics
+        ion_precon_type = t_params.ion_preconditioner_type
+        ion_coords = (s=composition.ion_species_coord, r=r, z=z, vperp=vperp, vpa=vpa)
+        ion_outer_coords = ()
+        spectral = (z=z_spectral, vperp=vperp_spectral, vpa=vpa_spectral)
+        nl_solver_ion_parallel_dynamics_params =
+            setup_nonlinear_solve(nl_solver_input, ion_coords, ion_outer_coords;
+                                  preconditioner_type=ion_precon_type,
+                                  preconditioners=get_ion_preconditioners(ion_precon_type,
+                                                                          ion_coords,
+                                                                          ion_outer_coords,
+                                                                          spectral;
+                                                                          boundary_skip_funcs=(full=(ion_pdf=skip_f_ion_bc_points_in_Jacobian,
+                                                                                                     wpa2_moment=nothing,
+                                                                                                     third_moment=nothing),)))
+    else
+        nl_solver_ion_parallel_dynamics_params = nothing
+    end
+
     if t_params.implicit_vpa_advection
         # Implicit solve for vpa_advection term should be done in serial, as it will be called
         # within a parallelised s_r_z_vperp loop.
         vpa_coords = (vpa=vpa,)
-        vpa_outer_coords = (composition.n_ion_species, r, z, vperp)
+        vpa_outer_coords = (composition.ion_species_coord, r, z, vperp)
         vpa_precon_type = Val(:none)
         nl_solver_vpa_advection_params =
             setup_nonlinear_solve(nl_solver_input, vpa_coords, vpa_outer_coords;
@@ -705,19 +739,40 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
         nl_solver_vpa_advection_params = nothing
     end
 
+    nl_solver_ion_fp_collisions =
+        setup_fp_nl_solve(t_params.use_implicit_ion_fp_collisions, input_dict,
+                          (vperp=vperp, vpa=vpa))
+
+    if nl_solver_ion_advance_params !== nothing &&
+            nl_solver_ion_parallel_dynamics_params !== nothing
+        error("Cannot use implicit_ion_advance and implicit_ion_parallel_dynamics at the "
+              * "same time")
+    end
     if nl_solver_ion_advance_params !== nothing &&
             nl_solver_vpa_advection_params !== nothing
         error("Cannot use implicit_ion_advance and implicit_vpa_advection at the same "
               * "time")
     end
-
-    nl_solver_ion_fp_collisions =
-        setup_fp_nl_solve(t_params.use_implicit_ion_fp_collisions, input_dict,
-                          (vperp=vperp, vpa=vpa))
+    if nl_solver_ion_parallel_dynamics_params !== nothing &&
+            nl_solver_vpa_advection_params !== nothing
+        error("Cannot use implicit_ion_parallel_dynamics and implicit_vpa_advection at "
+              * "the same time")
+    end
+    if nl_solver_ion_advance_params !== nothing &&
+            nl_solver_ion_fp_collisions !== nothing
+        error("Cannot use implicit_ion_advance and implicit_ion_fp_collisions at the "
+              * "same time")
+    end
+    if nl_solver_ion_parallel_dynamics_params !== nothing &&
+            nl_solver_ion_fp_collisions !== nothing
+        error("Cannot use implicit_ion_parallel_dynamics and implicit_ion_fp_collisions "
+              * "at the same time")
+    end
 
     nl_solver_params = (electron_conduction=electron_conduction_nl_solve_parameters,
                         electron_advance=nl_solver_electron_advance_params,
                         ion_advance=nl_solver_ion_advance_params,
+                        ion_parallel_dynamics=nl_solver_ion_parallel_dynamics_params,
                         vpa_advection=nl_solver_vpa_advection_params,
                         ion_fp_collisions=nl_solver_ion_fp_collisions)
 
@@ -895,12 +950,14 @@ function setup_time_advance!(pdf, fields, vz, vr, vzeta, vpa, vperp, z, r, gyrop
         if r.n > 1
             t_params.limit_caused_by["CFL_r"] = 0
         end
+    end
+    if !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
         t_params.limit_caused_by["CFL_z"] = 0
         if vperp.n > 1
             t_params.limit_caused_by["CFL_vperp"] = 0
         end
     end
-    if !(t_params.implicit_ion_advance || t_params.implicit_vpa_advection)
+    if !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics || t_params.implicit_vpa_advection)
         t_params.limit_caused_by["CFL_vpa"] = 0
     end
     t_params.failure_caused_by["pdf_accuracy"] = 0
@@ -1485,9 +1542,9 @@ function setup_advance_flags(moments, composition, t_params, collisions,
         # default for non-split operators is to include both vpa and z advection together
         # If using an IMEX scheme and implicit vpa advection has been requested, then vpa
         # advection is not included in the explicit part of the timestep.
-        advance_vpa_advection = vpa.n > 1 && !(t_params.implicit_ion_advance || t_params.implicit_vpa_advection)
-        advance_vperp_advection = vperp.n > 1 && !t_params.implicit_ion_advance
-        advance_z_advection = z.n > 1 && !t_params.implicit_ion_advance
+        advance_vpa_advection = vpa.n > 1 && !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics || t_params.implicit_vpa_advection)
+        advance_vperp_advection = vperp.n > 1 && !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
+        advance_z_advection = z.n > 1 && !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
         advance_alpha_advection = z.n > 1 && !t_params.implicit_ion_advance && (r.n > 1 || geometry.input.option == "1D-Helical-ITG") # When r.n==1, all the terms in 'alpha advection' vanish, so no need to include alpha_advection.
         advance_r_advection = r.n > 1 && !t_params.implicit_ion_advance
         if collisions.fkpl.nuii > 0.0 && vperp.n > 1 && !t_params.use_implicit_ion_fp_collisions
@@ -1509,10 +1566,10 @@ function setup_advance_flags(moments, composition, t_params, collisions,
             # account for charge exchange collisions
             if collisions.reactions.charge_exchange_frequency !== nothing
                 if vperp.n == 1 && vr.n == 1 && vzeta.n == 1
-                    advance_ion_cx_1V = !t_params.implicit_ion_advance
+                    advance_ion_cx_1V = !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
                     advance_neutral_cx_1V = true
                 elseif vperp.n > 1 && vr.n > 1 && vzeta.n > 1
-                    advance_ion_cx = !t_params.implicit_ion_advance
+                    advance_ion_cx = !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
                     advance_neutral_cx = true
                 else
                     error("If any perpendicular velocity has length>1 they all must. "
@@ -1524,10 +1581,10 @@ function setup_advance_flags(moments, composition, t_params, collisions,
             # account for ionization collisions
             if collisions.reactions.ionization_frequency !== nothing
                 if vperp.n == 1 && vr.n == 1 && vzeta.n == 1
-                    advance_ion_ionization_1V = !t_params.implicit_ion_advance
+                    advance_ion_ionization_1V = !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
                     advance_neutral_ionization_1V = true
                 elseif vperp.n > 1 && vr.n > 1 && vzeta.n > 1
-                    advance_ion_ionization = !t_params.implicit_ion_advance
+                    advance_ion_ionization = !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
                     advance_neutral_ionization = true
                 else
                     error("If any perpendicular velocity has length>1 they all must. "
@@ -1539,7 +1596,7 @@ function setup_advance_flags(moments, composition, t_params, collisions,
         # set flags for krook and maxwell diffusion collisions, and negative coefficient
         # in both cases (as usual) will mean not employing that operator (flag remains false)
         if collisions.krook.nuii0 > 0.0
-            advance_krook_collisions_ii = !t_params.implicit_ion_advance
+            advance_krook_collisions_ii = !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
         end
         if collisions.mxwl_diff.D_ii > 0.0
             advance_maxwell_diffusion_ii = true
@@ -1547,18 +1604,18 @@ function setup_advance_flags(moments, composition, t_params, collisions,
         if collisions.mxwl_diff.D_nn > 0.0
             advance_maxwell_diffusion_nn = true
         end
-        advance_external_source = any(x -> x.active, external_source_settings.ion) && !t_params.implicit_ion_advance
+        advance_external_source = any(x -> x.active, external_source_settings.ion) && !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
         advance_neutral_external_source = any(x -> x.active, external_source_settings.neutral)
-        advance_ion_numerical_dissipation_vpa = !(t_params.implicit_ion_advance || t_params.implicit_vpa_advection)
-        advance_ion_numerical_dissipation_vperp = !t_params.implicit_ion_advance
-        advance_ion_numerical_dissipation_z = !t_params.implicit_ion_advance
+        advance_ion_numerical_dissipation_vpa = !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics || t_params.implicit_vpa_advection)
+        advance_ion_numerical_dissipation_vperp = !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
+        advance_ion_numerical_dissipation_z = !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
         advance_ion_numerical_dissipation_r = !t_params.implicit_ion_advance
         advance_neutral_numerical_dissipation = true
         # if evolving the density, must advance the continuity equation,
         # in addition to including sources arising from the use of a modified distribution
         # function in the kinetic equation
         if moments.evolve_density
-            advance_sources = !t_params.implicit_ion_advance
+            advance_sources = !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
             advance_continuity = true
             if composition.n_neutral_species > 0
                 advance_neutral_sources = true
@@ -1569,7 +1626,7 @@ function setup_advance_flags(moments, composition, t_params, collisions,
         # in addition to including sources arising from the use of a modified distribution
         # function in the kinetic equation
         if moments.evolve_upar
-            advance_sources = !t_params.implicit_ion_advance
+            advance_sources = !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
             advance_force_balance = true
             if composition.n_neutral_species > 0
                 advance_neutral_sources = true
@@ -1580,7 +1637,7 @@ function setup_advance_flags(moments, composition, t_params, collisions,
         # in addition to including sources arising from the use of a modified distribution
         # function in the kinetic equation
         if moments.evolve_p
-            advance_sources = !t_params.implicit_ion_advance
+            advance_sources = !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics)
             advance_energy = true
             if composition.n_neutral_species > 0
                 advance_neutral_sources = true
@@ -1746,6 +1803,52 @@ function setup_implicit_advance_flags(moments, composition, t_params, collisions
         advance_ion_numerical_dissipation_r = true
         advance_sources = moments.evolve_density || moments.evolve_upar || moments.evolve_p
         fp_collisions = collisions.fkpl.nuii > 0.0 && vperp.n > 1
+    elseif t_params.implicit_ion_parallel_dynamics
+        advance_vpa_advection = vpa.n > 1 && z.n > 1
+        advance_vperp_advection = vperp.n > 1 && z.n > 1
+        advance_z_advection = z.n > 1
+        if collisions.reactions.charge_exchange_frequency !== nothing
+            if vperp.n == 1 && vr.n == 1 && vzeta.n == 1
+                advance_ion_cx_1V = true
+            elseif vperp.n > 1 && vr.n > 1 && vzeta.n > 1
+                advance_ion_cx = true
+            else
+                error("If any perpendicular velocity has length>1 they all must. "
+                      * "vperp.n=$(vperp.n), vr.n=$(vr.n), vzeta.n=$(vzeta.n), "
+                      * "vpa.n=$(vpa.n), vz.n=$(vz.n)")
+            end
+        end
+        if collisions.reactions.ionization_frequency !== nothing
+            if vperp.n == 1 && vr.n == 1 && vzeta.n == 1
+                advance_ion_ionization_1V = true
+            elseif vperp.n > 1 && vr.n > 1 && vzeta.n > 1
+                advance_ion_ionization = true
+            else
+                error("If any perpendicular velocity has length>1 they all must. "
+                      * "vperp.n=$(vperp.n), vr.n=$(vr.n), vzeta.n=$(vzeta.n), "
+                      * "vpa.n=$(vpa.n), vz.n=$(vz.n)")
+            end
+        end
+        advance_krook_collisions_ii = collisions.krook.nuii0 > 0.0
+        advance_external_source = any(x -> x.active, external_source_settings.ion)
+        advance_ion_numerical_dissipation_vpa = true
+        advance_ion_numerical_dissipation_vperp = true
+        #advance_ion_numerical_dissipation_z = true
+        if num_diss_params.ion.z_dissipation_coefficient > 0.0
+            error("ion z-dissipation not currently supported by "
+                  * "implicit_ion_parallel_dynamics")
+        end
+        advance_ion_numerical_dissipation_r = false
+        advance_sources = moments.evolve_density || moments.evolve_upar || moments.evolve_p
+        if advance_maxwell_diffusion_ii
+            error("'Maxwell diffusion' not currently supported by "
+                  * "implicit_ion_parallel_dynamics")
+        end
+        #fp_collisions = collisions.fkpl.nuii > 0.0 && vperp.n > 1
+        if collisions.fkpl.nuii > 0.0 && vperp.n > 1
+            error("Fokker-Planck collisions not currently supported by "
+                  * "implicit_ion_parallel_dynamics")
+        end
     elseif t_params.implicit_vpa_advection
         advance_vpa_advection = true
         advance_ion_numerical_dissipation_vpa = true
@@ -1860,6 +1963,15 @@ function setup_dummy_and_buffer_arrays(r, z, vpa, vperp, vz, vr, vzeta, composit
     buffer_zrs_4 = allocate_shared_float(z, r, composition.ion_species_coord)
     buffer_zrs_5 = allocate_shared_float(z, r, composition.ion_species_coord)
     
+    buffer_vpavperp_1 = allocate_shared_float(vpa, vperp)
+    buffer_vpavperp_2 = allocate_shared_float(vpa, vperp)
+    buffer_vpavperp_3 = allocate_shared_float(vpa, vperp)
+    buffer_vpavperp_4 = allocate_shared_float(vpa, vperp)
+    buffer_vpavperp_5 = allocate_shared_float(vpa, vperp)
+    buffer_vpavperp_6 = allocate_shared_float(vpa, vperp)
+
+    buffer_vpavperpz_1 = allocate_shared_float(vpa, vperp, z)
+
     buffer_vpavperpzs_1 = allocate_shared_float(vpa, vperp, z, composition.ion_species_coord)
     buffer_vpavperpzs_2 = allocate_shared_float(vpa, vperp, z, composition.ion_species_coord)
     buffer_vpavperpzs_3 = allocate_shared_float(vpa, vperp, z, composition.ion_species_coord)
@@ -1970,6 +2082,8 @@ function setup_dummy_and_buffer_arrays(r, z, vpa, vperp, vz, vr, vzeta, composit
         buffer_rs_1,buffer_rs_2,buffer_rs_3,buffer_rs_4,buffer_rs_5,buffer_rs_6,
         buffer_rsn_1,buffer_rsn_2,buffer_rsn_3,buffer_rsn_4,buffer_rsn_5,buffer_rsn_6,
         buffer_zrs_1,buffer_zrs_2,buffer_zrs_3,buffer_zrs_4,buffer_zrs_5,
+        buffer_vpavperp_1, buffer_vpavperp_2, buffer_vpavperp_3, buffer_vpavperp_4, buffer_vpavperp_5, buffer_vpavperp_6,
+        buffer_vpavperpz_1,
         buffer_vpavperpzs_1,buffer_vpavperpzs_2,buffer_vpavperpzs_3,buffer_vpavperpzs_4,buffer_vpavperpzs_5,buffer_vpavperpzs_6,
         buffer_vpavperprs_1,buffer_vpavperprs_2,buffer_vpavperprs_3,buffer_vpavperprs_4,buffer_vpavperprs_5,buffer_vpavperprs_6,
         buffer_vpavperpzrs_1,buffer_vpavperpzrs_2,
@@ -3083,14 +3197,16 @@ appropriate.
 
     if !t_params.implicit_ion_advance
         # ion z-advection
-        update_speed_z!(z_advect, moments.ion.upar, moments.ion.vth, evolve_upar,
-                        evolve_p, vpa, vperp, z, r, geometry)
         update_speed_alpha!(alpha_advect, evolve_upar, evolve_p, fields, vpa, vperp, z, r,
                             geometry)
-        # Add alpha_speed as that is also in the z-direction in the 2D simulations
-        # implemented so far.
-        @loop_s_r_z_vperp is ir iz ivperp begin
-            @views z_advect[:,ivperp,iz,ir,is] .+= alpha_advect[:,ivperp,iz,ir,is]
+        if !t_params.implicit_ion_parallel_dynamics
+            update_speed_z!(z_advect, moments.ion.upar, moments.ion.vth, evolve_upar,
+                            evolve_p, vpa, vperp, z, r, geometry)
+            # Add z-speed as alpha speed is also in the z-direction in the 2D simulations
+            # implemented so far.
+            @loop_s_r_z_vperp is ir iz ivperp begin
+                @views z_advect[:,ivperp,iz,ir,is] .+= alpha_advect[:,ivperp,iz,ir,is]
+            end
         end
         ion_z_CFL = get_minimum_CFL_z(z_advect, z)
         @serial_region begin
@@ -3098,7 +3214,7 @@ appropriate.
         end
     end
 
-    if !(t_params.implicit_ion_advance || t_params.implicit_vpa_advection)
+    if !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics || t_params.implicit_vpa_advection)
         # ion vpa-advection
         update_speed_vpa!(vpa_advect, fields, scratch[t_params.n_rk_stages+1], moments,
                           r_advect, alpha_advect, z_advect, vpa, vperp, z, r, composition,
@@ -3110,7 +3226,7 @@ appropriate.
         end
     end
 
-    if !t_params.implicit_ion_advance && vperp.n > 1
+    if !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics) && vperp.n > 1
         # ion vperp-advection
         update_speed_vperp!(vperp_advect, scratch[t_params.n_rk_stages+1], vpa, vperp, z,
                             r, z_advect, alpha_advect, r_advect, geometry, moments)
@@ -4040,7 +4156,7 @@ implementation), a call needs to be made with `dt` scaled by some coefficient.
         # apply z-advection operation to ion species
         if advance.z_advection
             z_advection!(fvec_out.pdf, fvec_in, moments, fields, z_advect, z, vpa, vperp, r,
-                        dt, t, z_spectral, composition, geometry, scratch_dummy)
+                        dt, z_spectral, composition, geometry, scratch_dummy)
             write_debug_IO("z_advection!")
         end
 
@@ -4276,6 +4392,216 @@ implementation), a call needs to be made with `dt` scaled by some coefficient.
     # reset "xx.updated" flags to false since ff has been updated
     # and the corresponding moments have not
     reset_moments_status!(moments)
+    return nothing
+end
+
+"""
+ion_parallel_dynamics_euler_time_advance_no_sr! advances the vector
+equation dfvec/dt = G[f] that includes the z and velocity space terms
+in the ion kinetic equation using the forward Euler method:
+fvec_out = fvec_in + dt*fvec_in,
+with fvec_in an input and fvec_out the output.
+
+Note `dt` is passed separately from `t_params` because sometimes (in the IMEX Runge-Kutta
+implementation), a call needs to be made with `dt` scaled by some coefficient.
+"""
+@timeit global_timer ion_parallel_dynamics_euler_time_advance_no_sr!(
+                         fvec_out, fvec_in, pdf, debug_scratch_electron, fields, moments,
+                         advect_objects, vz, vr, vzeta, vpa, vperp, gyrophase, z, r,
+                         t_params, dt, spectral_objects, composition, collisions,
+                         geometry, scratch_dummy, manufactured_source_list,
+                         external_source_settings, num_diss_params, advance, fp_arrays,
+                         istage, is, ir) = begin
+
+    # Convenience wrapper for calls to write debug information within this function.
+    # Not sure the debug-IO functionality could be used in this function if r.n>1, so
+    # comment out for now. If running in 1D (r.n==1), can uncomment
+    # write_debug_data_to_binary() below and debug-IO stuff should work...
+    function write_debug_IO(label)
+        if t_params.debug_io === nothing
+            # Allow compiler to optimise away this function if debug IO is not being used.
+            return nothing
+        end
+        #write_debug_data_to_binary(fvec_out, debug_scratch_electron, moments, fields,
+        #                           composition, t_params, r, z, vperp, vpa, vzeta, vr, vz,
+        #                           label, istage)
+        return nothing
+    end
+    write_debug_IO("begin ion_parallel_dynamics_euler_time_advance_no_sr!")
+
+    # define some abbreviated variables for tidiness
+    n_ion_species = composition.n_ion_species
+    n_neutral_species = composition.n_neutral_species
+    t = t_params.t[]
+
+    vpa_spectral, vperp_spectral, z_spectral = spectral_objects.vpa_spectral, spectral_objects.vperp_spectral, spectral_objects.z_spectral
+    vz_spectral = spectral_objects.vz_spectral
+    vpa_advect = @view advect_objects.vpa_advect[:,:,:,ir,is]
+    vperp_advect = @view advect_objects.vperp_advect[:,:,:,ir,is]
+    r_advect = @view advect_objects.r_advect[:,:,:,ir,is]
+    alpha_advect = @view advect_objects.alpha_advect[:,:,:,ir,is]
+    z_advect = @view advect_objects.z_advect[:,:,:,ir,is]
+
+    f_in = @view fvec_in.pdf[:,:,:,ir,is]
+    dens = @view fvec_in.density[:,ir,is]
+    upar = @view fvec_in.upar[:,ir,is]
+    p = @view fvec_in.p[:,ir,is]
+    vth = @view moments.ion.vth[:,ir,is]
+    ppar = @view moments.ion.ppar[:,ir,is]
+    qpar = @view moments.ion.qpar[:,ir,is]
+    evolve_density = moments.evolve_density
+    evolve_upar = moments.evolve_upar
+    evolve_p = moments.evolve_p
+
+    # Update the ppar and qpar moments that depend on the shape function, and the moment
+    # time derivatives that will be used in the shape function equation.
+    update_ppar_species_no_sr!(ppar, dens, upar, vth, p, f_in, vpa, vperp, z,
+                               evolve_density, evolve_upar, evolve_p)
+    calculate_ion_qpar_from_pdf_no_r!(qpar, dens, upar, vth, f_in, vpa, vperp, z,
+                                      evolve_density, evolve_upar, evolve_p)
+    calculate_implicit_ion_moment_derivatives!(moments, scratch_dummy, z, vperp,
+                                               z_spectral, is, ir)
+    continuity_equation_no_sr!(fvec_in, fields, moments, composition, geometry, dt,
+                               collisions.reactions.ionization_frequency,
+                               external_source_settings.ion, num_diss_params, is, ir)
+    force_balance_no_sr!(fvec_in, moments, fields, collisions, dt, composition, geometry,
+                         external_source_settings.ion, num_diss_params, z, is, ir)
+    energy_equation_no_sr!(fvec_in, moments, fields, collisions, dt, composition,
+                           geometry, external_source_settings.ion, num_diss_params, is,
+                           ir)
+    update_derived_ion_moment_time_derivatives_no_sr!(fvec_in, moments, is, ir)
+
+    # z_advection! advances 1D advection equation in z
+    # apply z-advection operation to ion species
+    if advance.z_advection
+        z_advection_no_sr!(fvec_out.pdf, fvec_in, moments, fields, z_advect, z, vpa,
+                           vperp, dt, z_spectral, composition, geometry, scratch_dummy,
+                           is, ir)
+        write_debug_IO("ion_parallel_dynamics z_advection_no_sr!")
+    end
+
+    if advance.vpa_advection || advance.vperp_advection
+        # Update alpha and r advection speeds, that are needed for vpa_advection.
+        update_speed_alpha_no_sr!(alpha_advect, evolve_upar, evolve_p, fields, vpa, vperp,
+                                  z, r, geometry, is, ir)
+        update_speed_r_no_sr!(r_advect, fields, evolve_density, evolve_upar, evolve_p,
+                              vpa, vperp, r, z, geometry, is, ir)
+    end
+
+    # vpa_advection! advances the 1D advection equation in vpa. Note this must be called
+    # after z_advection!() so that the z-advection speed has been updated, and after
+    # updating alpha and r advection speeds.
+    if advance.vpa_advection
+        vpa_advection_no_sr!(fvec_out.pdf, fvec_in, fields, moments, vpa_advect, r_advect,
+                             alpha_advect, z_advect, vpa, vperp, z, r, dt, t,
+                             vpa_spectral, composition, collisions,
+                             external_source_settings.ion, geometry, is, ir)
+        write_debug_IO("ion_parallel_dynamics vpa_advection_no_sr!")
+    end
+
+    # vperp_advection requires information about z, alpha, and r advection
+    # so call vperp_advection! only after z advection and alpha, r speed routines
+    if advance.vperp_advection
+        vperp_advection_no_sr!(fvec_out.pdf, fvec_in, vperp_advect, r, z, vperp, vpa, dt,
+                               vperp_spectral, composition, z_advect, alpha_advect,
+                               r_advect, geometry, moments, fields, is, ir)
+        write_debug_IO("ion_parallel_dynamics vperp_advection_no_sr!")
+    end
+
+    if advance.source_terms
+        source_terms_no_sr!(fvec_out.pdf, fvec_in, moments, r_advect, alpha_advect,
+                            z_advect, vpa, vperp, z, r, dt, composition, collisions,
+                            external_source_settings.ion, is, ir)
+        write_debug_IO("ion_parallel_dynamics source_terms_no_sr!")
+    end
+
+    if advance.ion_cx_collisions || advance.ion_ionization_collisions
+        error("2V/3V ion/neutral collsions not currently supported in "
+              * "ion_parallel_dynamics_euler_time_advance_no_sr!()")
+        # gyroaverage neutral dfn and place it in the ion.buffer array for use in the collisions step
+        vzvrvzeta_to_vpavperp_no_sr!(pdf.ion.buffer, fvec_in.pdf_neutral, vz, vr, vzeta,
+                                     vpa, vperp, gyrophase, z, geometry, composition, is,
+                                     ir)
+        write_debug_IO("ion_parallel_dynamics vzvrvzeta_to_vpavperp_no_sr!")
+    end
+
+    # account for charge exchange collisions between ions and neutrals
+    if advance.ion_cx_collisions_1V
+        if !evolve_density
+            error("charge_exchange_collisions_mk_single_species_r!() is not the right "
+                  * "method for 'full-f' mode with evolve_density=false. Don't think we "
+                  * "need full-f support here, so unsupported at least for now.")
+        end
+        @begin_anyzv_z_region()
+        @views charge_exchange_collisions_mk_single_species_r!(
+                   fvec_out.pdf[:,1,:], fvec_in.pdf[:,1,:], fvec_in.pdf_neutral[:,1,1,:],
+                   fvec_in.density_neutral, upar, fvec_in.uz_neutral, vth,
+                   moments.neutral.vth[:,ir,is], moments, vpa, vz,
+                   collisions.reactions.charge_exchange_frequency, vz_spectral, dt;
+                   neutrals=false)
+        write_debug_IO("ion_parallel_dynamics charge_exchange_collisions_mk_single_species_r!")
+    elseif advance.ion_cx_collisions
+        error("2V/3V ion/neutral collsions not currently supported in "
+              * "ion_parallel_dynamics_euler_time_advance_no_sr!()")
+        ion_charge_exchange_collisions_3V_no_sr!(fvec_out.pdf, pdf.ion.buffer, fvec_in,
+                                                 composition, vz, vr, vzeta, vpa, vperp,
+                                                 z, r,
+                                                 collisions.reactions.charge_exchange_frequency,
+                                                 dt, is, ir)
+        write_debug_IO("ion_parallel_dynamics_ion_charge_exchange_collisions_3V!")
+    end
+    # account for ionization collisions between ions and neutrals
+    if advance.ion_ionization_collisions_1V
+        @begin_anyzv_z_region()
+        @views ionization_collisions_mk_ion_no_sr!(
+                   fvec_out.pdf[:,1,:], fvec_in.pdf[:,1,:], fvec_in.pdf_neutral[:,1,1,:],
+                   fvec_in.density_neutral, upar, fvec_in.uz_neutral,
+                   collisions.reactions.ionization_frequency, moments, vpa, vz,
+                   vz_spectral, dt, is, ir)
+        write_debug_IO("ion_parallel_dynamics ion_ionization_collisions_1V_no_sr!")
+    elseif advance.ion_ionization_collisions
+        error("2V/3V ion/neutral collsions not currently supported in "
+              * "ion_parallel_dynamics_euler_time_advance_no_sr!()")
+        ion_ionization_collisions_3V_no_sr!(fvec_out.pdf, pdf.ion.buffer, fvec_in,
+                                            composition, vz, vr, vzeta, vpa, vperp, z, r,
+                                            collisions, dt, is, ir)
+        write_debug_IO("ion_parallel_dynamics_ion_ionization_collisions_3V!")
+    end
+
+    # Add Krook collision operator for ions
+    if advance.krook_collisions_ii
+        krook_collisions_no_sr!(fvec_out.pdf, fvec_in, moments, composition, collisions,
+                                vperp, vpa, dt, is, ir)
+        write_debug_IO("ion_parallel_dynamics krook_collisions_no_sr!")
+    end
+
+    if advance.external_source
+        total_external_Maxwellian_sources_no_sr!(fvec_out.pdf, fvec_in, moments,
+                                                 external_source_settings.ion, vperp, vpa,
+                                                 dt, is, ir)
+        write_debug_IO("ion_parallel_dynamics_total_external_ion_sources!")
+    end
+
+    # add numerical dissipation
+    if advance.ion_numerical_dissipation_vpa
+        vpa_dissipation_no_sr!(fvec_out.pdf, fvec_in.pdf, vpa, vpa_spectral, dt,
+                               num_diss_params.ion.vpa_dissipation_coefficient)
+        write_debug_IO("ion_parallel_dynamics vpa_dissipation_no_sr!")
+    end
+    if advance.ion_numerical_dissipation_vperp
+        vperp_dissipation_no_sr!(fvec_out.pdf, fvec_in.pdf, vperp, vperp_spectral, dt,
+                                 num_diss_params.ion.vperp_dissipation_coefficient)
+        write_debug_IO("ion_parallel_dynamics vperp_dissipation_no_sr!")
+    end
+    if advance.ion_numerical_dissipation_z
+        error("z_dissipation not currently supported in "
+              * "ion_parallel_dynamics_euler_time_advance_no_sr!()")
+        z_dissipation_no_sr!(fvec_out.pdf, fvec_in.pdf, z, z_spectral, dt,
+                             num_diss_params.ion.z_dissipation_coefficient,
+                             num_diss_params.ion.z_dissipation_degree, scratch_dummy)
+        write_debug_IO("ion_parallel_dynamics z_dissipation_no_sr!")
+    end
+
     return nothing
 end
 

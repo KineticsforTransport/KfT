@@ -25,62 +25,20 @@ using ..timer_utils
     @debug_consistency_checks r.n == size(f_out,4) || throw(BoundsError(f_out))
     @debug_consistency_checks composition.n_ion_species == size(f_out,5) || throw(BoundsError(f_out))
     
-    @begin_r_z_region()
+    @begin_s_r_z_region()
 
+    ionization_frequency = collisions.reactions.ionization_frequency
     if moments.evolve_density
         # For now, assume species index `is` corresponds to the neutral
         # species index `isn`.
-        @loop_s_r_z is ir iz begin
+        @loop_s_r is ir begin
             isn = is
-            if moments.evolve_p
-                # will need the ratio of thermal speeds both to interpolate between vpa grids
-                # for different species and to account for different normalizations of each species' pdf
-                vth_ratio = moments.ion.vth[iz,ir,is]/moments.neutral.vth[iz,ir,isn]
-            else
-                vth_ratio = 1.0
-            end
-            # if the parallel flow and/or the parallel pressure are separately evolved,
-            # then the parallel velocity coordinate is re-defined so that the jth
-            # vpa grid point for different species corresponds to different physical
-            # values of dz/dt; as charge exchange and ionization collisions require
-            # the evaluation of the pdf for species s' to obtain the update for species s,
-            # will thus have to interpolate between the different vpa grids
-            if moments.evolve_upar && moments.evolve_p
-                # if evolve_ppar = true and evolve_upar = true, vpa coordinate is
-                # wpahat_s = (vpa-upar_s)/vth_s;
-                # we have f_{s'}(wpahat_{s'}) = f_{s'}((wpahat_s * vth_s + upar_s - upar_{s'}) / vth_{s'});
-                # to get f_{s'}(wpahat_s), need to obtain wpahat_s grid locations
-                # in terms of the wpahat_{s'} coordinate:
-                # (wpahat_{s'})_j = ((wpahat_{s})_j * vth_{s} + upar_{s} - upar_{s'}) / vth_{s'}
-                new_grid = @. vpa.scratch = (vpa.grid * moments.ion.vth[iz,ir,is] + fvec_in.upar[iz,ir,is] - fvec_in.uz_neutral[iz,ir,isn]) / moments.neutral.vth[iz,ir,isn]
-            elseif !moments.evolve_upar
-                # if evolve_ppar = true and evolve_upar = false, vpa coordinate is
-                # vpahat_s = vpa/vth_s;
-                # we have f_{s'}(vpahat_{s'}) = f_{s'}(vpahat_s * vth_s / vth_{s'});
-                # to get f_{s'}(vpahat_s), need to obtain vpahat_s grid locations
-                # in terms of the vpahat_{s'} coordinate:
-                # (vpahat_s)_j = (vpahat_{s'})_j * vth_{s'} / vth_{s}
-                new_grid = @. vpa.scratch = vpa.grid / vth_ratio
-            elseif !moments.evolve_p
-                # if evolve_ppar = false and evolve_upar = true, vpa coordinate is
-                # wpa_s = vpa-upar_s;
-                # we have f_{s'}(wpa_{s'}) = f_{s'}((wpa_s + upar_s - upar_{s'};
-                # to get f_{s'}(wpa_s), need to obtain wpa_s grid locations
-                # in terms of the wpa_{s'} coordinate:
-                # (wpa_s)_j = (wpa_{s'})_j + upar_{s'} - upar_{s}
-                new_grid = @. vpa.scratch = vpa.grid + fvec_in.upar[iz,ir,is] - fvec_in.uz_neutral[iz,ir,isn]
-            else
-                new_grid = vpa.grid
-            end
-            # interpolate to the new grid (passed in as vpa.scratch)
-            # and return interpolated values in vpa.scratch2
-            @views interpolate_to_grid_vpa!(vpa.scratch2, vpa.scratch, fvec_in.pdf_neutral[:,1,1,iz,ir,isn], vz, vz_spectral)
-            ionization = collisions.reactions.ionization_frequency
-            @loop_vpa ivpa begin
-                f_out[ivpa,1,iz,ir,is] +=
-                    dt*ionization*fvec_in.density_neutral[iz,ir,isn]*
-                    (vpa.scratch2[ivpa]*vth_ratio - fvec_in.pdf[ivpa,1,iz,ir,is])
-            end
+            @views ionization_collisions_mk_ion_no_sr!(
+                       f_out[:,1,:,ir,is], fvec_in.pdf[:,1,:,ir,is],
+                       fvec_in.pdf_neutral[:,1,1,:,ir,isn],
+                       fvec_in.density_neutral[:,ir,isn], fvec_in.upar[:,ir,is],
+                       fvec_in.uz_neutral[:,ir,isn], ionization_frequency, moments, vpa,
+                       vz, vz_spectral, dt, is, ir)
         end
     else
         @loop_s is begin
@@ -89,7 +47,6 @@ using ..timer_utils
             # no gyroaverage here as 1V code
             #NB: used quasineutrality to replace electron density n_e with ion density
             #NEEDS GENERALISATION TO n_ion_species > 1 (missing species charge: Sum_i Z_i n_i = n_e)
-            ionization = collisions.reactions.ionization_frequency
             isn = is
             @loop_r_z ir iz begin
                 @views interpolate_to_grid_vpa!(vpa.scratch, vpa.grid,
@@ -97,11 +54,68 @@ using ..timer_utils
                                                 vz_spectral)
                 @loop_vpa ivpa begin
                     # apply ionization collisions to all ion species
-                    f_out[ivpa,1,iz,ir,is] += dt*ionization*vpa.scratch[ivpa]*fvec_in.density[iz,ir,is]
+                    f_out[ivpa,1,iz,ir,is] += dt*ionization_frequency*vpa.scratch[ivpa]*fvec_in.density[iz,ir,is]
                 end
             end
         end
     end
+end
+
+function ionization_collisions_mk_ion_no_sr!(f_out, pdf_in, pdf_neutral, density_neutral,
+                                             upar, uz_neutral, ionization_frequency,
+                                             moments, vpa, vz, vz_spectral, dt, is, ir)
+    @loop_z iz begin
+        isn = is
+        if moments.evolve_p
+            # will need the ratio of thermal speeds both to interpolate between vpa grids
+            # for different species and to account for different normalizations of each species' pdf
+            vth_ratio = moments.ion.vth[iz,ir,is]/moments.neutral.vth[iz,ir,isn]
+        else
+            vth_ratio = 1.0
+        end
+        # if the parallel flow and/or the parallel pressure are separately evolved,
+        # then the parallel velocity coordinate is re-defined so that the jth
+        # vpa grid point for different species corresponds to different physical
+        # values of dz/dt; as charge exchange and ionization collisions require
+        # the evaluation of the pdf for species s' to obtain the update for species s,
+        # will thus have to interpolate between the different vpa grids
+        if moments.evolve_upar && moments.evolve_p
+            # if evolve_ppar = true and evolve_upar = true, vpa coordinate is
+            # wpahat_s = (vpa-upar_s)/vth_s;
+            # we have f_{s'}(wpahat_{s'}) = f_{s'}((wpahat_s * vth_s + upar_s - upar_{s'}) / vth_{s'});
+            # to get f_{s'}(wpahat_s), need to obtain wpahat_s grid locations
+            # in terms of the wpahat_{s'} coordinate:
+            # (wpahat_{s'})_j = ((wpahat_{s})_j * vth_{s} + upar_{s} - upar_{s'}) / vth_{s'}
+            new_grid = @. vpa.scratch = (vpa.grid * moments.ion.vth[iz,ir,is] + upar[iz] - uz_neutral[iz]) / moments.neutral.vth[iz,ir,isn]
+        elseif !moments.evolve_upar
+            # if evolve_ppar = true and evolve_upar = false, vpa coordinate is
+            # vpahat_s = vpa/vth_s;
+            # we have f_{s'}(vpahat_{s'}) = f_{s'}(vpahat_s * vth_s / vth_{s'});
+            # to get f_{s'}(vpahat_s), need to obtain vpahat_s grid locations
+            # in terms of the vpahat_{s'} coordinate:
+            # (vpahat_s)_j = (vpahat_{s'})_j * vth_{s'} / vth_{s}
+            new_grid = @. vpa.scratch = vpa.grid / vth_ratio
+        elseif !moments.evolve_p
+            # if evolve_ppar = false and evolve_upar = true, vpa coordinate is
+            # wpa_s = vpa-upar_s;
+            # we have f_{s'}(wpa_{s'}) = f_{s'}((wpa_s + upar_s - upar_{s'};
+            # to get f_{s'}(wpa_s), need to obtain wpa_s grid locations
+            # in terms of the wpa_{s'} coordinate:
+            # (wpa_s)_j = (wpa_{s'})_j + upar_{s'} - upar_{s}
+            new_grid = @. vpa.scratch = vpa.grid + upar[iz] - uz_neutral[iz]
+        else
+            new_grid = vpa.grid
+        end
+        # interpolate to the new grid (passed in as vpa.scratch)
+        # and return interpolated values in vpa.scratch2
+        @views interpolate_to_grid_vpa!(vpa.scratch2, vpa.scratch, pdf_neutral[:,iz], vz, vz_spectral)
+        @loop_vpa ivpa begin
+            f_out[ivpa,iz] +=
+                dt*ionization_frequency*density_neutral[iz]*
+                (vpa.scratch2[ivpa]*vth_ratio - pdf_in[ivpa,iz])
+        end
+    end
+    return nothing
 end
 
 @timeit global_timer neutral_ionization_collisions_1V!(
@@ -120,7 +134,7 @@ end
     if !moments.evolve_density
         @begin_sn_r_z_vz_region()
 
-        ionization = collisions.reactions.ionization_frequency
+        ionization_frequency = collisions.reactions.ionization_frequency
         @loop_sn isn begin
             # ion ionisation rate =   < f_n > n_e R_ion
             # neutral "ionisation" (depopulation) rate =   -  f_n  n_e R_ion
@@ -130,7 +144,7 @@ end
             is = isn
             @loop_r_z_vz ir iz ivz begin
                 # apply ionization collisions to all neutral species
-                f_neutral_out[ivz,1,1,iz,ir,isn] -= dt*ionization*fvec_in.pdf_neutral[ivz,1,1,iz,ir,isn]*fvec_in.density[iz,ir,is]
+                f_neutral_out[ivz,1,1,iz,ir,isn] -= dt*ionization_frequency*fvec_in.pdf_neutral[ivz,1,1,iz,ir,isn]*fvec_in.density[iz,ir,is]
             end
         end
     end
@@ -196,6 +210,14 @@ end
             end
         end
     end
+end
+
+function get_ion_1V_ionization_evolve_nup(sub_terms)
+    f = sub_terms.f
+    n_neutral = sub_terms.n_neutral
+    ionization_frequency = sub_terms.ionization_frequency
+
+    return ionization_frequency * n_neutral * f
 end
 
 end

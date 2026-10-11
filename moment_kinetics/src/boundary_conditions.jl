@@ -2770,6 +2770,41 @@ function enforce_vperp_boundary_condition!(f::AbstractArray{mk_float,3}, bc, vpe
 end
 
 """
+    skip_f_ion_bc_points_in_Jacobian(z_speed, ivpa, ivperp, iz, vpa, vperp, z)
+
+This function returns `true` when the grid point specified by `iz`, `ivperp`, `ivpa` would
+be set by the boundary conditions on the electron distribution function. When this
+happens, the corresponding row should be skipped when adding contributions to the Jacobian
+matrix, so that the row remains the same as a row of the identity matrix, so that the
+Jacobian matrix does not modify those points. Returns `false` otherwise.
+"""
+function skip_f_ion_bc_points_in_Jacobian(z_speed, ivpa, ivperp, iz, vpa, vperp, z)
+    # z boundary condition
+    # Treat as if using Dirichlet boundary condition for incoming part of the distribution
+    # function on the block boundary, regardless of the actual boundary condition and
+    # whether this is an internal boundary or an actual domain boundary. This prevents the
+    # matrix evaluated for a single block (without coupling to neighbouring blocks) from
+    # becoming singular
+    if iz == 1 && z_speed[ivpa,ivperp,iz] ≥ 0.0
+        return true
+    end
+    if iz == z.n && z_speed[ivpa,ivperp,iz] ≤ 0.0
+        return true
+    end
+
+    # vperp boundary condition
+    if vperp.n > 1 && ivperp == vperp.n
+        return true
+    end
+
+    if ivpa == 1 || ivpa == vpa.n
+        return true
+    end
+
+    return false
+end
+
+"""
     skip_f_electron_bc_points_in_Jacobian(z_speed, ivpa, ivperp, iz, vpa, vperp, z)
 
 This function returns `true` when the grid point specified by `iz`, `ivperp`, `ivpa` would
@@ -2861,6 +2896,42 @@ function skip_f_electron_bc_points_in_Jacobian_z_solve(z_speed, iz, z)
     end
 
     return false
+end
+
+# In several places it is useful to zero out (in residuals, etc.) the points that would be
+# set by the z boundary condition.
+function zero_ion_parallel_dynamics_z_boundary_condition_points(residual, z, vpa, moments,
+                                                                is, ir)
+    if z.bc ∈ ("wall", "constant",) && (z.irank == 0 || z.irank == z.nrank - 1)
+        # Boundary conditions on incoming part of distribution function. Note that as
+        # density, upar, p do not change in this implicit step, f_electron_newvar, f_old,
+        # and residual should all be zero at exactly the same set of grid points, so it is
+        # reasonable to zero-out `residual` to impose the boundary condition. We impose
+        # this after subtracting f_old in case rounding errors, etc. mean that at some
+        # point f_old had a different boundary condition cut-off index.
+        @begin_anyzv_vperp_vpa_region()
+        v_unnorm = vpa.scratch
+        zero = 1.0e-14
+        if z.irank == 0
+            v_unnorm .= vpagrid_to_vpa(vpa.grid, moments.ion.vth[1,ir,is],
+                                       moments.ion.upar[1,ir,is], true, true)
+            @loop_vperp_vpa ivperp ivpa begin
+                if v_unnorm[ivpa] > -zero
+                    residual[ivpa,ivperp,1] = 0.0
+                end
+            end
+        end
+        if z.irank == z.nrank - 1
+            v_unnorm .= vpagrid_to_vpa(vpa.grid, moments.ion.vth[end,ir,is],
+                                       moments.ion.upar[end,ir,is], true, true)
+            @loop_vperp_vpa ivperp ivpa begin
+                if v_unnorm[ivpa] < zero
+                    residual[ivpa,ivperp,end] = 0.0
+                end
+            end
+        end
+    end
+    return nothing
 end
 
 end # boundary_conditions

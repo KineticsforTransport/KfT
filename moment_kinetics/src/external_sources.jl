@@ -16,7 +16,8 @@ export setup_external_sources!, external_ion_source!, external_neutral_source!,
        initialize_external_source_amplitude!,
        initialize_external_source_controller_integral!,
        get_total_external_electron_source_term,
-       total_external_ion_sources!, total_external_neutral_sources!,
+       total_external_ion_sources!, total_external_Maxwellian_sources_no_sr!,
+       total_external_neutral_sources!,
        total_external_ion_source_controllers!, total_external_neutral_source_controllers!,
        external_electron_source!, total_external_electron_sources!
 
@@ -974,129 +975,35 @@ Add external source term to the ion kinetic equation.
 @timeit global_timer external_ion_source!(
                          pdf, fvec, moments, ion_source, index, vperp, vpa, dt,
                          scratch_dummy) = begin
+    return external_ion_source!(pdf, fvec, moments, ion_source, index, vperp, vpa, dt,
+                                scratch_dummy, Val(moments.evolve_density),
+                                Val(moments.evolve_upar), Val(moments.evolve_p),
+                                Val(vperp.n == 1))
+end
+function external_ion_source!(pdf, fvec, moments, ion_source, index, vperp, vpa, dt,
+                              scratch_dummy, evolve_density::Val, evolve_upar::Val,
+                              evolve_p::Val, is_1V::Val)
     
     source_type = ion_source.source_type
     @views source_amplitude = moments.ion.external_source_amplitude[:,:,index]
     source_T_array = ion_source.source_T_array
     source_n = ion_source.source_n
     Tperp_over_Tpar = ion_source.source_Tperp_over_Tpar
-    if vperp.n == 1
-        Maxwellian_prefactor = 1.0 / sqrt(π)
-    else
-        Maxwellian_prefactor = 1.0 / π^1.5
-    end
-    vpa_grid = vpa.grid
     vperp_grid = vperp.grid
+    vpa_grid = vpa.grid
     if source_type in ("Maxwellian","energy","density_midpoint_control","density_profile_control","temperature_midpoint_control")
-        @begin_s_r_z_vperp_region()
-        if moments.evolve_p && moments.evolve_upar && moments.evolve_density
-            vth = moments.ion.vth
-            density = fvec.density
-            upar = fvec.upar
-            @loop_s_r_z is ir iz begin
-                if vperp.n == 1
-                    source_vth_factor = 1.0 / sqrt(2.0 * source_T_array[iz,ir])
-                    this_vth_factor = vth[iz,ir,is]
-                else
-                    source_vth_factor = 1.0 / (2.0 * source_T_array[iz,ir])^1.5
-                    this_vth_factor = vth[iz,ir,is]^3
-                end
-                this_upar = upar[iz,ir,is]
-                this_vth = vth[iz,ir,is]
-                this_prefactor = dt * this_vth_factor / density[iz,ir,is] *
-                                 Maxwellian_prefactor * source_vth_factor *
-                                 source_amplitude[iz,ir]
-                @loop_vperp_vpa ivperp ivpa begin
-                    # Factor of 1/sqrt(π) (for 1V) or 1/π^(3/2) (for 2V/3V) is absorbed by the
-                    # normalisation of F
-                    vperp_unnorm = vperp_grid[ivperp] * this_vth
-                    vpa_unnorm = vpa_grid[ivpa] * this_vth + this_upar
-                    pdf[ivpa,ivperp,iz,ir,is] +=
-                        this_prefactor * source_n *
-                        exp( - (vperp_unnorm^2) / (2.0 * (3.0 * source_T_array[iz,ir]/(2+1/Tperp_over_Tpar)))
-                             - (vpa_unnorm^2) / (2.0 * (3.0 * source_T_array[iz,ir]/(1+2*Tperp_over_Tpar))) )
-                end
-            end
-        elseif moments.evolve_upar && moments.evolve_density
-            density = fvec.density
-            upar = fvec.upar
-            @loop_s_r_z is ir iz begin
-                if vperp.n == 1
-                    source_vth_factor = 1.0 / sqrt(2.0 * source_T_array[iz,ir])
-                else
-                    source_vth_factor = 1.0 / (2.0 * source_T_array[iz,ir])^1.5
-                end
-                this_upar = upar[iz,ir,is]
-                this_prefactor = dt / density[iz,ir,is] * Maxwellian_prefactor *
-                                 source_vth_factor * source_amplitude[iz,ir]
-                @loop_vperp_vpa ivperp ivpa begin
-                    # Factor of 1/sqrt(π) (for 1V) or 1/π^(3/2) (for 2V/3V) is absorbed by the
-                    # normalisation of F
-                    vpa_unnorm = vpa_grid[ivpa] + this_upar
-                    pdf[ivpa,ivperp,iz,ir,is] +=
-                        this_prefactor * source_n *
-                        exp( - (vperp_grid[ivperp]^2) / (2.0 * (3.0 * source_T_array[iz,ir]/(2+1/Tperp_over_Tpar)))
-                             - (vpa_unnorm^2) / (2.0 * (3.0 * source_T_array[iz,ir]/(1+2*Tperp_over_Tpar))) )
-                end
-            end
-        elseif moments.evolve_density
-            density = fvec.density
-            @loop_s_r_z is ir iz begin
-                if vperp.n == 1
-                    source_vth_factor = 1.0 / sqrt(2.0 * source_T_array[iz,ir])
-                else
-                    source_vth_factor = 1.0 / (2.0 * source_T_array[iz,ir])^1.5
-                end
-                this_prefactor = dt / density[iz,ir,is] * Maxwellian_prefactor *
-                                 source_vth_factor * source_amplitude[iz,ir]
-                @loop_vperp_vpa ivperp ivpa begin
-                    # Factor of 1/sqrt(π) (for 1V) or 1/π^(3/2) (for 2V/3V) is absorbed by the
-                    # normalisation of F
-                    # Splitting into Tperp and Tpar means, if α = Tpar/Tperp, that
-                    # Tpar = 3T/(1+2α) and Tperp = 3T/(2+1/α)
-                    pdf[ivpa,ivperp,iz,ir,is] +=
-                        this_prefactor * source_n *
-                        exp( - (vperp_grid[ivperp]^2) / (2.0 * (3.0 * source_T_array[iz,ir]/(2+1/Tperp_over_Tpar)))
-                             - (vpa_grid[ivpa]^2) / (2.0 * (3.0 * source_T_array[iz,ir]/(1+2*Tperp_over_Tpar))) )
-                end
-            end
-        elseif !moments.evolve_p && !moments.evolve_upar && !moments.evolve_density
-            @loop_s_r_z is ir iz begin
-                if vperp.n == 1
-                    source_vth_factor = 1.0 / sqrt(2.0 * source_T_array[iz,ir])
-                else
-                    source_vth_factor = 1.0 / (2.0 * source_T_array[iz,ir])^1.5
-                end
-                this_prefactor = dt * Maxwellian_prefactor * source_vth_factor *
-                                 source_amplitude[iz,ir]
-                @loop_vperp_vpa ivperp ivpa begin
-                    # Factor of 1/sqrt(π) (for 1V) or 1/π^(3/2) (for 2V/3V) is absorbed by the
-                    # normalisation of F
-                    pdf[ivpa,ivperp,iz,ir,is] +=
-                        this_prefactor * source_n *
-                        exp( - (vperp_grid[ivperp]^2) / (2.0 * (3.0 * source_T_array[iz,ir]/(2+1/Tperp_over_Tpar)))
-                             - (vpa_grid[ivpa]^2) / (2.0 * (3.0 * source_T_array[iz,ir]/(1+2*Tperp_over_Tpar))) )
-                end
-            end
-        else
-            error("Unsupported combination evolve_density=$(moments.evolve_density), "
-                  * "evolve_upar=$(moments.evolve_upar), evolve_p=$(moments.evolve_p)")
-        end
-
-        if source_type ∈ ("energy", "temperature_midpoint_control")
-            if moments.evolve_density
-                # Take particles out of pdf so source does not change density
-                @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-                    pdf[ivpa,ivperp,iz,ir,is] -= dt * source_amplitude[iz,ir] *
-                        fvec.pdf[ivpa,ivperp,iz,ir,is]
-                end
-            else
-                # Take particles out of pdf so source does not change density
-                @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-                    pdf[ivpa,ivperp,iz,ir,is] -= dt * source_amplitude[iz,ir] *
-                        fvec.pdf[ivpa,ivperp,iz,ir,is] / fvec.density[iz,ir,is]
-                end
-            end
+        @begin_r_anyzv_region()
+        vth = moments.ion.vth
+        density = fvec.density
+        upar = fvec.upar
+        pdf_in = fvec.pdf
+        @loop_s_r is ir begin
+            @views external_Maxwellian_source_no_sr!(
+                       pdf[:,:,:,ir,is], pdf_in[:,:,:,ir,is], density[:,ir,is],
+                       upar[:,ir,is], vth[:,ir,is], vperp_grid, vpa_grid,
+                       source_amplitude[:,ir], source_n, source_T_array[:,ir],
+                       Tperp_over_Tpar, source_type, dt, evolve_density, evolve_upar,
+                       evolve_p, is_1V)
         end
     elseif source_type == "alphas" || source_type == "alphas-with-losses"
         @begin_s_r_z_region()
@@ -1106,7 +1013,7 @@ Add external source term to the ion kinetic equation.
             error("source_v0=$source_v0 < 1.0e-8")
         end
         dummy_vpavperp = scratch_dummy.dummy_vpavperp
-        if !moments.evolve_p && !moments.evolve_upar && !moments.evolve_density
+        if evolve_p === Val(false) && evolve_upar === Val(false) && evolve_density === Val(false)
             @loop_s_r_z is ir iz begin
                 this_prefactor = dt * Maxwellian_prefactor * source_amplitude[iz,ir]
                 # first assign source to local scratch array
@@ -1119,8 +1026,6 @@ Add external source term to the ion kinetic equation.
                 normfac = get_density(dummy_vpavperp, vpa, vperp)
                 # add the source
                 @loop_vperp_vpa ivperp ivpa begin
-                    # Factor of 1/sqrt(π) (for 1V) or 1/π^(3/2) (for 2V/3V) is absorbed by the
-                    # normalisation of F
                     pdf[ivpa,ivperp,iz,ir,is] +=
                         this_prefactor * dummy_vpavperp[ivpa,ivperp] / normfac
                 end
@@ -1145,16 +1050,14 @@ Add external source term to the ion kinetic equation.
                     # println("sink norm", normfac)
                     # add the source
                     @loop_vperp_vpa ivperp ivpa begin
-                        # Factor of 1/sqrt(π) (for 1V) or 1/π^(3/2) (for 2V/3V) is absorbed by the
-                        # normalisation of F
                         pdf[ivpa,ivperp,iz,ir,is] -=
                             dt * sink_strength * dummy_vpavperp[ivpa,ivperp] * pdf[ivpa,ivperp,iz,ir,is] / normfac
                     end
                 end
             end
         else
-            error("Unsupported combination in source_type=$(source_type) evolve_density=$(moments.evolve_density), "
-                  * "evolve_upar=$(moments.evolve_upar), evolve_p=$(moments.evolve_p)")
+            error("Unsupported combination in source_type=$(source_type) evolve_density=$(evolve_density), "
+                  * "evolve_upar=$(evolve_upar), evolve_p=$(evolve_p)")
         end
     elseif source_type == "beam" || source_type == "beam-with-losses"
         @begin_s_r_z_region()
@@ -1168,7 +1071,7 @@ Add external source term to the ion kinetic equation.
             error("source_vperp0=$source_vperp0 < 1.0e-8")
         end
         dummy_vpavperp = scratch_dummy.dummy_vpavperp
-        if !moments.evolve_p && !moments.evolve_upar && !moments.evolve_density
+        if evolve_p === Val(false) && evolve_upar === Val(false) && evolve_density === Val(false)
             @loop_s_r_z is ir iz begin
                 this_prefactor = dt * Maxwellian_prefactor * source_amplitude[iz,ir]
                 # first assign source to local scratch array
@@ -1181,8 +1084,6 @@ Add external source term to the ion kinetic equation.
                 normfac = get_density(dummy_vpavperp, vpa, vperp)
                 # add the source
                 @loop_vperp_vpa ivperp ivpa begin
-                    # Factor of 1/sqrt(π) (for 1V) or 1/π^(3/2) (for 2V/3V) is absorbed by the
-                    # normalisation of F
                     pdf[ivpa,ivperp,iz,ir,is] +=
                         this_prefactor * dummy_vpavperp[ivpa,ivperp] / normfac
                 end
@@ -1207,21 +1108,168 @@ Add external source term to the ion kinetic equation.
                     # println("sink norm", normfac)
                     # add the source
                     @loop_vperp_vpa ivperp ivpa begin
-                        # Factor of 1/sqrt(π) (for 1V) or 1/π^(3/2) (for 2V/3V) is absorbed by the
-                        # normalisation of F
                         pdf[ivpa,ivperp,iz,ir,is] -=
                             dt * sink_strength * dummy_vpavperp[ivpa,ivperp] * pdf[ivpa,ivperp,iz,ir,is] / normfac
                     end
                 end
             end
         else
-            error("Unsupported combination in source_type=$(source_type) evolve_density=$(moments.evolve_density), "
-                  * "evolve_upar=$(moments.evolve_upar), evolve_p=$(moments.evolve_p)")
+            error("Unsupported combination in source_type=$(source_type) evolve_density=$(evolve_density), "
+                  * "evolve_upar=$(evolve_upar), evolve_p=$(evolve_p)")
         end
     else
-        error("Unsupported source_type=$(source_type) ")
+        error("Unsupported source_type=$(source_type)")
     end
     return nothing
+end
+
+function total_external_Maxwellian_sources_no_sr!(pdf, fvec, moments, ion_sources, vperp,
+                                                  vpa, dt, is, ir)
+    for (index, s) ∈ enumerate(ion_sources)
+        if s.active
+            external_Maxwellian_source_no_sr!(pdf, fvec, moments, s, index, vperp, vpa,
+                                              dt, is, ir)
+        end
+    end
+    return nothing
+end
+function external_Maxwellian_source_no_sr!(pdf, fvec, moments, ion_source, index, vperp,
+                                           vpa, dt, is, ir)
+    return @views external_Maxwellian_source_no_sr!(
+                      pdf, fvec.pdf, fvec.density, fvec.upar, moments.ion.vth[:,ir,is],
+                      vperp.grid, vpa.grid,
+                      moments.ion.external_source_amplitude[:,ir,index],
+                      ion_source.source_n, ion_source.source_T_array[:,ir],
+                      ion_source.source_Tperp_over_Tpar, ion_source.source_type, dt,
+                      Val(moments.evolve_density), Val(moments.evolve_upar),
+                      Val(moments.evolve_p), Val(vperp.n == 1))
+end
+function external_Maxwellian_source_no_sr!(pdf, pdf_in, density, upar, vth, vperp_grid,
+                                           vpa_grid, source_amplitude, source_n,
+                                           source_T_array, Tperp_over_Tpar, source_type,
+                                           dt, evolve_density::Val, evolve_upar::Val,
+                                           evolve_p::Val, is_1V::Val)
+    if is_1V === Val(true)
+        Maxwellian_prefactor = 1.0 / sqrt(π)
+    else
+        Maxwellian_prefactor = 1.0 / π^1.5
+    end
+    @begin_anyzv_z_region()
+    @loop_z iz begin
+        this_source_T = source_T_array[iz]
+        if is_1V === Val(true)
+            source_vth_factor = 1.0 / sqrt(2.0 * this_source_T)
+            this_vth_factor = vth[iz]
+        else
+            source_vth_factor = 1.0 / (2.0 * this_source_T)^1.5
+            this_vth_factor = vth[iz]^3
+        end
+        this_upar = upar[iz]
+        this_vth = vth[iz]
+        if evolve_p === Val(true) && evolve_upar === Val(true) && evolve_density === Val(true)
+            this_prefactor = dt * this_vth_factor / density[iz] *
+                             Maxwellian_prefactor * source_vth_factor *
+                             source_amplitude[iz]
+        elseif evolve_upar === Val(true) && evolve_density === Val(true)
+            this_prefactor = dt / density[iz] * Maxwellian_prefactor *
+                             source_vth_factor * source_amplitude[iz]
+        elseif evolve_density === Val(true)
+            this_prefactor = dt / density[iz] * Maxwellian_prefactor *
+                             source_vth_factor * source_amplitude[iz]
+        elseif evolve_p === Val(false) && evolve_upar === Val(false) && evolve_density === Val(false)
+            this_prefactor = dt * Maxwellian_prefactor * source_vth_factor *
+                             source_amplitude[iz]
+        else
+            error("Unsupported combination evolve_density=$(evolve_density), "
+                  * "evolve_upar=$(evolve_upar), evolve_p=$(evolve_p)")
+        end
+        @loop_vperp_vpa ivperp ivpa begin
+            if evolve_p === Val(true) && evolve_upar === Val(true) && evolve_density === Val(true)
+                vperp_unnorm = vperp_grid[ivperp] * this_vth
+                vpa_unnorm = vpa_grid[ivpa] * this_vth + this_upar
+            elseif evolve_upar === Val(true) && evolve_density === Val(true)
+                vperp_unnorm = vperp_grid[ivperp]
+                vpa_unnorm = vpa_grid[ivpa] + this_upar
+            else
+                vperp_unnorm = vperp_grid[ivperp]
+                vpa_unnorm = vpa_grid[ivpa]
+            end
+            # Splitting into Tperp and Tpar means, if α = Tpar/Tperp, that
+            # Tpar = 3T/(1+2α) and Tperp = 3T/(2+1/α)
+            pdf[ivpa,ivperp,iz] +=
+                this_prefactor * source_n *
+                exp( - (vperp_unnorm^2) / (2.0 * (3.0 * this_source_T/(2+1/Tperp_over_Tpar)))
+                     - (vpa_unnorm^2) / (2.0 * (3.0 * this_source_T/(1+2*Tperp_over_Tpar))) )
+        end
+    end
+
+    if source_type ∈ ("energy", "temperature_midpoint_control")
+        if evolve_density === Val(true)
+            # Take particles out of pdf so source does not change density
+            @loop_z_vperp_vpa iz ivperp ivpa begin
+                pdf[ivpa,ivperp,iz] -= dt * source_amplitude[iz] * pdf_in[ivpa,ivperp,iz]
+            end
+        else
+            # Take particles out of pdf so source does not change density
+            @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
+                pdf[ivpa,ivperp,iz] -= dt * source_amplitude[iz] *
+                                       pdf_in[ivpa,ivperp,iz] / density[iz]
+            end
+        end
+    end
+
+    return nothing
+end
+
+function get_total_external_ion_source_term_evolve_nup(sub_terms::IonSubTerms)
+    external_sources = sub_terms.external_sources
+    external_source_amplitude = sub_terms.external_source_amplitude
+    ir = sub_terms.ir
+    nvperp = sub_terms.nvperp
+    z = sub_terms.z
+    vth = sub_terms.vth
+    n = sub_terms.n
+    upar = sub_terms.upar
+    wperp = sub_terms.wperp
+    wpa = sub_terms.wpa
+    f = sub_terms.f
+
+    term = NullTerm()
+    if nvperp == 1
+        Maxwellian_prefactor = 1.0 / sqrt(π)
+    else
+        Maxwellian_prefactor = 1.0 / π^1.5
+    end
+    for ion_source ∈ external_sources
+        source_type = ion_source.source_type
+        if source_type in ("Maxwellian","energy","density_midpoint_control","density_profile_control","temperature_midpoint_control")
+            source_T = ConstantTerm(@view ion_source.source_T_array[:,ir]; z=z)
+            source_amplitude = ConstantTerm(@view external_source_amplitude[:,ir]; z=z)
+            source_n = ion_source.source_n
+            if nvperp == 1
+                source_vth_factor = (2.0 * source_T)^(-0.5)
+                this_vth_factor = vth
+            else
+                source_vth_factor = (2.0 * source_T)^(-1.5)
+                this_vth_factor = vth^3
+            end
+            Tperp_over_Tpar = ion_source.source_Tperp_over_Tpar
+
+            term -= this_vth_factor * n^(-1) * Maxwellian_prefactor * source_vth_factor *
+                    source_amplitude * source_n *
+                    exp( - (wperp*vth)^2 * (2.0 * 3.0 * source_T)^(-1) * (2.0 + Tperp_over_Tpar^(-1))
+                         - (wpa*vth + upar)^2 * (2.0 * 3.0 * source_T)^(-1) * (1.0 + 2.0 * Tperp_over_Tpar))
+        else
+            error("source_type=$(source_type) not supported in "
+                  * "get_total_external_ion_source_term_evolve_nup().")
+        end
+
+        if source_type ∈ ("energy", "temperature_midpoint_control")
+            term += source_amplitude * f
+        end
+    end
+
+    return term
 end
 
 """

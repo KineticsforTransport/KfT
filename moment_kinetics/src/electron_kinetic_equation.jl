@@ -2160,7 +2160,7 @@ function (res::kinetic_electron_residual!)(this_residual, new_variables; krylov=
                                           num_diss_params.electron.vpa_dissipation_coefficient > 0.0,
                                           ir)
     end
-    zero_z_boundary_condition_points(f_electron_residual, z, vpa, moments, ir)
+    zero_electron_z_boundary_condition_points(f_electron_residual, z, vpa, moments, ir)
 
     return nothing
 end
@@ -3525,7 +3525,7 @@ end
 
 # In several places it is useful to zero out (in residuals, etc.) the points that would be
 # set by the z boundary condition.
-function zero_z_boundary_condition_points(residual, z, vpa, moments, ir)
+function zero_electron_z_boundary_condition_points(residual, z, vpa, moments, ir)
     if z.bc ∈ ("wall", "constant",) && (z.irank == 0 || z.irank == z.nrank - 1)
         # Boundary conditions on incoming part of distribution function. Note
         # that as density, upar, p do not change in this implicit step, f_electron_newvar,

@@ -112,28 +112,64 @@ function update_speed_r!(advect, fields, evolve_density::Val, evolve_upar::Val,
     return nothing
 end
 
+function update_speed_r_no_sr!(advect, fields, evolve_density::Bool, evolve_upar::Bool,
+                               evolve_p::Bool, vpa, vperp, r, z, geometry, is, ir)
+    return update_speed_r_no_sr!(advect, fields, Val(evolve_density), Val(evolve_upar),
+                                 Val(evolve_p), vpa, vperp, r, z, geometry, is, ir)
+end
+function update_speed_r_no_sr!(advect, fields, evolve_density::Val, evolve_upar::Val,
+                               evolve_p::Val, vpa, vperp, r, z, geometry, is, ir)
+    @debug_consistency_checks z.n == size(advect,3) || throw(BoundsError(advect))
+    @debug_consistency_checks vperp.n == size(advect,2) || throw(BoundsError(advect))
+    @debug_consistency_checks vpa.n == size(advect,1) || throw(BoundsError(advect))
+
+    if r.n > 1
+        @begin_anyzv_z_vperp_region()
+
+        speed_args = get_speed_r_inner_args_no_sr(advect, fields, geometry, z, vpa, vperp,
+                                                  evolve_density, evolve_upar, evolve_p)
+        @loop_z iz begin
+            speed_args_z = get_speed_r_inner_views_z(iz, speed_args_sr...)
+            @loop_vperp ivperp begin
+                @views update_speed_r_inner!(get_speed_r_inner_views_vperp(ivperp, speed_args_z...)...)
+            end
+        end
+    end
+    return nothing
+end
+
 @inline function get_speed_r_inner_args(advect, fields, geometry, z, vpa, vperp,
                                         evolve_density, evolve_upar, evolve_p)
-    return advect, fields.vEr, geometry.rhostar, z.scratch, geometry.bzeta,
-           geometry.jacobian, geometry.Bmag, geometry.curvature_drift_r,
-           geometry.grad_B_drift_r, fields.gEz, vpa.grid, vperp.grid, evolve_density,
-           evolve_upar, evolve_p
+    return advect, fields.vEr, geometry.rhostar, geometry.bzeta, geometry.jacobian,
+           geometry.Bmag, geometry.curvature_drift_r, geometry.grad_B_drift_r, fields.gEz,
+           vpa.grid, vperp.grid, evolve_density, evolve_upar, evolve_p
 end
 
-@inline function get_speed_r_inner_views_sr(is, ir, advect, vEr, rhostar, geofac, bzeta,
-                                            jacobian, Bmag, curvature_drift_r,
-                                            grad_B_drift_r, gEz, vpa, vperp,
-                                            evolve_density, evolve_upar, evolve_p)
-    @views @. geofac = bzeta[:,ir] * jacobian[:,ir] / Bmag[:,ir]
-    return @views advect[:,:,:,ir,is], vEr[:,ir], rhostar, geofac,
-                  curvature_drift_r[:,ir], grad_B_drift_r[:,ir], gEz[:,:,ir,is], vpa,
-                  vperp, evolve_density, evolve_upar, evolve_p
+@inline function get_speed_r_inner_args_no_sr(advect, fields, geometry, z, vpa, vperp,
+                                              evolve_density, evolve_upar, evolve_p, is,
+                                              ir)
+    return @views advect, fields.vEr[:,ir], geometry.rhostar, geometry.bzeta[:,ir],
+                  geometry.jacobian[:,ir], geometry.Bmag[:,ir],
+                  geometry.curvature_drift_r[:,ir], geometry.grad_B_drift_r[:,ir],
+                  fields.gEz[:,:,ir,is], vpa.grid, vperp.grid, evolve_density,
+                  evolve_upar, evolve_p
 end
 
-@inline function get_speed_r_inner_views_z(iz, advect, vEr, rhostar, geofac,
-                                           curvature_drift_r, grad_B_drift_r, gEz, vpa,
-                                           vperp, evolve_density, evolve_upar, evolve_p)
-    return @views advect[:,:,iz], vEr[iz], rhostar, geofac[iz], curvature_drift_r[iz],
+@inline function get_speed_r_inner_views_sr(is, ir, advect, vEr, rhostar, bzeta, jacobian,
+                                            Bmag, curvature_drift_r, grad_B_drift_r, gEz,
+                                            vpa, vperp, evolve_density, evolve_upar,
+                                            evolve_p)
+    return @views advect[:,:,:,ir,is], vEr[:,ir], rhostar, bzeta[:,ir], jacobian[:,ir],
+                  Bmag[:,ir], curvature_drift_r[:,ir], grad_B_drift_r[:,ir],
+                  gEz[:,:,ir,is], vpa, vperp, evolve_density, evolve_upar, evolve_p
+end
+
+@inline function get_speed_r_inner_views_z(iz, advect, vEr, rhostar, bzeta, jacobian,
+                                           Bmag, curvature_drift_r, grad_B_drift_r, gEz,
+                                           vpa, vperp, evolve_density, evolve_upar,
+                                           evolve_p)
+    geofac = bzeta[iz] * jacobian[iz] / Bmag[iz]
+    return @views advect[:,:,iz], vEr[iz], rhostar, geofac, curvature_drift_r[iz],
                   grad_B_drift_r[iz], gEz[:,iz], vpa, vperp, evolve_density, evolve_upar,
                   evolve_p
 end

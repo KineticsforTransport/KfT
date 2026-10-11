@@ -16,6 +16,8 @@ using ..calculus: derivative!, second_derivative!, laplacian_derivative!
 using ..derivatives: derivative_r!, derivative_z!, second_derivative_r!,
                      second_derivative_z!
 using ..input_structs
+using ..jacobian_matrices: NullTerm
+using ..moment_kinetics_structs
 using ..timer_utils
 using ..type_definitions: mk_float, mk_int
 
@@ -345,6 +347,21 @@ vpa_dissipation_coefficient = 0.1
     return nothing
 end
 
+function vpa_dissipation_no_sr!(f_out, f_in, vpa, spectral, dt, diffusion_coefficient)
+
+    if diffusion_coefficient <= 0.0 || vpa.n == 1
+        return nothing
+    end
+
+    @begin_anyzv_z_vperp_region()
+
+    @loop_z_vperp iz ivperp begin
+        @views second_derivative!(vpa.scratch, f_in[:,ivperp,iz], vpa, spectral)
+        @views @. f_out[:,ivperp,iz] += dt * diffusion_coefficient * vpa.scratch
+    end
+    return nothing
+end
+
 """
 Add diffusion in the vperp direction to suppress oscillations
 
@@ -368,6 +385,21 @@ vperp_dissipation_coefficient = 0.1
     @loop_s_r_z_vpa is ir iz ivpa begin
         @views laplacian_derivative!(vperp.scratch, f_in[ivpa,:,iz,ir,is], vperp, spectral)
         @views @. f_out[ivpa,:,iz,ir,is] += dt * diffusion_coefficient * vperp.scratch
+    end
+
+    return nothing
+end
+
+function vperp_dissipation_no_sr!(f_out, f_in, vperp, spectral, dt, diffusion_coefficient)
+    if diffusion_coefficient <= 0.0 || vperp.n == 1
+        return nothing
+    end
+
+    @begin_anyzv_z_vpa_region()
+
+    @loop_z_vpa iz ivpa begin
+        @views laplacian_derivative!(vperp.scratch, f_in[ivpa,:,iz], vperp, spectral)
+        @views @. f_out[ivpa,:,iz] += dt * diffusion_coefficient * vperp.scratch
     end
 
     return nothing
@@ -473,6 +505,34 @@ on internal or external element boundaries
     end
 
     return nothing
+end
+
+function get_ion_z_dissipation_term_evolve_nup(sub_terms::IonSubTerms)
+    z_dissipation_coefficient = sub_terms.z_dissipation_coefficient
+    if z_dissipation_coefficient > 0.0
+        d2f_dz2 = sub_terms.d2f_dz2
+        return -z_dissipation_coefficient * d2f_dz2
+    else
+        return NullTerm()
+    end
+end
+function get_ion_vperp_dissipation_term_evolve_nup(sub_terms::IonSubTerms)
+    vperp_dissipation_coefficient = sub_terms.vperp_dissipation_coefficient
+    if sub_terms.nvperp > 1 && vperp_dissipation_coefficient > 0.0
+        d2f_dvperp2 = sub_terms.d2f_dvperp2
+        return -vperp_dissipation_coefficient * d2f_dvperp2
+    else
+        return NullTerm()
+    end
+end
+function get_ion_vpa_dissipation_term_evolve_nup(sub_terms::IonSubTerms)
+    vpa_dissipation_coefficient = sub_terms.vpa_dissipation_coefficient
+    if vpa_dissipation_coefficient > 0.0
+        d2f_dvpa2 = sub_terms.d2f_dvpa2
+        return -vpa_dissipation_coefficient * d2f_dvpa2
+    else
+        return NullTerm()
+    end
 end
 
 """

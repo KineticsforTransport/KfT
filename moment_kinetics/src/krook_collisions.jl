@@ -107,6 +107,34 @@ function krook_collisions!(pdf_out, fvec_in, moments, composition, collisions, v
     return nothing
 end
 
+function krook_collisions_no_sr!(pdf_out, fvec_in, moments, composition, collisions,
+                                 vperp, vpa, dt, is, ir)
+    return krook_collisions_no_sr!(pdf_out, fvec_in, moments, composition, collisions,
+                                   vperp, vpa, dt, Val(moments.evolve_density),
+                                   Val(moments.evolve_upar), Val(moments.evolve_p),
+                                   Val(vperp.n == 1), is, ir)
+end
+function krook_collisions_no_sr!(pdf_out, fvec_in, moments, composition, collisions,
+                                 vperp, vpa, dt, evolve_density::Val, evolve_upar::Val,
+                                 evolve_p::Val, is_1V::Val, is, ir)
+    @begin_anyzv_z_region()
+
+    @views inner_args = get_krook_collisions_inner_args(fvec_in.density, fvec_in.upar,
+                                                        moments.ion.vth[:,ir,is],
+                                                        fvec_in.pdf, collisions, vperp,
+                                                        vpa, dt, evolve_density,
+                                                        evolve_upar, evolve_p, is_1V)
+    @loop_z iz begin
+        inner_args_z = get_krook_collisions_inner_args_z(iz, inner_args...)
+        @loop_vperp_vpa ivperp ivpa begin
+            pdf_out[ivpa,ivperp,iz,ir,is] += get_krook_collisions_inner(ivperp, ivpa,
+                                                                        inner_args_z...)
+        end
+    end
+
+    return nothing
+end
+
 @inline function get_krook_collisions_inner_args(n, upar, vth, f_in, collisions, vperp,
                                                  vpa, dt, evolve_density,
                                                  evolve_upar::Val{true}, evolve_p, is_1V)
@@ -322,6 +350,35 @@ end
                 - n * vth_prefactor * Maxwellian_prefactor
                 * exp(-((vpa_grid[ivpa] - upar)/Krook_vth)^2
                       - (vperp_grid[ivperp]/Krook_vth)^2))
+end
+
+function get_ion_krook_collisions_term_evolve_nup(sub_terms::IonSubTerms)
+    nvperp = sub_terms.nvperp
+    collisions = sub_terms.collisions
+    f = sub_terms.f
+    n = sub_terms.n
+    vth = sub_terms.vth
+    wpa = sub_terms.wpa
+    wperp = sub_terms.wperp
+
+    if nvperp == 1
+        # For 1V need to use parallel temperature for Maxwellian in Krook
+        # operator, and for consistency with old 1D1V results also calculate
+        # collision frequency using parallel temperature.
+        Krook_vth = sqrt(3.0) * vth
+        adjust_1V = 1.0 / sqrt(3.0)
+        Maxwellian_prefactor = 1.0 / sqrt(π)
+    else
+        Krook_vth = vth
+        adjust_1V = 1.0
+        Maxwellian_prefactor = 1.0 / π^1.5
+    end
+    nu_ii = get_collision_frequency_ii(collisions, n, Krook_vth)
+
+    term = nu_ii * (f - Maxwellian_prefactor * adjust_1V * exp(-(wpa*adjust_1V)^2
+                                                               -(wperp*adjust_1V)^2))
+
+    return term
 end
 
 """

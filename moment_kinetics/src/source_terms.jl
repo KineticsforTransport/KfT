@@ -7,6 +7,7 @@ export source_terms_manufactured!
 
 using ..calculus: derivative!
 using ..looping
+using ..moment_kinetics_structs
 using ..timer_utils
 
 """
@@ -48,6 +49,47 @@ function source_terms!(pdf_out, fvec_in, moments, r_advect, alpha_advect, z_adve
                 pdf_out[ivpa,ivperp,iz,ir,is] += get_source_terms_inner(ivperp, ivpa,
                                                                         inner_args_z...)
             end
+        end
+    end
+
+    return nothing
+end
+
+function source_terms_no_sr!(pdf_out, fvec_in, moments, r_advect, alpha_advect, z_advect,
+                             vpa, vperp, z, r, dt, composition, collisions,
+                             ion_source_settings, is, ir)
+    evolve_density = moments.evolve_density
+    evolve_upar = moments.evolve_upar
+    evolve_p = moments.evolve_p
+    if !evolve_density && !evolve_upar && !evolve_p
+        return nothing
+    end
+    return source_terms_no_sr!(pdf_out, fvec_in, moments, r_advect, alpha_advect,
+                               z_advect, vpa, vperp, z, r, dt, composition, collisions,
+                               ion_source_settings, Val(evolve_p), is, ir)
+end
+function source_terms_no_sr!(pdf_out, fvec_in, moments, r_advect, alpha_advect, z_advect,
+                             vpa, vperp, z, r, dt, composition, collisions,
+                             ion_source_settings, evolve_p::Val, is, ir)
+
+    @begin_anyzv_z_vperp_vpa_region()
+
+    pdf_in = fvec_in.pdf
+    @views inner_args =
+        get_source_terms_inner_args(vperp, moments.ion.vth[:,ir,is],
+                                    moments.ion.dvth_dt[:,ir,is],
+                                    moments.ion.dvth_dr[:,ir,is],
+                                    moments.ion.dvth_dz[:,ir,is], fvec_in.density,
+                                    moments.ion.ddens_dt[:,ir,is],
+                                    moments.ion.ddens_dr[:,ir,is],
+                                    moments.ion.ddens_dz[:,ir,is], r_advect[:,:,:,ir,is],
+                                    alpha_advect[:,:,:,ir,is], z_advect[:,:,:,ir,is],
+                                    pdf_in, dt, evolve_p)
+    @loop_z iz begin
+        inner_args_z = get_source_terms_inner_args_z(iz, inner_args...)
+        @loop_vperp_vpa ivperp ivpa begin
+            pdf_out[ivpa,ivperp,iz] += get_source_terms_inner(ivperp, ivpa,
+                                                              inner_args_z...)
         end
     end
 
@@ -113,11 +155,46 @@ end
 @inline function get_source_terms_inner(ivperp, ivpa, ddt_term, rdot_coefficient,
                                         zdot_coefficient, r_advect, alpha_advect,
                                         z_advect, pdf_in, dt)
-    return dt * (ddt_term
+    return dt * (
+                 ddt_term
                  + rdot_coefficient * r_advect[ivpa,ivperp]
                  + zdot_coefficient * (alpha_advect[ivpa,ivperp] + z_advect[ivpa,ivperp])
                 ) *
            pdf_in[ivpa,ivperp]
+end
+
+function get_source_terms_evolve_nup(sub_terms::IonSubTerms)
+    nvperp = sub_terms.nvperp
+    vth = sub_terms.vth
+    dvth_dt = sub_terms.dvth_dt
+    dvth_dr = sub_terms.dvth_dr
+    dvth_dz = sub_terms.dvth_dz
+    n = sub_terms.n
+    dn_dt = sub_terms.dn_dt
+    dn_dr = sub_terms.dn_dr
+    dn_dz = sub_terms.dn_dz
+    r_speed = sub_terms.r_speed
+    alpha_speed = sub_terms.alpha_speed
+    z_speed = sub_terms.z_speed
+    f = sub_terms.f
+
+    # velocity dimension coefficient is 1.0 for 1V, and 3.0 for 3V. Only needed for
+    # evolve_p since vth does not come in to gdot (Fdot) for other cases.
+    if nvperp == 1
+        v_dim_coeff = 1.0
+    else
+        v_dim_coeff = 3.0
+    end
+
+    ddt_term = v_dim_coeff * vth^(-1) * dvth_dt - dn_dt * n^(-1)
+    rdot_coefficient = v_dim_coeff * vth^(-1) * dvth_dr - dn_dr * n^(-1)
+    zdot_coefficient = v_dim_coeff * vth^(-1) * dvth_dz - dn_dz * n^(-1)
+    term = -(ddt_term
+             + rdot_coefficient * r_speed
+             + zdot_coefficient * (alpha_speed + z_speed)
+            ) * f
+
+    return term
 end
 
 """

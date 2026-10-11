@@ -18,7 +18,7 @@ export ndim_pdf_ion, ndim_pdf_neutral, ndim_pdf_electron, ndim_field, ndim_momen
        ndim_pdf_neutral_boundary, ndim_field_boundary
 export discretization_info, weak_discretization_info, null_spatial_dimension_info,
        null_velocity_dimension_info, null_vperp_dimension_info
-export ElectronSubTerms
+export IonSubTerms, ElectronSubTerms
 
 # variables to define the number of dimensions in arrays
 const ndim_pdf_ion = 5 #(vpa + vperp + z + r + s)
@@ -722,6 +722,53 @@ end
 
 
 # Structs for Jacobian matrix calculations
+
+# Hopefully temporary: don't use Vector type parameters, due to
+# https://github.com/jonniedie/ConcreteStructs.jl/issues/18.
+@kwdef @concrete struct IonSubTerms
+    f
+    df_dz
+    df_dvperp
+    df_dvpa
+    d2f_dz2
+    d2f_dvperp2
+    d2f_dvpa2
+    n
+    dn_dt
+    dn_dr
+    dn_dz
+    upar
+    dupar_dt
+    dupar_dr
+    dupar_dz
+    vth
+    dvth_dt
+    dvth_dr
+    dvth_dz
+    Ez
+    n_neutral
+    charge_exchange_frequency
+    ionization_frequency
+    wpa2_moment_constraint_rhs
+    third_moment_constraint_rhs
+    wperp
+    wpa
+    bzed
+    dBdz
+    mu
+    r_speed
+    alpha_speed
+    z_speed
+    nvperp::mk_int
+    z_dissipation_coefficient::mk_float
+    vperp_dissipation_coefficient::mk_float
+    vpa_dissipation_coefficient::mk_float
+    collisions
+    external_sources
+    external_source_amplitude
+    z
+    ir::mk_int
+end
 
 # Hopefully temporary: don't use Vector type parameters, due to
 # https://github.com/jonniedie/ConcreteStructs.jl/issues/18.

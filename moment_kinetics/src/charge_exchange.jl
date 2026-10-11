@@ -22,16 +22,16 @@ between ions and neutrals
 
     if moments.evolve_density
         @begin_s_r_z_region()
-        @loop_s is begin
+        @loop_s_r is ir begin
             # apply CX collisions to all ion species
             # for each ion species, obtain affect of charge exchange collisions
             # with the correponding neutral species
-            @views charge_exchange_collisions_single_species!(
-                f_out[:,1,:,:,is], fvec_in.pdf[:,1,:,:,is],
-                fvec_in.pdf_neutral[:,1,1,:,:,is],
-                fvec_in.density_neutral[:,:,is], fvec_in.upar[:,:,is],
-                fvec_in.uz_neutral[:,:,is], moments.ion.vth[:,:,is],
-                moments.neutral.vth[:,:,is], moments, vpa, vz, charge_exchange_frequency,
+            @views charge_exchange_collisions_mk_single_species_r!(
+                f_out[:,1,:,ir,is], fvec_in.pdf[:,1,:,ir,is],
+                fvec_in.pdf_neutral[:,1,1,:,ir,is],
+                fvec_in.density_neutral[:,ir,is], fvec_in.upar[:,ir,is],
+                fvec_in.uz_neutral[:,ir,is], moments.ion.vth[:,ir,is],
+                moments.neutral.vth[:,ir,is], moments, vpa, vz, charge_exchange_frequency,
                 vz_spectral, dt; neutrals=false)
         end
     else
@@ -68,15 +68,15 @@ between ions and neutrals
 
     if moments.evolve_density
         @begin_sn_r_z_region()
-        @loop_sn isn begin
+        @loop_sn_r isn ir begin
             # apply CX collisions to all neutral species
             # for each neutral species, obtain affect of charge exchange collisions
             # with the corresponding ion species
-            @views charge_exchange_collisions_single_species!(
-                f_neutral_out[:,1,1,:,:,isn], fvec_in.pdf_neutral[:,1,1,:,:,isn],
-                fvec_in.pdf[:,1,:,:,isn], fvec_in.density[:,:,isn],
-                fvec_in.uz_neutral[:,:,isn], fvec_in.upar[:,:,isn],
-                moments.neutral.vth[:,:,isn], moments.ion.vth[:,:,isn], moments,
+            @views charge_exchange_collisions_mk_single_species_r!(
+                f_neutral_out[:,1,1,:,ir,isn], fvec_in.pdf_neutral[:,1,1,:,ir,isn],
+                fvec_in.pdf[:,1,:,ir,isn], fvec_in.density[:,ir,isn],
+                fvec_in.uz_neutral[:,ir,isn], fvec_in.upar[:,ir,isn],
+                moments.neutral.vth[:,ir,isn], moments.ion.vth[:,ir,isn], moments,
                 vz, vpa, charge_exchange_frequency, vpa_spectral, dt; neutrals=true)
         end
     else
@@ -104,14 +104,14 @@ end
 update the evolved pdf for a single species to account for charge exchange collisions
 with a single species of the opposite type; e.g., ions with neutrals or neutrals with ions
 """
-function charge_exchange_collisions_single_species!(f_out, pdf_in, pdf_other,
+function charge_exchange_collisions_mk_single_species_r!(f_out, pdf_in, pdf_other,
         density_other, upar, upar_other, vth, vth_other, moments, vpa, vpa_other,
         charge_exchange_frequency, spectral_other, dt; neutrals)
-    @loop_r_z ir iz begin
+    @loop_z iz begin
         if moments.evolve_p
             # will need the ratio of thermal speeds both to interpolate between vpa grids
             # for different species and to account for different normalizations of each species' pdf
-            vth_ratio = vth[iz,ir]/vth_other[iz,ir]
+            vth_ratio = vth[iz]/vth_other[iz]
         else
             vth_ratio = 1.0
         end
@@ -128,7 +128,7 @@ function charge_exchange_collisions_single_species!(f_out, pdf_in, pdf_other,
             # to get f_{s'}(wpahat_s), need to obtain wpahat_s grid locations
             # in terms of the wpahat_{s'} coordinate:
             # (wpahat_{s'})_j = ((wpahat_{s})_j * vth_{s} + upar_{s} - upar_{s'}) / vth_{s'}
-            new_grid = @. vpa.scratch = (vpa.grid * vth[iz,ir] + upar[iz,ir] - upar_other[iz,ir]) / vth_other[iz,ir]
+            new_grid = @. vpa.scratch = (vpa.grid * vth[iz] + upar[iz] - upar_other[iz]) / vth_other[iz]
         elseif !moments.evolve_upar
             # if evolve_p = true and evolve_upar = false, vpa coordinate is
             # vpahat_s = vpa/vth_s;
@@ -144,24 +144,24 @@ function charge_exchange_collisions_single_species!(f_out, pdf_in, pdf_other,
             # to get f_{s'}(wpa_s), need to obtain wpa_s grid locations
             # in terms of the wpa_{s'} coordinate:
             # (wpa_s)_j = (wpa_{s'})_j + upar_{s'} - upar_{s}
-            new_grid = @. vpa.scratch = vpa.grid + upar[iz,ir] - upar_other[iz,ir]
+            new_grid = @. vpa.scratch = vpa.grid + upar[iz] - upar_other[iz]
         else
             # Interpolate even when using 'drift-kinetic' mode, so that vpa and vz
             # coordinates can be different.
             new_grid = vpa.grid
         end
         # interpolate to new_grid and return interpolated values in vpa.scratch2
-        @views interpolate_to_grid_vpa!(vpa.scratch2, new_grid, pdf_other[:,iz,ir], vpa_other, spectral_other)
+        @views interpolate_to_grid_vpa!(vpa.scratch2, new_grid, pdf_other[:,iz], vpa_other, spectral_other)
 
         if neutrals
             @loop_vz ivz begin
-                f_out[ivz,iz,ir] += dt * charge_exchange_frequency * density_other[iz,ir] *
-                (vpa.scratch2[ivz] * vth_ratio - pdf_in[ivz,iz,ir])
+                f_out[ivz,iz] += dt * charge_exchange_frequency * density_other[iz] *
+                (vpa.scratch2[ivz] * vth_ratio - pdf_in[ivz,iz])
             end
         else
             @loop_vpa ivpa begin
-                f_out[ivpa,iz,ir] += dt * charge_exchange_frequency * density_other[iz,ir] *
-                (vpa.scratch2[ivpa] * vth_ratio - pdf_in[ivpa,iz,ir])
+                f_out[ivpa,iz] += dt * charge_exchange_frequency * density_other[iz] *
+                (vpa.scratch2[ivpa] * vth_ratio - pdf_in[ivpa,iz])
             end
         end
     end
@@ -225,6 +225,14 @@ end
                     - fvec_in.pdf_neutral[ivz,ivr,ivzeta,iz,ir,isn]*fvec_in.density[iz,ir,is])
         end
     end
+end
+
+function get_ion_1V_charge_exchange_evolve_nup(sub_terms)
+    f = sub_terms.f
+    n_neutral = sub_terms.n_neutral
+    charge_exchange_frequency = sub_terms.charge_exchange_frequency
+
+    return charge_exchange_frequency * n_neutral * f
 end
 
 end
