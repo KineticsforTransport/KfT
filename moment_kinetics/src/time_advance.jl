@@ -4070,8 +4070,8 @@ implementation), a call needs to be made with `dt` scaled by some coefficient.
 
         if advance.source_terms
             source_terms!(fvec_out.pdf, fvec_in, moments, r_advect, alpha_advect,
-                          z_advect, vpa, vperp, z, r, dt, z_spectral, composition,
-                          collisions, external_source_settings.ion)
+                          z_advect, vpa, vperp, z, r, dt, composition, collisions,
+                          external_source_settings.ion)
             write_debug_IO("source_terms!")
         end
 
@@ -4099,8 +4099,9 @@ implementation), a call needs to be made with `dt` scaled by some coefficient.
         end
 
         if advance.neutral_source_terms
-            source_terms_neutral!(fvec_out.pdf_neutral, fvec_in, moments, vz, z, r, dt, z_spectral,
-                        composition, collisions, external_source_settings.neutral)
+            source_terms_neutral!(fvec_out.pdf_neutral, fvec_in, moments, vz, z, r, dt,
+                                  composition, collisions,
+                                  external_source_settings.neutral)
             write_debug_IO("source_terms_neutral!")
         end
 

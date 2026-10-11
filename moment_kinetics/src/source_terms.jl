@@ -15,7 +15,7 @@ flow and/or pressure, and use them to update the pdf
 """
 @timeit global_timer source_terms!(
                          pdf_out, fvec_in, moments, r_advect, alpha_advect, z_advect, vpa,
-                         vperp, z, r, dt, spectral, composition, collisions,
+                         vperp, z, r, dt, composition, collisions,
                          ion_source_settings) = begin
 
     @begin_s_r_z_vperp_vpa_region()
@@ -74,8 +74,8 @@ calculate the source terms due to redefinition of the pdf to split off density,
 flow and/or pressure, and use them to update the pdf
 """
 @timeit global_timer source_terms_neutral!(
-                         pdf_out, fvec_in, moments, vz, z, r, dt, spectral, composition,
-                         collisions, neutral_source_settings) = begin
+                         pdf_out, fvec_in, moments, vz, z, r, dt, composition, collisions,
+                         neutral_source_settings) = begin
 
     @begin_sn_r_z_vzeta_vr_vz_region()
 
