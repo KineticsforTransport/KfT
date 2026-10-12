@@ -1454,7 +1454,10 @@ function setup_advance_flags(moments, composition, t_params, collisions,
     advance_maxwell_diffusion_ii = false
     advance_maxwell_diffusion_nn = false
     advance_external_source = false
-    advance_ion_numerical_dissipation = false
+    advance_ion_numerical_dissipation_vpa = false
+    advance_ion_numerical_dissipation_vperp = false
+    advance_ion_numerical_dissipation_z = false
+    advance_ion_numerical_dissipation_r = false
     advance_neutral_numerical_dissipation = false
     advance_sources = false
     advance_continuity = false
@@ -1546,7 +1549,10 @@ function setup_advance_flags(moments, composition, t_params, collisions,
         end
         advance_external_source = any(x -> x.active, external_source_settings.ion) && !t_params.implicit_ion_advance
         advance_neutral_external_source = any(x -> x.active, external_source_settings.neutral)
-        advance_ion_numerical_dissipation = !(t_params.implicit_ion_advance || t_params.implicit_vpa_advection)
+        advance_ion_numerical_dissipation_vpa = !(t_params.implicit_ion_advance || t_params.implicit_vpa_advection)
+        advance_ion_numerical_dissipation_vperp = !t_params.implicit_ion_advance
+        advance_ion_numerical_dissipation_z = !t_params.implicit_ion_advance
+        advance_ion_numerical_dissipation_r = !t_params.implicit_ion_advance
         advance_neutral_numerical_dissipation = true
         # if evolving the density, must advance the continuity equation,
         # in addition to including sources arising from the use of a modified distribution
@@ -1634,8 +1640,11 @@ function setup_advance_flags(moments, composition, t_params, collisions,
                         advance_neutral_ionization, advance_ion_ionization_1V,
                         advance_neutral_ionization_1V, advance_krook_collisions_ii,
                         advance_maxwell_diffusion_ii, advance_maxwell_diffusion_nn,
-                        fp_collisions,
-                        advance_external_source, advance_ion_numerical_dissipation,
+                        fp_collisions, advance_external_source,
+                        advance_ion_numerical_dissipation_vpa,
+                        advance_ion_numerical_dissipation_vperp,
+                        advance_ion_numerical_dissipation_z,
+                        advance_ion_numerical_dissipation_r,
                         advance_neutral_numerical_dissipation, advance_sources,
                         advance_continuity, advance_force_balance, advance_energy,
                         advance_electron_pdf, advance_electron_energy,
@@ -1673,7 +1682,10 @@ function setup_implicit_advance_flags(moments, composition, t_params, collisions
     advance_maxwell_diffusion_ii = false
     advance_maxwell_diffusion_nn = false
     advance_external_source = false
-    advance_ion_numerical_dissipation = false
+    advance_ion_numerical_dissipation_vpa = false
+    advance_ion_numerical_dissipation_vperp = false
+    advance_ion_numerical_dissipation_z = false
+    advance_ion_numerical_dissipation_r = false
     advance_neutral_numerical_dissipation = false
     advance_sources = false
     advance_continuity = false
@@ -1728,12 +1740,18 @@ function setup_implicit_advance_flags(moments, composition, t_params, collisions
         end
         advance_krook_collisions_ii = collisions.krook.nuii0 > 0.0
         advance_external_source = any(x -> x.active, external_source_settings.ion)
-        advance_ion_numerical_dissipation = true
+        advance_ion_numerical_dissipation_vpa = true
+        advance_ion_numerical_dissipation_vperp = true
+        advance_ion_numerical_dissipation_z = true
+        advance_ion_numerical_dissipation_r = true
         advance_sources = moments.evolve_density || moments.evolve_upar || moments.evolve_p
         fp_collisions = collisions.fkpl.nuii > 0.0 && vperp.n > 1
     elseif t_params.implicit_vpa_advection
         advance_vpa_advection = true
-        advance_ion_numerical_dissipation = true
+        advance_ion_numerical_dissipation_vpa = true
+        advance_ion_numerical_dissipation_vperp = false
+        advance_ion_numerical_dissipation_z = false
+        advance_ion_numerical_dissipation_r = false
     elseif t_params.use_implicit_ion_fp_collisions
         fp_collisions = collisions.fkpl.nuii > 0.0 && vperp.n > 1
     end
@@ -1778,8 +1796,11 @@ function setup_implicit_advance_flags(moments, composition, t_params, collisions
                         advance_neutral_ionization, advance_ion_ionization_1V,
                         advance_neutral_ionization_1V, advance_krook_collisions_ii,
                         advance_maxwell_diffusion_ii, advance_maxwell_diffusion_nn,
-                        fp_collisions,
-                        advance_external_source, advance_ion_numerical_dissipation,
+                        fp_collisions, advance_external_source,
+                        advance_ion_numerical_dissipation_vpa,
+                        advance_ion_numerical_dissipation_vperp,
+                        advance_ion_numerical_dissipation_z,
+                        advance_ion_numerical_dissipation_r,
                         advance_neutral_numerical_dissipation, advance_sources,
                         advance_continuity, advance_force_balance, advance_energy,
                         advance_electron_pdf, advance_electron_energy,
@@ -4198,17 +4219,23 @@ implementation), a call needs to be made with `dt` scaled by some coefficient.
         end
 
         # add numerical dissipation
-        if advance.ion_numerical_dissipation
+        if advance.ion_numerical_dissipation_vpa
             vpa_dissipation!(fvec_out.pdf, fvec_in.pdf, vpa, vpa_spectral, dt,
                             num_diss_params.ion.vpa_dissipation_coefficient)
             write_debug_IO("vpa_dissipation!")
+        end
+        if advance.ion_numerical_dissipation_vperp
             vperp_dissipation!(fvec_out.pdf, fvec_in.pdf, vperp, vperp_spectral, dt,
                             num_diss_params.ion.vperp_dissipation_coefficient)
             write_debug_IO("vperp_dissipation!")
+        end
+        if advance.ion_numerical_dissipation_z
             z_dissipation!(fvec_out.pdf, fvec_in.pdf, z, z_spectral, dt,
                         num_diss_params.ion.z_dissipation_coefficient, 
                         num_diss_params.ion.z_dissipation_degree, scratch_dummy)
             write_debug_IO("z_dissipation!")
+        end
+        if advance.ion_numerical_dissipation_r
             r_dissipation!(fvec_out.pdf, fvec_in.pdf, r, r_spectral, dt,
                         num_diss_params.ion.r_dissipation_coefficient, scratch_dummy)
             write_debug_IO("r_dissipation!")

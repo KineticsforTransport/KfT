@@ -162,7 +162,10 @@ struct advance_info
     mxwl_diff_collisions_nn::Bool
     fp_collisions::Bool
     external_source::Bool
-    ion_numerical_dissipation::Bool
+    ion_numerical_dissipation_vpa::Bool
+    ion_numerical_dissipation_vperp::Bool
+    ion_numerical_dissipation_z::Bool
+    ion_numerical_dissipation_r::Bool
     neutral_numerical_dissipation::Bool
     source_terms::Bool
     continuity::Bool
