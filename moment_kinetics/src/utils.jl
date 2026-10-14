@@ -445,6 +445,13 @@ function get_minimum_CFL_z(speed::AbstractArray{T,N}, z) where {T,N}
                 min_CFL = min(min_CFL, abs(this_dz / speed[ivpa,ivperp,iz,ir,is]))
             end
         end
+    elseif N == 3
+        @loop_s_z is iz begin
+            this_dz = dz[iz]
+            @loop_r ir begin
+                min_CFL = min(min_CFL, abs(this_dz / speed[iz,ir,is]))
+            end
+        end
     else
         error("Unsupported value N=$N.")
     end

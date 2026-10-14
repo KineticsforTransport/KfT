@@ -605,6 +605,11 @@ dimension
 abstract type weak_discretization_info <: discretization_info end
 
 """
+Type representing a species dimension that does not support derivatives, etc.
+"""
+struct null_species_dimension_info <: discretization_info end
+
+"""
 Type representing a spatial dimension with only one grid point
 """
 struct null_spatial_dimension_info <: discretization_info end

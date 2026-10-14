@@ -778,19 +778,6 @@ function test_ion_parallel_dynamics_kinetic_equation(test_input::AbstractDict)
         buffer_3 = @view scratch_dummy.buffer_rs_3[ir,is]
         buffer_4 = @view scratch_dummy.buffer_rs_4[ir,is]
 
-        # Reconstruct w_∥^3 moment of g_e from already-calculated qpar
-        # Note must use buffer with r-dimension, because use of z-only buffers is not
-        # allowed within anyzv regions (as this would cause errors when the r-dimension is
-        # split).
-        third_moment = @view scratch_dummy.buffer_zrs_1[:,1,1]
-        dthird_moment_dz = @view scratch_dummy.buffer_zrs_2[:,1,1]
-        @begin_anyzv_z_region()
-        @loop_z iz begin
-            third_moment[iz] = qpar[iz] / p[iz] / vth[iz]
-        end
-        derivative_z_anyzv!(dthird_moment_dz, third_moment, buffer_1, buffer_2, buffer_3,
-                            buffer_4, z_spectral, z)
-
         @begin_anyzv_region()
         @anyzv_serial_region begin
             # Make sure initial condition has some z-variation. As f is 'moment kinetic' this
@@ -843,75 +830,12 @@ function test_ion_parallel_dynamics_kinetic_equation(test_input::AbstractDict)
         p_size = length(p)
         total_size = pdf_size + p_size
 
-        dpdf_dz = @view scratch_dummy.buffer_vpavperpzr_1[:,:,:,ir]
-        update_speed_z_no_sr!(z_speed, upar, vth, moments.evolve_upar, moments.evolve_p,
-                              vpa, vperp, z, geometry)
-        #calculate the upwind derivative
-        @begin_anyzv_vperp_vpa_region()
-        @views derivative_z_pdf_vpavperpz!(dpdf_dz, f, z_speed,
-                                           scratch_dummy.buffer_vpavperpr_1[:,:,ir],
-                                           scratch_dummy.buffer_vpavperpr_2[:,:,ir],
-                                           scratch_dummy.buffer_vpavperpr_3[:,:,ir],
-                                           scratch_dummy.buffer_vpavperpr_4[:,:,ir],
-                                           scratch_dummy.buffer_vpavperpr_5[:,:,ir],
-                                           scratch_dummy.buffer_vpavperpr_6[:,:,ir],
-                                           z_spectral, z)
-
-        dpdf_dvpa = @view scratch_dummy.buffer_vpavperpzr_2[:,:,:,ir]
-        update_speed_vpa_no_sr!(vpa_advect, fields, fvec, moments, r_advect, alpha_advect,
-                                z_advect, vpa, vperp, z, r, composition, collisions,
-                                ion_source_settings, 0.0, geometry,
-                                Val(moments.evolve_density), Val(moments.evolve_upar),
-                                Val(moments.evolve_p), is, ir)
-        #calculate the upwind derivative of the ion pdf w.r.t. wpa
-        @begin_anyzv_z_vperp_region()
-        @loop_z_vperp iz ivperp begin
-            @views derivative!(dpdf_dvpa[:,ivperp,iz], f[:,ivperp,iz], vpa,
-                               vpa_speed[:,ivperp,iz], vpa_spectral)
-        end
-
-        dpdf_dvperp = @view scratch_dummy.buffer_vpavperpzr_3[:,:,:,ir]
-        if vperp.n > 1
-            update_speed_vperp_no_sr!(vperp_advect, dens, upar, p, moments,
-                                      composition.me_over_mi, vpa.grid,
-                                      external_source_settings.electron)
-            #calculate the upwind derivative of the ion pdf w.r.t. wperp
-            @begin_anyzv_z_vpa_region()
-            @loop_z_vpa iz ivpa begin
-                @views derivative!(dpdf_dvperp[ivpa,:,iz], f[ivpa,:,iz], vperp,
-                                   vperp_advect[ivpa,:,iz,ir], vperp_spectral)
-            end
-        end
-
-        d2pdf_dz2 = @view scratch_dummy.buffer_vpavperpzr_4[:,:,:,ir]
-        @begin_anyzv_vperp_vpa_region()
-        @loop_vperp_vpa ivperp ivpa begin
-            @views second_derivative!(d2pdf_dz2[ivpa,ivperp,:], f[ivpa,ivperp,:], z,
-                                      z_spectral)
-        end
-
-        d2pdf_dvpa2 = @view scratch_dummy.buffer_vpavperpzr_5[:,:,:,ir]
-        @begin_anyzv_z_vperp_region()
-        @loop_z_vperp iz ivperp begin
-            @views second_derivative!(d2pdf_dvpa2[:,ivperp,iz], f[:,ivperp,iz], vpa,
-                                      vpa_spectral)
-        end
-
-        d2pdf_dvperp2 = @view scratch_dummy.buffer_vpavperpzr_6[:,:,:,ir]
-        @begin_anyzv_z_vpa_region()
-        @loop_z_vpa iz ivpa begin
-            @views second_derivative!(d2pdf_dvperp2[ivpa,:,iz], f[ivpa,:,iz], vperp,
-                                      vperp_spectral)
-        end
-
         jacobian = nl_solver_params.ion_parallel_dynamics.preconditioners[1][2]
         fill_ion_kinetic_equation_Jacobian_evolve_nup!(
-                         jacobian, f, dpdf_dz, dpdf_dvperp, dpdf_dvpa, d2pdf_dz2,
-                         d2pdf_dvperp2, d2pdf_dvpa2, dens, upar, third_moment,
-                         dthird_moment_dz, dens_neutral, moments, fields, collisions,
-                         external_source_settings, geometry, num_diss_params, r_advect,
-                         alpha_advect, z_advect, vperp_advect, vpa_advect, z, vperp, vpa,
-                         dt, is, ir)
+            jacobian, f, dens, upar, p, dens_neutral, moments, fields, collisions,
+            external_source_settings, geometry, num_diss_params, scratch_dummy, r_advect,
+            alpha_advect, z_advect, vperp_advect, vpa_advect, z, vperp, vpa, z_spectral,
+            vperp_spectral, vpa_spectral, dt, is, ir)
 
         function residual_func!(residual, this_f)
             @begin_anyzv_z_region()

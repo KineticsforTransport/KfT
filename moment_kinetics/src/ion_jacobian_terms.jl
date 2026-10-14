@@ -1,6 +1,6 @@
 module ion_jacobian_terms
 
-export get_ion_preconditioners, fill_ion_kinetic_equation_Jacobian!
+export fill_ion_kinetic_equation_Jacobian!
 
 using ..array_allocation
 using ..charge_exchange: get_ion_1V_charge_exchange_evolve_nup
@@ -183,19 +183,113 @@ end
 """
 """
 @timeit global_timer fill_ion_kinetic_equation_Jacobian_evolve_nup!(
-                         jacobian::jacobian_info, f, dpdf_dz, dpdf_dvperp, dpdf_dvpa,
-                         d2pdf_dz2, d2pdf_dvperp2, d2pdf_dvpa2, dens, upar, third_moment,
-                         dthird_moment_dz, dens_neutral, moments, fields, collisions,
-                         external_source_settings, geometry, num_diss_params, r_advect,
-                         alpha_advect, z_advect, vperp_advect, vpa_advect, z, vperp, vpa,
-                         dt, is, ir
-                        ) = begin
+                         jacobian::jacobian_info, f, dens, upar, p, dens_neutral, moments,
+                         fields, collisions, external_source_settings, geometry,
+                         num_diss_params, scratch_dummy, r_advect, alpha_advect, z_advect,
+                         vperp_advect, vpa_advect, z, vperp, vpa, z_spectral,
+                         vperp_spectral, vpa_spectral, dt, is, ir) = begin
 
+    vth = @view moments.ion.vth[:,ir,is]
     r_speed = @view r_advect[:,:,:,ir,is]
     z_speed = @view z_advect[:,:,:,ir,is]
     alpha_speed = @view alpha_advect[:,:,:,ir,is]
     vperp_speed = @view vperp_advect[:,:,:,ir,is]
     vpa_speed = @view vpa_advect[:,:,:,ir,is]
+
+    #calculate the upwind derivative
+    dpdf_dz = @view scratch_dummy.buffer_vpavperpzr_1[:,:,:,ir]
+    update_speed_z_no_sr!(z_speed, upar, vth, moments.evolve_upar, moments.evolve_p, vpa,
+                          vperp, z, geometry)
+    @begin_anyzv_vperp_vpa_region()
+    @views derivative_z_pdf_vpavperpz!(dpdf_dz, f, z_speed,
+                                       scratch_dummy.buffer_vpavperpr_1[:,:,ir],
+                                       scratch_dummy.buffer_vpavperpr_2[:,:,ir],
+                                       scratch_dummy.buffer_vpavperpr_3[:,:,ir],
+                                       scratch_dummy.buffer_vpavperpr_4[:,:,ir],
+                                       scratch_dummy.buffer_vpavperpr_5[:,:,ir],
+                                       scratch_dummy.buffer_vpavperpr_6[:,:,ir],
+                                       z_spectral, z)
+
+    dpdf_dvpa = @view scratch_dummy.buffer_vpavperpzr_2[:,:,:,ir]
+    update_speed_vpa_no_sr!(vpa_advect, fields, fvec, moments, r_advect, alpha_advect,
+                            z_advect, vpa, vperp, z, r, composition, collisions,
+                            ion_source_settings, 0.0, geometry,
+                            Val(moments.evolve_density), Val(moments.evolve_upar),
+                            Val(moments.evolve_p), is, ir)
+    #calculate the upwind derivative of the ion pdf w.r.t. wpa
+    @begin_anyzv_z_vperp_region()
+    @loop_z_vperp iz ivperp begin
+        @views derivative!(dpdf_dvpa[:,ivperp,iz], f[:,ivperp,iz], vpa,
+                           vpa_speed[:,ivperp,iz], vpa_spectral)
+    end
+
+    dpdf_dvperp = @view scratch_dummy.buffer_vpavperpzr_3[:,:,:,ir]
+    if vperp.n > 1
+        update_speed_vperp_no_sr!(vperp_advect, dens, upar, p, moments,
+                                  composition.me_over_mi, vpa.grid,
+                                  external_source_settings.electron)
+        #calculate the upwind derivative of the ion pdf w.r.t. wperp
+        @begin_anyzv_z_vpa_region()
+        @loop_z_vpa iz ivpa begin
+            @views derivative!(dpdf_dvperp[ivpa,:,iz], f[ivpa,:,iz], vperp,
+                               vperp_advect[ivpa,:,iz,ir], vperp_spectral)
+        end
+    end
+
+    d2pdf_dz2 = @view scratch_dummy.buffer_vpavperpzr_4[:,:,:,ir]
+    if num_diss_params.ion.z_dissipation_coefficient > 0.0
+        @begin_anyzv_vperp_vpa_region()
+        @loop_vperp_vpa ivperp ivpa begin
+            @views second_derivative!(d2pdf_dz2[ivpa,ivperp,:], f[ivpa,ivperp,:], z,
+                                      z_spectral)
+        end
+    end
+
+    d2pdf_dvpa2 = @view scratch_dummy.buffer_vpavperpzr_5[:,:,:,ir]
+    if num_diss_params.ion.vpa_dissipation_coefficient > 0.0
+        @begin_anyzv_z_vperp_region()
+        @loop_z_vperp iz ivperp begin
+            @views second_derivative!(d2pdf_dvpa2[:,ivperp,iz], f[:,ivperp,iz], vpa,
+                                      vpa_spectral)
+        end
+    end
+
+    d2pdf_dvperp2 = @view scratch_dummy.buffer_vpavperpzr_6[:,:,:,ir]
+    if num_diss_params.ion.vperp_dissipation_coefficient > 0.0
+        @begin_anyzv_z_vpa_region()
+        @loop_z_vpa iz ivpa begin
+            @views second_derivative!(d2pdf_dvperp2[ivpa,:,iz], f[ivpa,:,iz], vperp,
+                                      vperp_spectral)
+        end
+    end
+
+    # Update the ppar and qpar moments that depend on the shape function, and the moment
+    # time derivatives that will be used in the shape function equation.
+    update_ppar_species_no_sr!(ppar, dens, upar, vth, p, f_in, vpa, vperp, z,
+                               evolve_density, evolve_upar, evolve_p)
+    calculate_ion_qpar_from_pdf_no_r!(qpar, dens, upar, vth, f_in, vpa, vperp, z,
+                                      evolve_density, evolve_upar, evolve_p)
+    calculate_implicit_ion_moment_derivatives!(moments, scratch_dummy, z, vperp,
+                                               z_spectral, is, ir)
+    continuity_equation_no_sr!(fvec_in, fields, moments, composition, geometry, dt,
+                               collisions.reactions.ionization_frequency,
+                               external_source_settings.ion, num_diss_params, is, ir)
+    force_balance_no_sr!(fvec_in, moments, fields, collisions, dt, composition, geometry,
+                         external_source_settings.ion, num_diss_params, z, is, ir)
+    energy_equation_no_sr!(fvec_in, moments, fields, collisions, dt, composition,
+                           geometry, external_source_settings.ion, num_diss_params, is,
+                           ir)
+    update_derived_ion_moment_time_derivatives_no_sr!(fvec_in, moments, is, ir)
+
+    # Reconstruct w_∥^3 moment of g_e from already-calculated qpar
+    third_moment = @view scratch_dummy.buffer_zrs_1[:,ir,is]
+    dthird_moment_dz = @view scratch_dummy.buffer_zrs_2[:,ir,is]
+    @begin_anyzv_z_region()
+    @loop_z iz begin
+        third_moment[iz] = qpar[iz] / p[iz] / vth[iz]
+    end
+    derivative_z_anyzv!(dthird_moment_dz, third_moment, buffer_1, buffer_2, buffer_3,
+                        buffer_4, z_spectral, z)
 
     sub_terms = @views get_ion_sub_terms_evolve_nup(
                            f, dpdf_dz, dpdf_dvperp, dpdf_dvpa, d2pdf_dz2, d2pdf_dvperp2,
@@ -261,65 +355,6 @@ function get_all_ion_terms_evolve_nup(sub_terms::IonSubTerms)
     third_moment_terms = -sub_terms.third_moment_constraint_rhs
 
     return pdf_terms, wpa2_moment_terms, third_moment_terms
-end
-
-function get_ion_preconditioners(preconditioner_type, coords, outer_coords, spectral;
-                                 boundary_skip_funcs::BSF=nothing) where {BSF}
-    coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ coords)
-    total_size_coords = prod(coord_sizes)
-    outer_coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ outer_coords)
-
-    if preconditioner_type === Val(:ion_parallel_lu)
-        # One constraint for third_moment that feeds pdf into qpar.
-        pdf_plus_constraints_size = total_size_coords + coords.z.n
-        if coords.vperp.n == 1
-            preconditioners = [(lu(sparse(1.0*I, 1, 1)),
-                                create_jacobian_info(coords, spectral;
-                                                     comm=comm_anyzv_subblock[],
-                                                     synchronize=_anyzv_subblock_synchronize,
-                                                     boundary_skip_funcs=boundary_skip_funcs.full,
-                                                     ion_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
-                                                     third_moment=((:anyzv,:z), (:z,), true)),
-                                allocate_shared_float(:newton_size=>pdf_plus_constraints_size;
-                                                      comm=comm_anyzv_subblock[]),
-                                allocate_shared_float(:newton_size=>pdf_plus_constraints_size;
-                                                      comm=comm_anyzv_subblock[]),
-                               )
-                               for _ ∈ CartesianIndices(reverse(outer_coord_sizes))]
-        else
-            # 2V run, need another constraint for wpa^2 moment that feeds pdf into ppar.
-            pdf_plus_constraints_size += coords.z.n
-
-            preconditioners = [(lu(sparse(1.0*I, 1, 1)),
-                                create_jacobian_info(coords, spectral;
-                                                     comm=comm_anyzv_subblock[],
-                                                     synchronize=_anyzv_subblock_synchronize,
-                                                     boundary_skip_funcs=boundary_skip_funcs.full,
-                                                     ion_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
-                                                     wpa2_moment=((:anyzv,:z), (:z,), true),
-                                                     third_moment=((:anyzv,:z), (:z,), true)),
-                                allocate_shared_float(:newton_size=>pdf_plus_constraints_size;
-                                                      comm=comm_anyzv_subblock[]),
-                                allocate_shared_float(:newton_size=>pdf_plus_constraints_size;
-                                                      comm=comm_anyzv_subblock[]),
-                               )
-                               for _ ∈ CartesianIndices(reverse(outer_coord_sizes))]
-        end
-        # Initialise input buffers to zero so that constraint equations have zero on the
-        # RHS.
-        @begin_serial_region()
-        @serial_region begin
-            for p ∈ preconditioners
-                p[3] .= 0.0
-            end
-        end
-    elseif preconditioner_type === Val(:none)
-        preconditioners = nothing
-    else
-        error("Unrecognised preconditioner_type=$preconditioner_type")
-    end
-
-    return preconditioners
 end
 
 end # ion_jacobian_terms

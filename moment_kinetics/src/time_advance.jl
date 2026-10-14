@@ -74,7 +74,7 @@ using ..electron_kinetic_equation: update_electron_pdf!, implicit_electron_advan
                                    get_electron_preconditioners
 using ..electron_vpa_advection: update_electron_speed_vpa!
 using ..electron_z_advection: update_electron_speed_z!
-using ..ion_jacobian_terms: get_ion_preconditioners
+using ..ion_preconditioners: get_ion_preconditioners
 using ..ionization: ion_ionization_collisions_1V!, neutral_ionization_collisions_1V!,
                     ion_ionization_collisions_3V!, neutral_ionization_collisions_3V!,
                     ionization_collisions_mk_ion_no_sr!
@@ -574,7 +574,7 @@ function setup_time_info(t_input, n_variables, code_time, dt_reload,
         end
 
         kinetic_ion_solver = t_input["kinetic_ion_solver"]
-        ion_precon_types = Dict("parallel_lu" => :ion_parallel_lu,
+        ion_precon_types = Dict("parallel_dynamics_lu" => :ion_parallel_dynamics_lu,
                                 "none"=>:none)
         if t_input["kinetic_ion_preconditioner"] == "default"
             ion_precon_option = "none"
@@ -694,6 +694,8 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
         ion_coords = (s=composition.ion_species_coord, r=r, z=z, vperp=vperp, vpa=vpa)
         ion_outer_coords = ()
         ion_precon_type = Val(:none)
+        spectral = (s=null_species_dimension_info(), r=r_spectral, z=z_spectral,
+                    vperp=vperp_spectral, vpa=vpa_spectral)
         nl_solver_ion_advance_params =
             setup_nonlinear_solve(nl_solver_input, ion_coords, ion_outer_coords;
                                   preconditioner_type=ion_precon_type,
@@ -706,8 +708,8 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
 
     if t_params.implicit_ion_parallel_dynamics
         ion_precon_type = t_params.ion_preconditioner_type
-        ion_coords = (s=composition.ion_species_coord, r=r, z=z, vperp=vperp, vpa=vpa)
-        ion_outer_coords = ()
+        ion_coords = (z=z, vperp=vperp, vpa=vpa)
+        ion_outer_coords = (s=composition.ion_species_coord, r=r)
         spectral = (z=z_spectral, vperp=vperp_spectral, vpa=vpa_spectral)
         nl_solver_ion_parallel_dynamics_params =
             setup_nonlinear_solve(nl_solver_input, ion_coords, ion_outer_coords;
@@ -3199,7 +3201,17 @@ appropriate.
         # ion z-advection
         update_speed_alpha!(alpha_advect, evolve_upar, evolve_p, fields, vpa, vperp, z, r,
                             geometry)
-        if !t_params.implicit_ion_parallel_dynamics
+        if t_params.implicit_ion_parallel_dynamics
+            # z-direction CFL for ions comes from moment equations only.
+            ion_z_CFL = get_minimum_CFL_z(scratch.upar, z)
+            @serial_region begin
+                CFL_limits["CFL_z"] = t_params.CFL_prefactor * ion_z_CFL
+            end
+            ion_alpha_CFL = get_minimum_CFL_z(alpha_advect, z)
+            @serial_region begin
+                CFL_limits["CFL_alpha"] = t_params.CFL_prefactor * ion_alpha_CFL
+            end
+        else
             update_speed_z!(z_advect, moments.ion.upar, moments.ion.vth, evolve_upar,
                             evolve_p, vpa, vperp, z, r, geometry)
             # Add z-speed as alpha speed is also in the z-direction in the 2D simulations
@@ -3207,10 +3219,10 @@ appropriate.
             @loop_s_r_z_vperp is ir iz ivperp begin
                 @views z_advect[:,ivperp,iz,ir,is] .+= alpha_advect[:,ivperp,iz,ir,is]
             end
-        end
-        ion_z_CFL = get_minimum_CFL_z(z_advect, z)
-        @serial_region begin
-            CFL_limits["CFL_z"] = t_params.CFL_prefactor * ion_z_CFL
+            ion_z_CFL = get_minimum_CFL_z(z_advect, z)
+            @serial_region begin
+                CFL_limits["CFL_z"] = t_params.CFL_prefactor * ion_z_CFL
+            end
         end
     end
 
@@ -4716,6 +4728,14 @@ end
                                             gyroavs, nl_solver_params.ion_advance,
                                             advance, fp_arrays, istage)
         success = success && ion_success
+    elseif t_params.kinetic_ion_solver == implicit_ion_parallel_dynamics
+        ion_success = true
+        @begin_r_anyzv_region()
+        @loop_s_r is ir begin
+            this_success = ion_parallel_dynamics_backward_euler!()
+            ion_success = ion_success && this_success
+        end
+        success = success && ion_success
     elseif t_params.kinetic_ion_solver == implicit_ion_vpa_advection
         ion_success = implicit_vpa_advection!(fvec_out.pdf, fvec_in, fields, moments,
                                               r_advect, alpha_advect, z_advect,
@@ -4737,6 +4757,82 @@ end
         success = success && ion_success
     end
     return success
+end
+
+"""
+    ion_parallel_dynamics_backward_euler!(old_scratch, new_scratch, moments, phi,
+        collisions, composition, r, z, vperp, vpa, z_spectral, vperp_spectral,
+        vpa_spectral, z_advect, vpa_advect, scratch_dummy, t_params,
+        external_source_settings, num_diss_params, nl_solver_params, ir;
+        evolve_p=false, ion_dt=nothing) = begin
+
+Take a single backward euler timestep for the ion shape function \$g_i\$.
+"""
+@timeit global_timer ion_parallel_dynamics_backward_euler!(fvec_out, fvec_in, moments,
+            phi::AbstractArray{mk_float,ndim_field}, collisions, composition,
+            r::coordinate, z::coordinate, vperp::coordinate, vpa::coordinate, z_spectral,
+            vperp_spectral, vpa_spectral, z_advect, vpa_advect, scratch_dummy, t_params,
+            external_source_settings, num_diss_params, nl_solver_params, is, ir) = begin
+
+    # create several 0D dummy arrays for use in taking derivatives
+    buffer_1 = @view scratch_dummy.buffer_rs_1[ir,is]
+    buffer_2 = @view scratch_dummy.buffer_rs_2[ir,is]
+    buffer_3 = @view scratch_dummy.buffer_rs_3[ir,is]
+    buffer_4 = @view scratch_dummy.buffer_rs_4[ir,is]
+
+    f_old = @view fvec_in.pdf[:,:,:,ir,is]
+    dens = @view fvec_in.density[:,ir,is]
+    upar = @view fvec_in.upar[:,ir,is]
+    p = @view fvec_in.p[:,ir,is]
+    dens_neutral = @view fvec_in.density_neutral[:,ir,is]
+    f_new = @view fvec_out.pdf[:,:,:,ir,is]
+
+    left_preconditioner, right_preconditioner, recalculate_preconditioner! =
+        get_ion_parallel_dynamics_preconditioner(
+            nl_solver_params, f_new, dens, upar, p, dens_neutral, moments, fields,
+            collisions, z, vperp, vpa, z_spectral, vperp_spectral, vpa_spectral, z_advect,
+            vperp_advect, vpa_advect, scratch_dummy, external_source_settings,
+            num_diss_params, t_params, is, ir)
+
+    # Does preconditioner need to be recalculated?
+    if t_params.dt[] > 1.5 * nl_solver_params.precon_dt[] ||
+            t_params.dt[] < 2.0/3.0 * nl_solver_params.precon_dt[]
+
+        # dt has changed significantly, so update the preconditioner
+        nl_solver_params.solves_since_precon_update[] = nl_solver_params.preconditioner_update_interval
+    end
+    if nl_solver_params.solves_since_precon_update[] ≥ nl_solver_params.preconditioner_update_interval
+        recalculate_preconditioner!()
+    end
+
+    # Do a backward-Euler update of the ion shape function.
+error("WIP here, keep converting to ion stuff...")
+    residual_func! = kinetic_electron_residual!(; f_electron_old, electron_p_old,
+                                                evolve_p, moments, composition,
+                                                collisions, external_source_settings,
+                                                t_params, ion_dt, scratch_dummy, this_phi,
+                                                electron_density, electron_upar,
+                                                ion_density, ion_upar, r, z, vperp, vpa,
+                                                z_spectral, vperp_spectral, vpa_spectral,
+                                                z_advect, vpa_advect, num_diss_params, ir)
+
+    residual = (scratch_dummy.implicit_buffer_z_1, scratch_dummy.implicit_buffer_vpavperpz_1)
+    delta_x = (scratch_dummy.implicit_buffer_z_2,
+               scratch_dummy.implicit_buffer_vpavperpz_2)
+    rhs_delta = (scratch_dummy.implicit_buffer_z_3,
+                 scratch_dummy.implicit_buffer_vpavperpz_3)
+    v = (scratch_dummy.implicit_buffer_z_4,
+         scratch_dummy.implicit_buffer_vpavperpz_4)
+    w = (scratch_dummy.implicit_buffer_z_5,
+         scratch_dummy.implicit_buffer_vpavperpz_5)
+
+    newton_success = newton_solve!((electron_p_new, f_electron_new), residual_func!,
+                                   residual, delta_x, rhs_delta, v, w, nl_solver_params;
+                                   left_preconditioner=left_preconditioner,
+                                   right_preconditioner=right_preconditioner,
+                                   coords=(z=z, vperp=vperp, vpa=vpa))
+
+    return newton_success
 end
 
 """
