@@ -7,6 +7,7 @@ export create_boundary_info
 export enforce_boundary_conditions!
 export enforce_neutral_boundary_conditions!
 export enforce_boundary_conditions_f!
+export enforce_boundary_conditions_f_no_sr!
 export enforce_boundary_conditions_moments!
 export enforce_r_boundary_condition_em!
 
@@ -954,6 +955,35 @@ function enforce_boundary_conditions_f!(fvec_out::scratch_pdf, moments,
                                    r_diffusion, vpa_diffusion, vperp_diffusion)
 end
 
+function enforce_boundary_conditions_f_no_sr!(
+             f, density, upar, p, fields, moments, vpa, vperp, z, vpa_spectral,
+             vperp_spectral, vpa_adv, vperp_adv, z_adv, composition, geometry,
+             scratch_dummy, vpa_diffusion, vperp_diffusion, is, ir)
+
+    if vpa.n > 1
+        @begin_anyzv_z_vperp_region()
+        @loop_z_vperp iz ivperp begin
+            # enforce the vpa BC
+            # use that adv.speed independent of vpa
+            @views enforce_v_boundary_condition_local!(f[:,ivperp,iz], vpa.bc,
+                             vpa_adv[:,ivperp,iz], vpa_diffusion,
+                             vpa, vpa_spectral)
+        end
+    end
+    if vperp.n > 1
+        @begin_anyzv_z_vpa_region()
+        enforce_vperp_boundary_condition!(f, vperp.bc, vperp, vperp_spectral, vperp_adv,
+                                          vperp_diffusion)
+    end
+    if z.n > 1
+        @begin_anyzv_vperp_vpa_region()
+        enforce_z_boundary_condition_no_sr!(f, density, upar, p, fields, moments, z.bc,
+                                            z_adv, z, vperp, vpa, composition, geometry,
+                                            scratch_dummy.dummy_vpavperp, is, ir)
+
+    end
+end
+
 """
 enforce boundary conditions in r and z on the moments.
 """
@@ -1287,6 +1317,74 @@ shared-memory-parallelised loop.
                                                      z.boundary_parameters.epsz)
                 end
             end
+        end
+    end
+end
+
+function enforce_z_boundary_condition_no_sr!(pdf, density, upar, p, fields, moments,
+                                             bc::String, adv, z, vperp, vpa, composition,
+                                             geometry,
+                                             vpavperp_buffer::AbstractArray{mk_float,2},
+                                             is, ir)
+    # define a zero that accounts for finite precision
+    zero = 1.0e-14
+    # 'constant' BC is time-independent f at upwind boundary
+    # and constant f beyond boundary
+    if bc == "constant"
+        density_offset = 1.0
+        vwidth = 1.0
+        if vperp.n == 1
+            constant_prefactor = density_offset / sqrt(π)
+        else
+            constant_prefactor = density_offset / π^1.5
+        end
+        if z.irank == 0
+            prefactor = constant_prefactor
+            if moments.evolve_density
+                prefactor /= density[1]
+            end
+            if moments.evolve_p
+                prefactor *= moments.ion.vth[1]
+            end
+            @loop_vperp_vpa ivperp ivpa begin
+                if adv[ivpa,ivperp,1] > 0.0
+                    pdf[ivpa,ivperp,1] = prefactor * exp(-(adv[ivpa,ivperp,1]^2 + vperp.grid[ivperp]^2)/vwidth^2)
+                end
+            end
+        end
+        if z.irank == z.nrank - 1
+            prefactor = constant_prefactor
+            if moments.evolve_density
+                prefactor /= density[end,ir,is]
+            end
+            if moments.evolve_p
+                prefactor *= moments.ion.vth[end,ir,is]
+            end
+            @loop_vperp_vpa ivperp ivpa begin
+                if adv[ivpa,ivperp,end] > 0.0
+                    pdf[ivpa,ivperp,end] = prefactor * exp(-(adv[ivpa,ivperp,end]^2 + vperp.grid[ivperp]^2)/vwidth^2)
+                end
+            end
+        end
+    # 'periodic' BC enforces periodicity by taking the average of the boundary points
+    elseif z.periodic && z.nelement_global == z.nelement_local
+        @loop_vperp_vpa ivperp ivpa begin
+            pdf[ivpa,ivperp,1] = 0.5*(pdf[ivpa,ivperp,z.n]+pdf[ivpa,ivperp,1])
+            pdf[ivpa,ivperp,z.n] = pdf[ivpa,ivperp,1]
+        end
+    # 'wall' BC enforces wall boundary conditions
+    elseif bc == "wall"
+        # Need integrals over vpa at wall boundaries in z, so cannot parallelize over z
+        # or vpa.
+        # zero incoming BC for ions, as they recombine at the wall
+        if moments.evolve_upar
+            @views enforce_zero_incoming_bc!(
+                pdf, z, vperp, vpa, density, upar, p, fields.vEz[:,ir,is],
+                geometry.bzed[:,ir], moments.evolve_upar, moments.evolve_p, zero,
+                fields.phi[:,ir], vpavperp_buffer)
+        else
+            @views enforce_zero_incoming_bc!(pdf, adv, z, zero, fields.phi[:,ir],
+                                             z.boundary_parameters.epsz)
         end
     end
 end
@@ -2719,14 +2817,14 @@ enforce zero boundary condition at vperp -> infinity
 """
 function enforce_vperp_boundary_condition! end
 
-function enforce_vperp_boundary_condition!(f::AbstractArray{mk_float,5}, bc, vperp, vperp_spectral, vperp_advect, diffusion)
+@inline function enforce_vperp_boundary_condition!(f::AbstractArray{mk_float,5}, bc, vperp, vperp_spectral, vperp_advect, diffusion)
     @loop_s is begin
         @views enforce_vperp_boundary_condition!(f[:,:,:,:,is], bc, vperp, vperp_spectral, vperp_advect[:,:,:,:,is], diffusion)
     end
     return nothing
 end
 
-function enforce_vperp_boundary_condition!(f::AbstractArray{mk_float,4}, bc, vperp, vperp_spectral, vperp_advect, diffusion)
+@inline function enforce_vperp_boundary_condition!(f::AbstractArray{mk_float,4}, bc, vperp, vperp_spectral, vperp_advect, diffusion)
     @loop_r ir begin
         @views enforce_vperp_boundary_condition!(f[:,:,:,ir], bc, vperp, vperp_spectral,
                                                  vperp_advect[:,:,:,ir], diffusion)

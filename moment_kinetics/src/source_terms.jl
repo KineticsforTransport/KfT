@@ -56,7 +56,7 @@ function source_terms!(pdf_out, fvec_in, moments, r_advect, alpha_advect, z_adve
 end
 
 function source_terms_no_sr!(pdf_out, fvec_in, moments, r_advect, alpha_advect, z_advect,
-                             vpa, vperp, z, r, dt, composition, collisions,
+                             vpa, vperp, z, dt, composition, collisions,
                              ion_source_settings, is, ir)
     evolve_density = moments.evolve_density
     evolve_upar = moments.evolve_upar
@@ -65,11 +65,11 @@ function source_terms_no_sr!(pdf_out, fvec_in, moments, r_advect, alpha_advect, 
         return nothing
     end
     return source_terms_no_sr!(pdf_out, fvec_in, moments, r_advect, alpha_advect,
-                               z_advect, vpa, vperp, z, r, dt, composition, collisions,
+                               z_advect, vpa, vperp, z, dt, composition, collisions,
                                ion_source_settings, Val(evolve_p), is, ir)
 end
 function source_terms_no_sr!(pdf_out, fvec_in, moments, r_advect, alpha_advect, z_advect,
-                             vpa, vperp, z, r, dt, composition, collisions,
+                             vpa, vperp, z, dt, composition, collisions,
                              ion_source_settings, evolve_p::Val, is, ir)
 
     @begin_anyzv_z_vperp_vpa_region()

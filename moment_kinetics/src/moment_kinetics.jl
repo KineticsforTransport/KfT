@@ -85,7 +85,7 @@ include("analysis.jl")
 include("electron_kinetic_equation.jl")
 include("ion_jacobian_terms.jl")
 include("initial_conditions.jl")
-include("ion_preconditioners.jl")
+include("implicit_ion_parallel_dynamics.jl")
 include("parameter_scans.jl")
 include("time_advance.jl")
 

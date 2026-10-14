@@ -74,7 +74,8 @@ using ..electron_kinetic_equation: update_electron_pdf!, implicit_electron_advan
                                    get_electron_preconditioners
 using ..electron_vpa_advection: update_electron_speed_vpa!
 using ..electron_z_advection: update_electron_speed_z!
-using ..ion_preconditioners: get_ion_preconditioners
+using ..implicit_ion_parallel_dynamics_functions
+using ..ion_jacobian_terms: get_ion_preconditioners
 using ..ionization: ion_ionization_collisions_1V!, neutral_ionization_collisions_1V!,
                     ion_ionization_collisions_3V!, neutral_ionization_collisions_3V!,
                     ionization_collisions_mk_ion_no_sr!
@@ -4407,223 +4408,13 @@ implementation), a call needs to be made with `dt` scaled by some coefficient.
     return nothing
 end
 
-"""
-ion_parallel_dynamics_euler_time_advance_no_sr! advances the vector
-equation dfvec/dt = G[f] that includes the z and velocity space terms
-in the ion kinetic equation using the forward Euler method:
-fvec_out = fvec_in + dt*fvec_in,
-with fvec_in an input and fvec_out the output.
-
-Note `dt` is passed separately from `t_params` because sometimes (in the IMEX Runge-Kutta
-implementation), a call needs to be made with `dt` scaled by some coefficient.
-"""
-@timeit global_timer ion_parallel_dynamics_euler_time_advance_no_sr!(
-                         fvec_out, fvec_in, pdf, debug_scratch_electron, fields, moments,
-                         advect_objects, vz, vr, vzeta, vpa, vperp, gyrophase, z, r,
-                         t_params, dt, spectral_objects, composition, collisions,
-                         geometry, scratch_dummy, manufactured_source_list,
-                         external_source_settings, num_diss_params, advance, fp_arrays,
-                         istage, is, ir) = begin
-
-    # Convenience wrapper for calls to write debug information within this function.
-    # Not sure the debug-IO functionality could be used in this function if r.n>1, so
-    # comment out for now. If running in 1D (r.n==1), can uncomment
-    # write_debug_data_to_binary() below and debug-IO stuff should work...
-    function write_debug_IO(label)
-        if t_params.debug_io === nothing
-            # Allow compiler to optimise away this function if debug IO is not being used.
-            return nothing
-        end
-        #write_debug_data_to_binary(fvec_out, debug_scratch_electron, moments, fields,
-        #                           composition, t_params, r, z, vperp, vpa, vzeta, vr, vz,
-        #                           label, istage)
-        return nothing
-    end
-    write_debug_IO("begin ion_parallel_dynamics_euler_time_advance_no_sr!")
-
-    # define some abbreviated variables for tidiness
-    n_ion_species = composition.n_ion_species
-    n_neutral_species = composition.n_neutral_species
-    t = t_params.t[]
-
-    vpa_spectral, vperp_spectral, z_spectral = spectral_objects.vpa_spectral, spectral_objects.vperp_spectral, spectral_objects.z_spectral
-    vz_spectral = spectral_objects.vz_spectral
-    vpa_advect = @view advect_objects.vpa_advect[:,:,:,ir,is]
-    vperp_advect = @view advect_objects.vperp_advect[:,:,:,ir,is]
-    r_advect = @view advect_objects.r_advect[:,:,:,ir,is]
-    alpha_advect = @view advect_objects.alpha_advect[:,:,:,ir,is]
-    z_advect = @view advect_objects.z_advect[:,:,:,ir,is]
-
-    f_in = @view fvec_in.pdf[:,:,:,ir,is]
-    dens = @view fvec_in.density[:,ir,is]
-    upar = @view fvec_in.upar[:,ir,is]
-    p = @view fvec_in.p[:,ir,is]
-    vth = @view moments.ion.vth[:,ir,is]
-    ppar = @view moments.ion.ppar[:,ir,is]
-    qpar = @view moments.ion.qpar[:,ir,is]
-    evolve_density = moments.evolve_density
-    evolve_upar = moments.evolve_upar
-    evolve_p = moments.evolve_p
-
-    # Update the ppar and qpar moments that depend on the shape function, and the moment
-    # time derivatives that will be used in the shape function equation.
-    update_ppar_species_no_sr!(ppar, dens, upar, vth, p, f_in, vpa, vperp, z,
-                               evolve_density, evolve_upar, evolve_p)
-    calculate_ion_qpar_from_pdf_no_r!(qpar, dens, upar, vth, f_in, vpa, vperp, z,
-                                      evolve_density, evolve_upar, evolve_p)
-    calculate_implicit_ion_moment_derivatives!(moments, scratch_dummy, z, vperp,
-                                               z_spectral, is, ir)
-    continuity_equation_no_sr!(fvec_in, fields, moments, composition, geometry, dt,
-                               collisions.reactions.ionization_frequency,
-                               external_source_settings.ion, num_diss_params, is, ir)
-    force_balance_no_sr!(fvec_in, moments, fields, collisions, dt, composition, geometry,
-                         external_source_settings.ion, num_diss_params, z, is, ir)
-    energy_equation_no_sr!(fvec_in, moments, fields, collisions, dt, composition,
-                           geometry, external_source_settings.ion, num_diss_params, is,
-                           ir)
-    update_derived_ion_moment_time_derivatives_no_sr!(fvec_in, moments, is, ir)
-
-    # z_advection! advances 1D advection equation in z
-    # apply z-advection operation to ion species
-    if advance.z_advection
-        z_advection_no_sr!(fvec_out.pdf, fvec_in, moments, fields, z_advect, z, vpa,
-                           vperp, dt, z_spectral, composition, geometry, scratch_dummy,
-                           is, ir)
-        write_debug_IO("ion_parallel_dynamics z_advection_no_sr!")
-    end
-
-    if advance.vpa_advection || advance.vperp_advection
-        # Update alpha and r advection speeds, that are needed for vpa_advection.
-        update_speed_alpha_no_sr!(alpha_advect, evolve_upar, evolve_p, fields, vpa, vperp,
-                                  z, r, geometry, is, ir)
-        update_speed_r_no_sr!(r_advect, fields, evolve_density, evolve_upar, evolve_p,
-                              vpa, vperp, r, z, geometry, is, ir)
-    end
-
-    # vpa_advection! advances the 1D advection equation in vpa. Note this must be called
-    # after z_advection!() so that the z-advection speed has been updated, and after
-    # updating alpha and r advection speeds.
-    if advance.vpa_advection
-        vpa_advection_no_sr!(fvec_out.pdf, fvec_in, fields, moments, vpa_advect, r_advect,
-                             alpha_advect, z_advect, vpa, vperp, z, r, dt, t,
-                             vpa_spectral, composition, collisions,
-                             external_source_settings.ion, geometry, is, ir)
-        write_debug_IO("ion_parallel_dynamics vpa_advection_no_sr!")
-    end
-
-    # vperp_advection requires information about z, alpha, and r advection
-    # so call vperp_advection! only after z advection and alpha, r speed routines
-    if advance.vperp_advection
-        vperp_advection_no_sr!(fvec_out.pdf, fvec_in, vperp_advect, r, z, vperp, vpa, dt,
-                               vperp_spectral, composition, z_advect, alpha_advect,
-                               r_advect, geometry, moments, fields, is, ir)
-        write_debug_IO("ion_parallel_dynamics vperp_advection_no_sr!")
-    end
-
-    if advance.source_terms
-        source_terms_no_sr!(fvec_out.pdf, fvec_in, moments, r_advect, alpha_advect,
-                            z_advect, vpa, vperp, z, r, dt, composition, collisions,
-                            external_source_settings.ion, is, ir)
-        write_debug_IO("ion_parallel_dynamics source_terms_no_sr!")
-    end
-
-    if advance.ion_cx_collisions || advance.ion_ionization_collisions
-        error("2V/3V ion/neutral collsions not currently supported in "
-              * "ion_parallel_dynamics_euler_time_advance_no_sr!()")
-        # gyroaverage neutral dfn and place it in the ion.buffer array for use in the collisions step
-        vzvrvzeta_to_vpavperp_no_sr!(pdf.ion.buffer, fvec_in.pdf_neutral, vz, vr, vzeta,
-                                     vpa, vperp, gyrophase, z, geometry, composition, is,
-                                     ir)
-        write_debug_IO("ion_parallel_dynamics vzvrvzeta_to_vpavperp_no_sr!")
-    end
-
-    # account for charge exchange collisions between ions and neutrals
-    if advance.ion_cx_collisions_1V
-        if !evolve_density
-            error("charge_exchange_collisions_mk_single_species_r!() is not the right "
-                  * "method for 'full-f' mode with evolve_density=false. Don't think we "
-                  * "need full-f support here, so unsupported at least for now.")
-        end
-        @begin_anyzv_z_region()
-        @views charge_exchange_collisions_mk_single_species_r!(
-                   fvec_out.pdf[:,1,:], fvec_in.pdf[:,1,:], fvec_in.pdf_neutral[:,1,1,:],
-                   fvec_in.density_neutral, upar, fvec_in.uz_neutral, vth,
-                   moments.neutral.vth[:,ir,is], moments, vpa, vz,
-                   collisions.reactions.charge_exchange_frequency, vz_spectral, dt;
-                   neutrals=false)
-        write_debug_IO("ion_parallel_dynamics charge_exchange_collisions_mk_single_species_r!")
-    elseif advance.ion_cx_collisions
-        error("2V/3V ion/neutral collsions not currently supported in "
-              * "ion_parallel_dynamics_euler_time_advance_no_sr!()")
-        ion_charge_exchange_collisions_3V_no_sr!(fvec_out.pdf, pdf.ion.buffer, fvec_in,
-                                                 composition, vz, vr, vzeta, vpa, vperp,
-                                                 z, r,
-                                                 collisions.reactions.charge_exchange_frequency,
-                                                 dt, is, ir)
-        write_debug_IO("ion_parallel_dynamics_ion_charge_exchange_collisions_3V!")
-    end
-    # account for ionization collisions between ions and neutrals
-    if advance.ion_ionization_collisions_1V
-        @begin_anyzv_z_region()
-        @views ionization_collisions_mk_ion_no_sr!(
-                   fvec_out.pdf[:,1,:], fvec_in.pdf[:,1,:], fvec_in.pdf_neutral[:,1,1,:],
-                   fvec_in.density_neutral, upar, fvec_in.uz_neutral,
-                   collisions.reactions.ionization_frequency, moments, vpa, vz,
-                   vz_spectral, dt, is, ir)
-        write_debug_IO("ion_parallel_dynamics ion_ionization_collisions_1V_no_sr!")
-    elseif advance.ion_ionization_collisions
-        error("2V/3V ion/neutral collsions not currently supported in "
-              * "ion_parallel_dynamics_euler_time_advance_no_sr!()")
-        ion_ionization_collisions_3V_no_sr!(fvec_out.pdf, pdf.ion.buffer, fvec_in,
-                                            composition, vz, vr, vzeta, vpa, vperp, z, r,
-                                            collisions, dt, is, ir)
-        write_debug_IO("ion_parallel_dynamics_ion_ionization_collisions_3V!")
-    end
-
-    # Add Krook collision operator for ions
-    if advance.krook_collisions_ii
-        krook_collisions_no_sr!(fvec_out.pdf, fvec_in, moments, composition, collisions,
-                                vperp, vpa, dt, is, ir)
-        write_debug_IO("ion_parallel_dynamics krook_collisions_no_sr!")
-    end
-
-    if advance.external_source
-        total_external_Maxwellian_sources_no_sr!(fvec_out.pdf, fvec_in, moments,
-                                                 external_source_settings.ion, vperp, vpa,
-                                                 dt, is, ir)
-        write_debug_IO("ion_parallel_dynamics_total_external_ion_sources!")
-    end
-
-    # add numerical dissipation
-    if advance.ion_numerical_dissipation_vpa
-        vpa_dissipation_no_sr!(fvec_out.pdf, fvec_in.pdf, vpa, vpa_spectral, dt,
-                               num_diss_params.ion.vpa_dissipation_coefficient)
-        write_debug_IO("ion_parallel_dynamics vpa_dissipation_no_sr!")
-    end
-    if advance.ion_numerical_dissipation_vperp
-        vperp_dissipation_no_sr!(fvec_out.pdf, fvec_in.pdf, vperp, vperp_spectral, dt,
-                                 num_diss_params.ion.vperp_dissipation_coefficient)
-        write_debug_IO("ion_parallel_dynamics vperp_dissipation_no_sr!")
-    end
-    if advance.ion_numerical_dissipation_z
-        error("z_dissipation not currently supported in "
-              * "ion_parallel_dynamics_euler_time_advance_no_sr!()")
-        z_dissipation_no_sr!(fvec_out.pdf, fvec_in.pdf, z, z_spectral, dt,
-                             num_diss_params.ion.z_dissipation_coefficient,
-                             num_diss_params.ion.z_dissipation_degree, scratch_dummy)
-        write_debug_IO("ion_parallel_dynamics z_dissipation_no_sr!")
-    end
-
-    return nothing
-end
-
 @timeit global_timer backward_euler!(
                          fvec_out, fvec_in, scratch_electron, pdf, fields, moments,
                          advect_objects, vz, vr, vzeta, vpa, vperp, gyrophase, z, r, dt,
                          t_params, spectral_objects, composition, collisions, geometry,
                          scratch_dummy, manufactured_source_list,
                          external_source_settings, num_diss_params, gyroavs,
-                         nl_solver_params, advance, fp_arrays, istage) = begin
+                         nl_solver_params, advance_implicit, fp_arrays, istage) = begin
 
     vpa_spectral, vperp_spectral, r_spectral, z_spectral = spectral_objects.vpa_spectral, spectral_objects.vperp_spectral, spectral_objects.r_spectral, spectral_objects.z_spectral
     vz_spectral, vr_spectral, vzeta_spectral = spectral_objects.vz_spectral, spectral_objects.vr_spectral, spectral_objects.vzeta_spectral
@@ -4710,7 +4501,7 @@ end
 
         success = success && (electron_success == "")
 
-    elseif advance.electron_conduction
+    elseif advance_implicit.electron_conduction
         success = implicit_braginskii_conduction!(fvec_out, fvec_in, moments, z, r, dt,
                                                   z_spectral, composition, collisions,
                                                   scratch_dummy,
@@ -4726,13 +4517,53 @@ end
                                             manufactured_source_list,
                                             external_source_settings, num_diss_params,
                                             gyroavs, nl_solver_params.ion_advance,
-                                            advance, fp_arrays, istage)
+                                            advance_implicit, fp_arrays, istage)
         success = success && ion_success
     elseif t_params.kinetic_ion_solver == implicit_ion_parallel_dynamics
         ion_success = true
         @begin_r_anyzv_region()
         @loop_s_r is ir begin
-            this_success = ion_parallel_dynamics_backward_euler!()
+            if composition.n_neutral_species > 0
+                this_fvec_out = @views (pdf=fvec_out.pdf[:,:,:,ir,is],
+                                        density=fvec_out.density[:,ir,is],
+                                        upar=fvec_out.upar[:,ir,is],
+                                        p=fvec_out.p[:,ir,is],
+                                        pdf_neutral=fvec_out.pdf_neutral[:,:,:,:,ir,is],
+                                        density_neutral=fvec_out.density_neutral[:,ir,is],
+                                        uz_neutral=fvec_out.uz_neutral[:,ir,is],
+                                        p_neutral=fvec_out.p_neutral[:,ir,is])
+                this_fvec_in = @views (pdf=fvec_in.pdf[:,:,:,ir,is],
+                                       density=fvec_out.density[:,ir,is],
+                                       upar=fvec_in.upar[:,ir,is], p=fvec_in.p[:,ir,is],
+                                       pdf_neutral=fvec_in.pdf_neutral[:,:,:,:,ir,is],
+                                       density_neutral=fvec_in.density_neutral[:,ir,is],
+                                       uz_neutral=fvec_in.uz_neutral[:,ir,is],
+                                       p_neutral=fvec_in.p_neutral[:,ir,is])
+            else
+                this_fvec_out = @views (pdf=fvec_out.pdf[:,:,:,ir,is],
+                                        density=fvec_out.density[:,ir,is],
+                                        upar=fvec_out.upar[:,ir,is],
+                                        p=fvec_out.p[:,ir,is],
+                                        pdf_neutral=fvec_out.pdf_neutral[:,:,:,1,ir,:],
+                                        density_neutral=fvec_out.density_neutral[1,ir,:],
+                                        uz_neutral=fvec_out.uz_neutral[1,ir,:],
+                                        p_neutral=fvec_out.p_neutral[1,ir,:])
+                this_fvec_in = @views (pdf=fvec_in.pdf[:,:,:,ir,is],
+                                       density=fvec_out.density[:,ir,is],
+                                       upar=fvec_in.upar[:,ir,is], p=fvec_in.p[:,ir,is],
+                                       pdf_neutral=fvec_in.pdf_neutral[:,:,:,1,ir,:],
+                                       density_neutral=fvec_in.density_neutral[1,ir,:],
+                                       uz_neutral=fvec_in.uz_neutral[1,ir,:],
+                                       p_neutral=fvec_in.p_neutral[1,ir,:])
+            end
+            this_success = ion_parallel_dynamics_backward_euler!(
+                               this_fvec_out, this_fvec_in, pdf, moments, fields,
+                               composition, collisions, geometry,
+                               external_source_settings, manufactured_source_list,
+                               fp_arrays, t_params, scratch_dummy, r, z, vperp, vpa,
+                               vzeta, vr, vz, gyrophase, spectral_objects,
+                               advect_objects, num_diss_params, advance_implicit,
+                               nl_solver_params.ion_parallel_dynamics, dt, is, ir)
             ion_success = ion_success && this_success
         end
         success = success && ion_success
@@ -4744,8 +4575,8 @@ end
                                               vpa_spectral, composition, collisions,
                                               external_source_settings.ion, geometry,
                                               nl_solver_params.vpa_advection,
-                                              advance.vpa_diffusion, num_diss_params,
-                                              gyroavs, scratch_dummy)
+                                              advance_implicit.vpa_diffusion,
+                                              num_diss_params, gyroavs, scratch_dummy)
         success = success && ion_success
     elseif t_params.kinetic_ion_solver == implicit_ion_fp_collisions
         # backward Euler advance d F / d t = C[F, F]
@@ -4757,82 +4588,6 @@ end
         success = success && ion_success
     end
     return success
-end
-
-"""
-    ion_parallel_dynamics_backward_euler!(old_scratch, new_scratch, moments, phi,
-        collisions, composition, r, z, vperp, vpa, z_spectral, vperp_spectral,
-        vpa_spectral, z_advect, vpa_advect, scratch_dummy, t_params,
-        external_source_settings, num_diss_params, nl_solver_params, ir;
-        evolve_p=false, ion_dt=nothing) = begin
-
-Take a single backward euler timestep for the ion shape function \$g_i\$.
-"""
-@timeit global_timer ion_parallel_dynamics_backward_euler!(fvec_out, fvec_in, moments,
-            phi::AbstractArray{mk_float,ndim_field}, collisions, composition,
-            r::coordinate, z::coordinate, vperp::coordinate, vpa::coordinate, z_spectral,
-            vperp_spectral, vpa_spectral, z_advect, vpa_advect, scratch_dummy, t_params,
-            external_source_settings, num_diss_params, nl_solver_params, is, ir) = begin
-
-    # create several 0D dummy arrays for use in taking derivatives
-    buffer_1 = @view scratch_dummy.buffer_rs_1[ir,is]
-    buffer_2 = @view scratch_dummy.buffer_rs_2[ir,is]
-    buffer_3 = @view scratch_dummy.buffer_rs_3[ir,is]
-    buffer_4 = @view scratch_dummy.buffer_rs_4[ir,is]
-
-    f_old = @view fvec_in.pdf[:,:,:,ir,is]
-    dens = @view fvec_in.density[:,ir,is]
-    upar = @view fvec_in.upar[:,ir,is]
-    p = @view fvec_in.p[:,ir,is]
-    dens_neutral = @view fvec_in.density_neutral[:,ir,is]
-    f_new = @view fvec_out.pdf[:,:,:,ir,is]
-
-    left_preconditioner, right_preconditioner, recalculate_preconditioner! =
-        get_ion_parallel_dynamics_preconditioner(
-            nl_solver_params, f_new, dens, upar, p, dens_neutral, moments, fields,
-            collisions, z, vperp, vpa, z_spectral, vperp_spectral, vpa_spectral, z_advect,
-            vperp_advect, vpa_advect, scratch_dummy, external_source_settings,
-            num_diss_params, t_params, is, ir)
-
-    # Does preconditioner need to be recalculated?
-    if t_params.dt[] > 1.5 * nl_solver_params.precon_dt[] ||
-            t_params.dt[] < 2.0/3.0 * nl_solver_params.precon_dt[]
-
-        # dt has changed significantly, so update the preconditioner
-        nl_solver_params.solves_since_precon_update[] = nl_solver_params.preconditioner_update_interval
-    end
-    if nl_solver_params.solves_since_precon_update[] ≥ nl_solver_params.preconditioner_update_interval
-        recalculate_preconditioner!()
-    end
-
-    # Do a backward-Euler update of the ion shape function.
-error("WIP here, keep converting to ion stuff...")
-    residual_func! = kinetic_electron_residual!(; f_electron_old, electron_p_old,
-                                                evolve_p, moments, composition,
-                                                collisions, external_source_settings,
-                                                t_params, ion_dt, scratch_dummy, this_phi,
-                                                electron_density, electron_upar,
-                                                ion_density, ion_upar, r, z, vperp, vpa,
-                                                z_spectral, vperp_spectral, vpa_spectral,
-                                                z_advect, vpa_advect, num_diss_params, ir)
-
-    residual = (scratch_dummy.implicit_buffer_z_1, scratch_dummy.implicit_buffer_vpavperpz_1)
-    delta_x = (scratch_dummy.implicit_buffer_z_2,
-               scratch_dummy.implicit_buffer_vpavperpz_2)
-    rhs_delta = (scratch_dummy.implicit_buffer_z_3,
-                 scratch_dummy.implicit_buffer_vpavperpz_3)
-    v = (scratch_dummy.implicit_buffer_z_4,
-         scratch_dummy.implicit_buffer_vpavperpz_4)
-    w = (scratch_dummy.implicit_buffer_z_5,
-         scratch_dummy.implicit_buffer_vpavperpz_5)
-
-    newton_success = newton_solve!((electron_p_new, f_electron_new), residual_func!,
-                                   residual, delta_x, rhs_delta, v, w, nl_solver_params;
-                                   left_preconditioner=left_preconditioner,
-                                   right_preconditioner=right_preconditioner,
-                                   coords=(z=z, vperp=vperp, vpa=vpa))
-
-    return newton_success
 end
 
 """

@@ -62,20 +62,21 @@ function vpa_advection!(f_out, fvec_in, fields, moments, vpa_advect, r_advect,
 end
 
 function vpa_advection_no_sr!(f_out, fvec_in, fields, moments, vpa_advect, r_advect,
-                              alpha_advect, z_advect, vpa, vperp, z, r, dt, t,
-                              vpa_spectral, composition, collisions, ion_source_settings,
-                              geometry, is, ir)
+                              alpha_advect, z_advect, vpa, vperp, z, dt, t, vpa_spectral,
+                              composition, collisions, ion_source_settings, geometry, is,
+                              ir)
     return vpa_advection_no_sr!(f_out, fvec_in, fields, moments, vpa_advect, r_advect,
-                              alpha_advect, z_advect, vpa, vperp, z, r, dt, t,
-                              vpa_spectral, composition, collisions, ion_source_settings,
-                              geometry, Val(moments.evolve_density),
-                              Val(moments.evolve_upar), Val(moments.evolve_p), is, ir)
+                                alpha_advect, z_advect, vpa, vperp, z, dt, t,
+                                vpa_spectral, composition, collisions,
+                                ion_source_settings, geometry,
+                                Val(moments.evolve_density), Val(moments.evolve_upar),
+                                Val(moments.evolve_p), is, ir)
 end
 function vpa_advection_no_sr!(f_out, fvec_in, fields, moments, vpa_advect, r_advect,
-                              alpha_advect, z_advect, vpa, vperp, z, r, dt, t,
-                              vpa_spectral, composition, collisions, ion_source_settings,
-                              geometry, evolve_density::Val, evolve_upar::Val,
-                              evolve_p::Val, is, ir)
+                              alpha_advect, z_advect, vpa, vperp, z, dt, t, vpa_spectral,
+                              composition, collisions, ion_source_settings, geometry,
+                              evolve_density::Val, evolve_upar::Val, evolve_p::Val, is,
+                              ir)
 
     @begin_anyzv_z_vperp_region()
 

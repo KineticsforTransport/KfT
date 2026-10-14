@@ -1,6 +1,6 @@
 module ion_jacobian_terms
 
-export fill_ion_kinetic_equation_Jacobian!
+export fill_ion_kinetic_equation_Jacobian!, get_ion_preconditioners
 
 using ..array_allocation
 using ..charge_exchange: get_ion_1V_charge_exchange_evolve_nup
@@ -26,6 +26,65 @@ using ..z_advection: get_ion_z_advection_term_evolve_nup
 
 using LinearAlgebra
 using SparseArrays
+
+function get_ion_preconditioners(preconditioner_type, coords, outer_coords, spectral;
+                                 boundary_skip_funcs::BSF=nothing) where {BSF}
+    coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ coords)
+    total_size_coords = prod(coord_sizes)
+    outer_coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ outer_coords)
+
+    if preconditioner_type === Val(:ion_parallel_lu)
+        # One constraint for third_moment that feeds pdf into qpar.
+        pdf_plus_constraints_size = total_size_coords + coords.z.n
+        if coords.vperp.n == 1
+            preconditioners = [(lu(sparse(1.0*I, 1, 1)),
+                                create_jacobian_info(coords, spectral;
+                                                     comm=comm_anyzv_subblock[],
+                                                     synchronize=_anyzv_subblock_synchronize,
+                                                     boundary_skip_funcs=boundary_skip_funcs.full,
+                                                     ion_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
+                                                     third_moment=((:anyzv,:z), (:z,), true)),
+                                allocate_shared_float(:newton_size=>pdf_plus_constraints_size;
+                                                      comm=comm_anyzv_subblock[]),
+                                allocate_shared_float(:newton_size=>pdf_plus_constraints_size;
+                                                      comm=comm_anyzv_subblock[]),
+                               )
+                               for _ ∈ CartesianIndices(reverse(outer_coord_sizes))]
+        else
+            # 2V run, need another constraint for wpa^2 moment that feeds pdf into ppar.
+            pdf_plus_constraints_size += coords.z.n
+
+            preconditioners = [(lu(sparse(1.0*I, 1, 1)),
+                                create_jacobian_info(coords, spectral;
+                                                     comm=comm_anyzv_subblock[],
+                                                     synchronize=_anyzv_subblock_synchronize,
+                                                     boundary_skip_funcs=boundary_skip_funcs.full,
+                                                     ion_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
+                                                     wpa2_moment=((:anyzv,:z), (:z,), true),
+                                                     third_moment=((:anyzv,:z), (:z,), true)),
+                                allocate_shared_float(:newton_size=>pdf_plus_constraints_size;
+                                                      comm=comm_anyzv_subblock[]),
+                                allocate_shared_float(:newton_size=>pdf_plus_constraints_size;
+                                                      comm=comm_anyzv_subblock[]),
+                               )
+                               for _ ∈ CartesianIndices(reverse(outer_coord_sizes))]
+        end
+        # Initialise input buffers to zero so that constraint equations have zero on the
+        # RHS.
+        @begin_serial_region()
+        @serial_region begin
+            for p ∈ preconditioners
+                p[3] .= 0.0
+            end
+        end
+    elseif preconditioner_type === Val(:none)
+        preconditioners = nothing
+    else
+        error("Unrecognised preconditioner_type=$preconditioner_type")
+    end
+
+    return preconditioners
+end
 
 """
 """

@@ -75,12 +75,12 @@ function update_speed_alpha!(advect, evolve_upar::Val, evolve_p::Val, fields, vp
 end
 
 function update_speed_alpha_no_sr!(advect, evolve_upar::Bool, evolve_p::Bool, fields, vpa,
-                                   vperp, z, r, geometry, is, ir)
+                                   vperp, z, geometry, is, ir)
     return update_speed_alpha_no_sr!(advect, Val(evolve_upar), Val(evolve_p), fields, vpa,
-                                     vperp, z, r, geometry, is, ir)
+                                     vperp, z, geometry, is, ir)
 end
 function update_speed_alpha_no_sr!(advect, evolve_upar::Val, evolve_p::Val, fields, vpa,
-                                   vperp, z, r, geometry, is, ir)
+                                   vperp, z, geometry, is, ir)
     @debug_consistency_checks z.n == size(advect,3) || throw(BoundsError(advect))
     @debug_consistency_checks vperp.n == size(advect,2) || throw(BoundsError(advect))
     @debug_consistency_checks vpa.n == size(advect,1) || throw(BoundsError(advect))
