@@ -2,12 +2,30 @@ module implicit_ion_parallel_dynamics_functions
 
 export ion_parallel_dynamics_backward_euler!
 
+using ..alpha_advection: update_speed_alpha_no_sr!
 using ..boundary_conditions
+using ..charge_exchange: charge_exchange_collisions_mk_single_species_r!
+using ..continuity: continuity_equation_no_sr!
+using ..energy_equation: energy_equation_no_sr!
+using ..external_sources: total_external_Maxwellian_sources_no_sr!
+using ..force_balance: force_balance_no_sr!
+using ..ionization: ionization_collisions_mk_ion_no_sr!
+using ..krook_collisions: krook_collisions_no_sr!
 using ..looping
 using ..moment_kinetics_structs
 using ..nonlinear_solvers
+using ..numerical_dissipation: vpa_dissipation_no_sr!, vperp_dissipation_no_sr!,
+                               z_dissipation_no_sr!
+using ..r_advection: update_speed_r_no_sr!
+using ..source_terms: source_terms_no_sr!
 using ..timer_utils
 using ..type_definitions
+using ..velocity_moments: update_ppar_species_no_sr!, calculate_ion_qpar_from_pdf_no_r!,
+                          calculate_implicit_ion_moment_derivatives!,
+                          update_derived_ion_moment_time_derivatives_no_sr!
+using ..vpa_advection: vpa_advection_no_sr!
+using ..vperp_advection: vperp_advection_no_sr!
+using ..z_advection: z_advection_no_sr!
 
 using ConcreteStructs
 
@@ -613,7 +631,7 @@ function (res::ion_parallel_dynamics_residual!)(this_residual, f_new; krylov=fal
     this_fvec_out = (pdf=this_residual, density=density, upar=upar, p=p,
                      pdf_neutral=f_neutral, density_neutral=density_neutral,
                      uz_neutral=uz_neutral, p_neutral=p_neutral)
-    this_fvec_in = (pdf=this_f, density=dens, upar=upar, p=p, pdf_neutral=f_neutral,
+    this_fvec_in = (pdf=f_new, density=density, upar=upar, p=p, pdf_neutral=f_neutral,
                     density_neutral=density_neutral, uz_neutral=uz_neutral,
                     p_neutral=p_neutral)
     ion_parallel_dynamics_euler_time_advance_no_sr!(
