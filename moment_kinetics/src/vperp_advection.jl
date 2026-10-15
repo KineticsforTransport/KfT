@@ -62,8 +62,8 @@ function vperp_advection_no_sr!(f_out, fvec_in, vperp_advect, r, z, vperp, vpa, 
                                 r_advect, geometry, moments, fields, evolve_density::Val,
                                 evolve_upar::Val, evolve_p::Val, is, ir)
 
-    update_speed_vperp_no_sr!(vperp_advect, fvec_in, vpa, vperp, z, r, z_advect,
-                              alpha_advect, r_advect, geometry, moments, is, ir)
+    update_speed_vperp_no_sr!(vperp_advect, vpa, vperp, z, r, z_advect, alpha_advect,
+                              r_advect, geometry, moments, is, ir)
 
     f_in = fvec_in.pdf
     @begin_anyzv_z_vpa_region()

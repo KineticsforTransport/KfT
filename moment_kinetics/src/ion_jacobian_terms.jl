@@ -289,7 +289,7 @@ end
 
     dpdf_dvpa = @view scratch_dummy.buffer_vpavperpzr_2[:,:,:,ir]
     update_speed_vpa_no_sr!(vpa_advect, fields, moments, r_advect, alpha_advect, z_advect,
-                            vpa, vperp, z, collisions, 0.0, geometry, Val(evolve_density),
+                            vpa, vperp, z, collisions, geometry, Val(evolve_density),
                             Val(evolve_upar), Val(evolve_p), is, ir)
     #calculate the upwind derivative of the ion pdf w.r.t. wpa
     @begin_anyzv_z_vperp_region()

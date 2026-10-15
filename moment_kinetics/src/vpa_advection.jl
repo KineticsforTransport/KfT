@@ -408,7 +408,7 @@ function update_speed_vpa!(vpa_advect, fields, moments, r_advect, alpha_advect, 
 end
 
 function update_speed_vpa_no_sr!(vpa_advect, fields, moments, r_advect, alpha_advect,
-                                 z_advect, vpa, vperp, z, collisions, t, geometry,
+                                 z_advect, vpa, vperp, z, collisions, geometry,
                                  evolve_density::Val, evolve_upar::Val, evolve_p::Val, is,
                                  ir)
     @debug_consistency_checks z.n == size(vpa_advect,3) || throw(BoundsError(vpa_advect))

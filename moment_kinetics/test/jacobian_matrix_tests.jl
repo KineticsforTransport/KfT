@@ -538,9 +538,8 @@ function test_get_ion_pdf_term(test_input::AbstractDict, label::String,
                                            z_spectral, z)
 
         dpdf_dvpa = @view scratch_dummy.buffer_vpavperpzr_2[:,:,:,ir]
-        update_speed_vpa_no_sr!(vpa_advect, fields, fvec, moments, r_advect, alpha_advect,
-                                z_advect, vpa, vperp, z, r, composition, collisions,
-                                ion_source_settings, 0.0, geometry,
+        update_speed_vpa_no_sr!(vpa_advect, fields, moments, r_advect, alpha_advect,
+                                z_advect, vpa, vperp, z, collisions, geometry,
                                 Val(moments.evolve_density), Val(moments.evolve_upar),
                                 Val(moments.evolve_p), is, ir)
         #calculate the upwind derivative of the ion pdf w.r.t. wpa
@@ -3010,7 +3009,7 @@ function run_ion_tests()
                                      kwargs[:moments], kwargs[:vpa_speed],
                                      kwargs[:r_speed], kwargs[:alpha_speed],
                                      kwargs[:z_speed], kwargs[:vpa], kwargs[:vperp],
-                                     kwargs[:z], kwargs[:r], kwargs[:dt], kwargs[:t],
+                                     kwargs[:z], kwargs[:dt], kwargs[:t],
                                      kwargs[:vpa_spectral], kwargs[:composition],
                                      kwargs[:collisions], kwargs[:ion_source_settings],
                                      kwargs[:geometry], kwargs[:is], kwargs[:ir])
@@ -3047,8 +3046,8 @@ function run_ion_tests()
                 source_terms_no_sr!(kwargs[:residual], kwargs[:fvec], kwargs[:moments],
                                     kwargs[:r_speed], kwargs[:alpha_speed],
                                     kwargs[:z_speed], kwargs[:vpa], kwargs[:vperp],
-                                    kwargs[:z], kwargs[:r], kwargs[:dt],
-                                    kwargs[:composition], kwargs[:collisions],
+                                    kwargs[:z], kwargs[:dt], kwargs[:composition],
+                                    kwargs[:collisions],
                                     kwargs[:external_source_settings].ion, kwargs[:is],
                                     kwargs[:ir])
                 return nothing
