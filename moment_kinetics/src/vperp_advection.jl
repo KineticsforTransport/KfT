@@ -109,18 +109,17 @@ function update_speed_vperp!(vperp_advect, fvec, vpa, vperp, z, r, z_advect, alp
     return nothing
 end
 
-function update_speed_vperp_no_sr!(vperp_advect, fvec, vpa, vperp, z, r, z_advect,
-                                   alpha_advect, r_advect, geometry, moments, is, ir)
-    return update_speed_vperp_no_sr!(vperp_advect, fvec, vpa, vperp, z, r, z_advect,
+function update_speed_vperp_no_sr!(vperp_advect, vpa, vperp, z, r, z_advect, alpha_advect,
+                                   r_advect, geometry, moments, is, ir)
+    return update_speed_vperp_no_sr!(vperp_advect, vpa, vperp, z, r, z_advect,
                                      alpha_advect, r_advect, geometry, moments,
                                      Val(moments.evolve_density),
                                      Val(moments.evolve_upar), Val(moments.evolve_p), is,
                                      ir)
 end
-function update_speed_vperp_no_sr!(vperp_advect, fvec, vpa, vperp, z, r, z_advect,
-                                   alpha_advect, r_advect, geometry, moments,
-                                   evolve_density::Val, evolve_upar::Val, evolve_p::Val,
-                                   is, ir)
+function update_speed_vperp_no_sr!(vperp_advect, vpa, vperp, z, r, z_advect, alpha_advect,
+                                   r_advect, geometry, moments, evolve_density::Val,
+                                   evolve_upar::Val, evolve_p::Val, is, ir)
     @debug_consistency_checks z.n == size(vperp_advect,3) || throw(BoundsError(vperp_advect))
     @debug_consistency_checks vperp.n == size(vperp_advect,2) || throw(BoundsError(vperp_advect))
     @debug_consistency_checks vpa.n == size(vperp_advect,1) || throw(BoundsError(vperp_advect))

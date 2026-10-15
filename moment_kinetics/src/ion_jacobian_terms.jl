@@ -1,11 +1,13 @@
 module ion_jacobian_terms
 
-export fill_ion_kinetic_equation_Jacobian!, get_ion_preconditioners
+export fill_ion_kinetic_equation_Jacobian_evolve_nup!, get_ion_preconditioners
 
 using ..array_allocation
+using ..calculus
 using ..charge_exchange: get_ion_1V_charge_exchange_evolve_nup
 using ..communication
 using ..communication: _anyzv_subblock_synchronize
+using ..derivatives: derivative_z_pdf_vpavperpz!
 using ..energy_equation: get_dvth_dt_expanded_term_evolve_nup
 using ..external_sources: get_total_external_ion_source_term_evolve_nup
 using ..force_balance: get_dupar_dt_expanded_term_evolve_nup
@@ -20,9 +22,11 @@ using ..numerical_dissipation: get_ion_z_dissipation_term_evolve_nup,
 using ..source_terms: get_source_terms_evolve_nup
 using ..timer_utils
 using ..type_definitions
-using ..vpa_advection: get_ion_vpa_advection_term_evolve_nup
-using ..vperp_advection: get_ion_vperp_advection_term_evolve_nup
-using ..z_advection: get_ion_z_advection_term_evolve_nup
+using ..velocity_moments: update_ppar_species_no_sr!, calculate_ion_qpar_from_pdf_no_r!,
+                          calculate_implicit_ion_moment_derivatives!
+using ..vpa_advection: get_ion_vpa_advection_term_evolve_nup, update_speed_vpa_no_sr!
+using ..vperp_advection: get_ion_vperp_advection_term_evolve_nup, update_speed_vperp_no_sr!
+using ..z_advection: get_ion_z_advection_term_evolve_nup, update_speed_z_no_sr!
 
 using LinearAlgebra
 using SparseArrays
@@ -33,7 +37,7 @@ function get_ion_preconditioners(preconditioner_type, coords, outer_coords, spec
     total_size_coords = prod(coord_sizes)
     outer_coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ outer_coords)
 
-    if preconditioner_type === Val(:ion_parallel_lu)
+    if preconditioner_type === Val(:ion_parallel_dynamics_lu)
         # One constraint for third_moment that feeds pdf into qpar.
         pdf_plus_constraints_size = total_size_coords + coords.z.n
         if coords.vperp.n == 1
@@ -270,9 +274,8 @@ end
                                        z_spectral, z)
 
     dpdf_dvpa = @view scratch_dummy.buffer_vpavperpzr_2[:,:,:,ir]
-    update_speed_vpa_no_sr!(vpa_advect, fields, fvec, moments, r_advect, alpha_advect,
-                            z_advect, vpa, vperp, z, r, composition, collisions,
-                            ion_source_settings, 0.0, geometry,
+    update_speed_vpa_no_sr!(vpa_advect, fields, moments, r_advect, alpha_advect, z_advect,
+                            vpa, vperp, z, collisions, 0.0, geometry,
                             Val(moments.evolve_density), Val(moments.evolve_upar),
                             Val(moments.evolve_p), is, ir)
     #calculate the upwind derivative of the ion pdf w.r.t. wpa
@@ -284,9 +287,8 @@ end
 
     dpdf_dvperp = @view scratch_dummy.buffer_vpavperpzr_3[:,:,:,ir]
     if vperp.n > 1
-        update_speed_vperp_no_sr!(vperp_advect, dens, upar, p, moments,
-                                  composition.me_over_mi, vpa.grid,
-                                  external_source_settings.electron)
+        update_speed_vperp_no_sr!(vperp_advect, vpa, vperp, z, r, z_advect, alpha_advect,
+                                  r_advect, geometry, moments, is, ir)
         #calculate the upwind derivative of the ion pdf w.r.t. wperp
         @begin_anyzv_z_vpa_region()
         @loop_z_vpa iz ivpa begin
@@ -324,6 +326,8 @@ end
 
     # Update the ppar and qpar moments that depend on the shape function, and the moment
     # time derivatives that will be used in the shape function equation.
+    ppar = @view moments.ion.ppar[:,ir,is]
+    qpar = @view moments.ion.qpar[:,ir,is]
     update_ppar_species_no_sr!(ppar, dens, upar, vth, p, f_in, vpa, vperp, z,
                                evolve_density, evolve_upar, evolve_p)
     calculate_ion_qpar_from_pdf_no_r!(qpar, dens, upar, vth, f_in, vpa, vperp, z,
@@ -381,7 +385,7 @@ end
     add_term_to_Jacobian!(jacobian, :ion_pdf, dt, pdf_terms, z_speed)
     if collisions.fkpl.use_fokker_planck
         error("Preconditioner for Fokker-Planck collisions not integrated into "
-              * "fill_ion_kinetic_equation_Jacobian!() yet.")
+              * "fill_ion_kinetic_equation_Jacobian_evolve_nup!() yet.")
     end
 
     if vperp.n > 1

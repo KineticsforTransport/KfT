@@ -42,7 +42,7 @@ function vpa_advection!(f_out, fvec_in, fields, moments, vpa_advect, r_advect,
 
     @begin_s_r_z_vperp_region()
 
-    speed_args = get_speed_vpa_inner_args(vpa_advect, fvec_in, moments, fields, r_advect,
+    speed_args = get_speed_vpa_inner_args(vpa_advect, moments, fields, r_advect,
                                           alpha_advect, z_advect, geometry, vperp, vpa,
                                           evolve_density, evolve_upar, evolve_p)
     f_in = fvec_in.pdf
@@ -110,9 +110,8 @@ end
     end
 
     # calculate the advection speed corresponding to current f
-    update_speed_vpa!(vpa_advect, fields, fvec_in, moments, r_advect, alpha_advect,
-                      z_advect, vpa, vperp, z, r, composition, collisions,
-                      ion_source_settings, t, geometry)
+    update_speed_vpa!(vpa_advect, fields, moments, r_advect, alpha_advect, z_advect, vpa,
+                      vperp, z, r, composition, collisions, t, geometry)
 
     # Ensure moments are consistent with f_new
     new_scratch = scratch_pdf(f_out, fvec_in.density, fvec_in.upar, fvec_in.ppar,
@@ -372,19 +371,16 @@ end
 """
 calculate the advection speed in the vpa-direction at each grid point
 """
-function update_speed_vpa!(vpa_advect, fields, fvec, moments, r_advect, alpha_advect,
-                           z_advect, vpa, vperp, z, r, composition, collisions,
-                           ion_source_settings, t, geometry)
-    return update_speed_vpa!(vpa_advect, fields, fvec, moments, r_advect, alpha_advect,
-                             z_advect, vpa, vperp, z, r, composition, collisions,
-                             ion_source_settings, t, geometry,
-                             Val(moments.evolve_density), Val(moments.evolve_upar),
-                             Val(moments.evolve_p))
+function update_speed_vpa!(vpa_advect, fields, moments, r_advect, alpha_advect, z_advect,
+                           vpa, vperp, z, r, composition, collisions, t, geometry)
+    return update_speed_vpa!(vpa_advect, fields, moments, r_advect, alpha_advect,
+                             z_advect, vpa, vperp, z, r, composition, collisions, t,
+                             geometry, Val(moments.evolve_density),
+                             Val(moments.evolve_upar), Val(moments.evolve_p))
 end
-function update_speed_vpa!(vpa_advect, fields, fvec, moments, r_advect, alpha_advect,
-                           z_advect, vpa, vperp, z, r, composition, collisions,
-                           ion_source_settings, t, geometry, evolve_density::Val,
-                           evolve_upar::Val, evolve_p::Val)
+function update_speed_vpa!(vpa_advect, fields, moments, r_advect, alpha_advect, z_advect,
+                           vpa, vperp, z, r, composition, collisions, t, geometry,
+                           evolve_density::Val, evolve_upar::Val, evolve_p::Val)
     @debug_consistency_checks r.n == size(vpa_advect,4) || throw(BoundsError(vpa_advect))
     @debug_consistency_checks z.n == size(vpa_advect,3) || throw(BoundsError(vpa_advect))
     @debug_consistency_checks vperp.n == size(vpa_advect,2) || throw(BoundsError(vpa_advect))
@@ -395,7 +391,7 @@ function update_speed_vpa!(vpa_advect, fields, fvec, moments, r_advect, alpha_ad
 
     # dvpa/dt = Ze/m ⋅ E_parallel - (vperp^2/2B) bz dB/dz
     # magnetic mirror term only supported for standard DK implementation
-    speed_args = get_speed_vpa_inner_args(vpa_advect, fvec, moments, fields, r_advect,
+    speed_args = get_speed_vpa_inner_args(vpa_advect, moments, fields, r_advect,
                                           alpha_advect, z_advect, geometry, vperp, vpa,
                                           evolve_density, evolve_upar, evolve_p)
     @loop_s_r is ir begin
@@ -411,9 +407,8 @@ function update_speed_vpa!(vpa_advect, fields, fvec, moments, r_advect, alpha_ad
     return nothing
 end
 
-function update_speed_vpa_no_sr!(vpa_advect, fields, fvec, moments, r_advect,
-                                 alpha_advect, z_advect, vpa, vperp, z, r, composition,
-                                 collisions, ion_source_settings, t, geometry,
+function update_speed_vpa_no_sr!(vpa_advect, fields, moments, r_advect, alpha_advect,
+                                 z_advect, vpa, vperp, z, collisions, t, geometry,
                                  evolve_density::Val, evolve_upar::Val, evolve_p::Val, is,
                                  ir)
     @debug_consistency_checks z.n == size(vpa_advect,3) || throw(BoundsError(vpa_advect))
@@ -422,7 +417,7 @@ function update_speed_vpa_no_sr!(vpa_advect, fields, fvec, moments, r_advect,
 
     @begin_anyzv_z_vperp_region()
 
-    speed_args = get_speed_vpa_inner_args(vpa_advect, fvec, moments, fields, r_advect,
+    speed_args = get_speed_vpa_inner_args(vpa_advect, moments, fields, r_advect,
                                           alpha_advect, z_advect, geometry, vperp, vpa,
                                           evolve_density, evolve_upar, evolve_p)
     speed_args_sr = get_speed_vpa_inner_views_sr(is, ir, speed_args...)
@@ -436,7 +431,7 @@ function update_speed_vpa_no_sr!(vpa_advect, fields, fvec, moments, r_advect,
     return nothing
 end
 
-@inline function get_speed_vpa_inner_args(vpa_advect, fvec, moments, fields, r_advect,
+@inline function get_speed_vpa_inner_args(vpa_advect, moments, fields, r_advect,
                                           alpha_advect, z_advect, geometry, vperp, vpa,
                                           evolve_density::Val, evolve_upar::Val,
                                           evolve_p::Val)
@@ -460,9 +455,9 @@ end
     end
 end
 
-@inline function get_speed_vpa_inner_args_no_sr(vpa_advect, fvec, moments, fields,
-                                                r_advect, alpha_advect, z_advect,
-                                                geometry, vperp, vpa, evolve_density::Val,
+@inline function get_speed_vpa_inner_args_no_sr(vpa_advect, moments, fields, r_advect,
+                                                alpha_advect, z_advect, geometry, vperp,
+                                                vpa, evolve_density::Val,
                                                 evolve_upar::Val, evolve_p::Val, is, ir)
     if evolve_p === Val(true)
         return @views vpa_advect[:,:,:,ir,is], moments.ion.vth[:,ir,is],

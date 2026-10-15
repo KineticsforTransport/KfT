@@ -28,8 +28,6 @@ using ..velocity_moments: update_moments!, update_moments_neutral!, reset_moment
                           update_density!, update_upar!, update_ppar!, update_pperp!,
                           update_ion_qpar!, update_vth!,
                           update_derived_ion_moment_time_derivatives!,
-                          update_derived_ion_moment_time_derivatives_no_sr!,
-                          update_ppar_species_no_sr!, calculate_ion_qpar_from_pdf_no_r!,
                           update_neutral_density!, update_neutral_qz!,
                           update_neutral_uzeta!, update_neutral_uz!, update_neutral_ur!,
                           update_neutral_pzeta!, update_neutral_pz!, update_neutral_pr!,
@@ -52,16 +50,14 @@ using ..moment_constraints: hard_force_moment_constraints!,
                             hard_force_moment_constraints_neutral!,
                             moment_constraints_on_residual!
 using ..advection: setup_advection
-using ..z_advection: update_speed_z!, z_advection!, z_advection_no_sr!
-using ..alpha_advection: update_speed_alpha!, update_speed_alpha_no_sr!, alpha_advection!
-using ..r_advection: update_speed_r!, update_speed_r_no_sr!, r_advection!,
-                     r_advection_1D_ITG!
+using ..z_advection: update_speed_z!, z_advection!
+using ..alpha_advection: update_speed_alpha!, alpha_advection!
+using ..r_advection: update_speed_r!, r_advection!, r_advection_1D_ITG!
 using ..neutral_r_advection: update_speed_neutral_r!, neutral_advection_r!
 using ..neutral_z_advection: update_speed_neutral_z!, neutral_advection_z!
 using ..neutral_vz_advection: update_speed_neutral_vz!, neutral_advection_vz!
 using ..vperp_advection: update_speed_vperp!, vperp_advection!
-using ..vpa_advection: update_speed_vpa!, vpa_advection!, vpa_advection_no_sr!,
-                       implicit_vpa_advection!
+using ..vpa_advection: update_speed_vpa!, vpa_advection!, implicit_vpa_advection!
 using ..charge_exchange: ion_charge_exchange_collisions_1V!,
                          neutral_charge_exchange_collisions_1V!,
                          ion_charge_exchange_collisions_3V!,
@@ -77,28 +73,23 @@ using ..electron_z_advection: update_electron_speed_z!
 using ..implicit_ion_parallel_dynamics_functions
 using ..ion_jacobian_terms: get_ion_preconditioners
 using ..ionization: ion_ionization_collisions_1V!, neutral_ionization_collisions_1V!,
-                    ion_ionization_collisions_3V!, neutral_ionization_collisions_3V!,
-                    ionization_collisions_mk_ion_no_sr!
-using ..krook_collisions: krook_collisions!, krook_collisions_no_sr!
+                    ion_ionization_collisions_3V!, neutral_ionization_collisions_3V!
+using ..krook_collisions: krook_collisions!
 using ..maxwell_diffusion: ion_vpa_maxwell_diffusion!, neutral_vz_maxwell_diffusion!
 using ..external_sources
 using ..nonlinear_solvers
 using ..numerical_dissipation: vpa_boundary_buffer_decay!,
                                vpa_boundary_buffer_diffusion!, vpa_dissipation!,
                                z_dissipation!, r_dissipation!, vperp_dissipation!,
-                               vpa_dissipation_no_sr!, z_dissipation_no_sr!,
-                               vperp_dissipation_no_sr!,
                                vz_dissipation_neutral!, z_dissipation_neutral!,
                                r_dissipation_neutral!,
                                vpa_boundary_force_decreasing!, force_minimum_pdf_value!,
                                force_minimum_pdf_value_neutral!
-using ..source_terms: source_terms!, source_terms_no_sr!, source_terms_neutral!,
+using ..source_terms: source_terms!, source_terms_neutral!,
                       source_terms_manufactured!
-using ..continuity: continuity_equation!, continuity_equation_no_sr!,
-                    neutral_continuity_equation!
-using ..force_balance: force_balance!, force_balance_no_sr!, neutral_force_balance!
-using ..energy_equation: energy_equation!, energy_equation_no_sr!,
-                         neutral_energy_equation!
+using ..continuity: continuity_equation!, neutral_continuity_equation!
+using ..force_balance: force_balance!, neutral_force_balance!
+using ..energy_equation: energy_equation!, neutral_energy_equation!
 using ..em_fields: setup_em_fields, update_phi!
 using ..fokker_planck: init_fokker_planck_collisions_weak_form, explicit_fokker_planck_collisions_weak_form!
 using ..fokker_planck: explicit_fp_collisions_weak_form_Maxwellian_cross_species!
@@ -578,7 +569,11 @@ function setup_time_info(t_input, n_variables, code_time, dt_reload,
         ion_precon_types = Dict("parallel_dynamics_lu" => :ion_parallel_dynamics_lu,
                                 "none"=>:none)
         if t_input["kinetic_ion_preconditioner"] == "default"
-            ion_precon_option = "none"
+            if kinetic_ion_solver == implicit_ion_parallel_dynamics
+                ion_precon_option = "parallel_dynamics_lu"
+            else
+                ion_precon_option = "none"
+            end
         else
             ion_precon_option = t_input["kinetic_ion_preconditioner"]
         end
@@ -714,6 +709,7 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
         spectral = (z=z_spectral, vperp=vperp_spectral, vpa=vpa_spectral)
         nl_solver_ion_parallel_dynamics_params =
             setup_nonlinear_solve(nl_solver_input, ion_coords, ion_outer_coords;
+                                  anyzv_region=true,
                                   preconditioner_type=ion_precon_type,
                                   preconditioners=get_ion_preconditioners(ion_precon_type,
                                                                           ion_coords,
@@ -1280,9 +1276,8 @@ function _setup_time_advance_internal!(pdf, fields, vz, vr, vzeta, vpa, vperp, z
 
     # initialise the vpa advection speed
     @begin_s_r_z_vperp_region()
-    update_speed_vpa!(vpa_advect, fields, scratch[1], moments, r_advect, alpha_advect,
-                      z_advect, vpa, vperp, z, r, composition, collisions,
-                      external_source_settings.ion, 0.0, geometry)
+    update_speed_vpa!(vpa_advect, fields, moments, r_advect, alpha_advect, z_advect, vpa,
+                      vperp, z, r, composition, collisions, 0.0, geometry)
 
     # initialise the vperp advection speed
     # Note that z_advect and r_advect are arguments of update_speed_vperp!
@@ -2006,9 +2001,10 @@ function setup_dummy_and_buffer_arrays(r, z, vpa, vperp, vz, vr, vzeta, composit
     buffer_vpavperpr_5 = allocate_shared_float(vpa, vperp, r)
     buffer_vpavperpr_6 = allocate_shared_float(vpa, vperp, r)
 
-    if t_params.kinetic_electron_solver ∈ (implicit_time_evolving,
+    if (t_params.kinetic_electron_solver ∈ (implicit_time_evolving,
                                            implicit_p_implicit_pseudotimestep,
                                            implicit_steady_state)
+            || t_params.kinetic_ion_solver === implicit_ion_parallel_dynamics)
         implicit_buffer_z_1 = allocate_shared_float(z; comm=comm_anyzv_subblock[])
         implicit_buffer_z_2 = allocate_shared_float(z; comm=comm_anyzv_subblock[])
         implicit_buffer_z_3 = allocate_shared_float(z; comm=comm_anyzv_subblock[])
@@ -3204,7 +3200,7 @@ appropriate.
                             geometry)
         if t_params.implicit_ion_parallel_dynamics
             # z-direction CFL for ions comes from moment equations only.
-            ion_z_CFL = get_minimum_CFL_z(scratch.upar, z)
+            ion_z_CFL = get_minimum_CFL_z(scratch[t_params.n_rk_stages+1].upar, z)
             @serial_region begin
                 CFL_limits["CFL_z"] = t_params.CFL_prefactor * ion_z_CFL
             end
@@ -3229,9 +3225,8 @@ appropriate.
 
     if !(t_params.implicit_ion_advance || t_params.implicit_ion_parallel_dynamics || t_params.implicit_vpa_advection)
         # ion vpa-advection
-        update_speed_vpa!(vpa_advect, fields, scratch[t_params.n_rk_stages+1], moments,
-                          r_advect, alpha_advect, z_advect, vpa, vperp, z, r, composition,
-                          collisions, external_source_settings.ion, t_params.t[],
+        update_speed_vpa!(vpa_advect, fields, moments, r_advect, alpha_advect, z_advect,
+                          vpa, vperp, z, r, composition, collisions, t_params.t[],
                           geometry)
         ion_vpa_CFL = get_minimum_CFL_vpa(vpa_advect, vpa)
         @serial_region begin
@@ -4675,9 +4670,8 @@ Do a backward-Euler timestep for all terms in the ion kinetic equation.
     if vpa.n > 1
         # calculate the vpa advection speed, to ensure it is correct when used to apply the
         # boundary condition
-        update_speed_vpa!(vpa_advect, fields, fvec_in, moments, r_advect, z_advect, vpa,
-                          vperp, z, r, composition, collisions,
-                          external_source_settings.ion, t, geometry)
+        update_speed_vpa!(vpa_advect, fields, moments, r_advect, z_advect, vpa, vperp, z,
+                          r, composition, collisions, t, geometry)
     end
     if r.n > 1
         @loop_s is begin

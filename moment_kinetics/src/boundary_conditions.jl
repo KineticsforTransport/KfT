@@ -10,6 +10,9 @@ export enforce_boundary_conditions_f!
 export enforce_boundary_conditions_f_no_sr!
 export enforce_boundary_conditions_moments!
 export enforce_r_boundary_condition_em!
+export enforce_v_boundary_condition_local!
+export enforce_vperp_boundary_condition!
+export zero_ion_parallel_dynamics_z_boundary_condition_points
 
 using LinearAlgebra: dot
 using SpecialFunctions: erfc
