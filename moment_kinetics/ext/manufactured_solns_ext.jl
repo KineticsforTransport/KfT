@@ -711,7 +711,9 @@ using IfElse
         #exceptions for cases with missing terms 
         if composition.n_neutral_species > 0
             cx_frequency = collisions.reactions.charge_exchange_frequency
+            cx_frequency = cx_frequency === nothing ? 0.0 : cx_frequency
             ionization_frequency = collisions.reactions.ionization_frequency
+            ionization_frequency = ionization_frequency === nothing ? 0.0 : ionization_frequency
         else 
             cx_frequency = 0.0
             ionization_frequency = 0.0
