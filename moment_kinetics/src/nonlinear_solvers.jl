@@ -657,6 +657,48 @@ end
     return global_norm[]
 end
 
+@timeit_debug global_timer distributed_norm(::Val{:zvperpvpa},
+                                            residual::AbstractArray{mk_float, 3}, coords,
+                                            rtol, atol, x) = begin
+    z = coords.z
+    vperp = coords.vperp
+    vpa = coords.vpa
+
+    if z.irank < z.nrank - 1
+        zend = z.n
+    else
+        zend = z.n + 1
+    end
+
+    @begin_anyzv_z_vperp_vpa_region()
+
+    local_norm_square = 0.0
+    @loop_z iz begin
+        if iz == zend
+            continue
+        end
+        @loop_vperp_vpa ivperp ivpa begin
+            local_norm_square += (residual[ivpa,ivperp,iz] / (rtol * abs(x[ivpa,ivperp,iz]) + atol))^2
+        end
+    end
+
+    @_anyzv_subblock_synchronize()
+    global_norm = Ref(local_norm_square)
+    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(global_norm, +, comm_anyzv_subblock[]) # global_norm is now the norm_square for the subblock
+
+    if block_rank[] == 0
+        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(global_norm, +, z.comm) # global_norm is now the norm_square for the whole {z,vperp,vpa} grid
+        global_norm[] = global_norm[] / (z.n_global * vperp.n_global * vpa.n_global)
+
+        global_norm[] = sqrt(global_norm[])
+    end
+    @_anyzv_subblock_synchronize()
+
+    @timeit_debug global_timer "MPI.Bcast! comm_anyzv_subblock" MPI.Bcast!(global_norm, comm_anyzv_subblock[]; root=0)
+
+    return global_norm[]
+end
+
 @timeit_debug global_timer distributed_norm(
                   ::Val{:srzvperpvpa}, residual::AbstractArray{mk_float, 5}, coords, rtol,
                   atol, x) = begin
@@ -834,6 +876,41 @@ end
         global_dot[] = global_dot[] / (z.n_global * vperp.n_global * vpa.n_global)
 
         global_dot[] = mean((ppar_global_dot[], global_dot[]))
+    end
+
+    return global_dot[]
+end
+
+@timeit_debug global_timer distributed_dot(
+                  ::Val{:zvperpvpa}, v::AbstractArray{mk_float, 3},
+                  w::AbstractArray{mk_float, 3}, coords, rtol, atol, x) = begin
+    z = coords.z
+    vperp = coords.vperp
+    vpa = coords.vpa
+
+    if z.irank < z.nrank - 1
+        zend = z.n
+    else
+        zend = z.n + 1
+    end
+
+    @begin_anyzv_z_vperp_vpa_region()
+
+    local_dot = 0.0
+    @loop_z_vperp_vpa iz ivperp ivpa begin
+        if iz == zend
+            continue
+        end
+        local_dot += v[ivpa,ivperp,iz] * w[ivpa,ivperp,iz] / (rtol * abs(x[ivpa,ivperp,iz]) + atol)^2
+    end
+
+    @_anyzv_subblock_synchronize()
+    global_dot = Ref(local_dot)
+    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(global_dot, +, comm_anyzv_subblock[]) # global_dot is now the dot for the subblock
+
+    if block_rank[] == 0
+        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(global_dot, +, z.comm) # global_dot is now the dot for the whole {z,vperp,vpa} grid
+        global_dot[] = global_dot[] / (z.n_global * vperp.n_global * vpa.n_global)
     end
 
     return global_dot[]
@@ -1180,6 +1257,70 @@ end
 end
 
 @timeit_debug global_timer parallel_map(
+                  ::Val{:zvperpvpa}, func, result::AbstractArray{mk_float, 3}) = begin
+
+    @begin_anyzv_z_vperp_vpa_region()
+
+    @loop_z_vperp_vpa iz ivperp ivpa begin
+        result[ivpa,ivperp,iz] = func()
+    end
+
+    return nothing
+end
+@timeit_debug global_timer parallel_map(
+                  ::Val{:zvperpvpa}, func, result::AbstractArray{mk_float, 3},
+                  x1) = begin
+
+    @begin_anyzv_z_vperp_vpa_region()
+
+    @loop_z_vperp_vpa iz ivperp ivpa begin
+        result[ivpa,ivperp,iz] = func(x1[ivpa,ivperp,iz])
+    end
+
+    return nothing
+end
+@timeit_debug global_timer parallel_map(
+                  ::Val{:zvperpvpa}, func, result::AbstractArray{mk_float, 3},
+                  x1, x2) = begin
+
+    if isa(x2, AbstractArray)
+        @begin_anyzv_z_vperp_vpa_region()
+
+        @loop_z_vperp_vpa iz ivperp ivpa begin
+            result[ivpa,ivperp,iz] = func(x1[ivpa,ivperp,iz], x2[ivpa,ivperp,iz])
+        end
+    else
+        @begin_anyzv_z_vperp_vpa_region()
+
+        @loop_z_vperp_vpa iz ivperp ivpa begin
+            result[ivpa,ivperp,iz] = func(x1[ivpa,ivperp,iz], x2)
+        end
+    end
+
+    return nothing
+end
+@timeit_debug global_timer parallel_map(
+                  ::Val{:zvperpvpa}, func, result::AbstractArray{mk_float, 3},
+                  x1, x2, x3) = begin
+
+    if isa(x3, AbstractArray)
+        @begin_anyzv_z_vperp_vpa_region()
+
+        @loop_z_vperp_vpa iz ivperp ivpa begin
+            result[ivpa,ivperp,iz] = func(x1[ivpa,ivperp,iz], x2[ivpa,ivperp,iz], x3[ivpa,ivperp,iz])
+        end
+    else
+        @begin_anyzv_z_vperp_vpa_region()
+
+        @loop_z_vperp_vpa iz ivperp ivpa begin
+            result[ivpa,ivperp,iz] = func(x1[ivpa,ivperp,iz], x2[ivpa,ivperp,iz], x3)
+        end
+    end
+
+    return nothing
+end
+
+@timeit_debug global_timer parallel_map(
                   ::Val{:srzvperpvpa}, func, result::AbstractArray{mk_float, 5}) = begin
 
     @begin_s_r_z_vperp_vpa_region()
@@ -1307,6 +1448,22 @@ end
     @loop_z_vperp_vpa iz ivperp ivpa begin
         for iy ∈ 1:ny
             delta_x_pdf[ivpa,ivperp,iz] += y[iy] * V_pdf[ivpa,ivperp,iz,iy]
+        end
+    end
+
+    return nothing
+end
+
+@timeit_debug global_timer parallel_delta_x_calc(
+                  ::Val{:zvperpvpa}, delta_x::AbstractArray{mk_float, 3}, V, y) = begin
+
+    ny = length(y)
+
+    @begin_anyzv_z_vperp_vpa_region()
+
+    @loop_z_vperp_vpa iz ivperp ivpa begin
+        for iy ∈ 1:ny
+            delta_x[ivpa,ivperp,iz] += y[iy] * V[ivpa,ivperp,iz,iy]
         end
     end
 
