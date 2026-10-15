@@ -7,10 +7,11 @@ using ..calculus
 using ..charge_exchange: get_ion_1V_charge_exchange_evolve_nup
 using ..communication
 using ..communication: _anyzv_subblock_synchronize
-using ..derivatives: derivative_z_pdf_vpavperpz!
-using ..energy_equation: get_dvth_dt_expanded_term_evolve_nup
+using ..continuity: continuity_equation_no_sr!
+using ..derivatives: derivative_z_pdf_vpavperpz!, derivative_z_anyzv!
+using ..energy_equation: get_dvth_dt_expanded_term_evolve_nup, energy_equation_no_sr!
 using ..external_sources: get_total_external_ion_source_term_evolve_nup
-using ..force_balance: get_dupar_dt_expanded_term_evolve_nup
+using ..force_balance: get_dupar_dt_expanded_term_evolve_nup, force_balance_no_sr!
 using ..ionization: get_ion_1V_ionization_evolve_nup
 using ..jacobian_matrices
 using ..krook_collisions: get_ion_krook_collisions_term_evolve_nup
@@ -23,7 +24,8 @@ using ..source_terms: get_source_terms_evolve_nup
 using ..timer_utils
 using ..type_definitions
 using ..velocity_moments: update_ppar_species_no_sr!, calculate_ion_qpar_from_pdf_no_r!,
-                          calculate_implicit_ion_moment_derivatives!
+                          calculate_implicit_ion_moment_derivatives!,
+                          update_derived_ion_moment_time_derivatives_no_sr!
 using ..vpa_advection: get_ion_vpa_advection_term_evolve_nup, update_speed_vpa_no_sr!
 using ..vperp_advection: get_ion_vperp_advection_term_evolve_nup, update_speed_vperp_no_sr!
 using ..z_advection: get_ion_z_advection_term_evolve_nup, update_speed_z_no_sr!
@@ -246,11 +248,12 @@ end
 """
 """
 @timeit global_timer fill_ion_kinetic_equation_Jacobian_evolve_nup!(
-                         jacobian::jacobian_info, f, dens, upar, p, dens_neutral, moments,
-                         fields, collisions, external_source_settings, geometry,
-                         num_diss_params, scratch_dummy, r_advect, alpha_advect, z_advect,
-                         vperp_advect, vpa_advect, z, vperp, vpa, z_spectral,
-                         vperp_spectral, vpa_spectral, dt, is, ir) = begin
+                         jacobian::jacobian_info, f, dens, upar, p, dens_neutral,
+                         uz_neutral, p_neutral, moments, fields, composition, collisions,
+                         external_source_settings, geometry, num_diss_params,
+                         scratch_dummy, r_advect, alpha_advect, z_advect, vperp_advect,
+                         vpa_advect, z, vperp, vpa, z_spectral, vperp_spectral,
+                         vpa_spectral, dt, is, ir) = begin
 
     vth = @view moments.ion.vth[:,ir,is]
     r_speed = @view r_advect[:,:,:,ir,is]
@@ -258,11 +261,22 @@ end
     alpha_speed = @view alpha_advect[:,:,:,ir,is]
     vperp_speed = @view vperp_advect[:,:,:,ir,is]
     vpa_speed = @view vpa_advect[:,:,:,ir,is]
+    evolve_density = moments.evolve_density
+    evolve_upar = moments.evolve_upar
+    evolve_p = moments.evolve_p
+    fvec = (; pdf=f, density=dens, upar=upar, p=p, density_neutral=dens_neutral,
+            uz_neutral=uz_neutral, p_neutral=p_neutral)
+
+    # create several 0D dummy arrays for use in taking derivatives
+    buffer_1 = @view scratch_dummy.buffer_rs_1[ir,is]
+    buffer_2 = @view scratch_dummy.buffer_rs_2[ir,is]
+    buffer_3 = @view scratch_dummy.buffer_rs_3[ir,is]
+    buffer_4 = @view scratch_dummy.buffer_rs_4[ir,is]
 
     #calculate the upwind derivative
     dpdf_dz = @view scratch_dummy.buffer_vpavperpzr_1[:,:,:,ir]
-    update_speed_z_no_sr!(z_speed, upar, vth, moments.evolve_upar, moments.evolve_p, vpa,
-                          vperp, z, geometry)
+    update_speed_z_no_sr!(z_speed, upar, vth, evolve_upar, evolve_p, vpa, vperp, z,
+                          geometry)
     @begin_anyzv_vperp_vpa_region()
     @views derivative_z_pdf_vpavperpz!(dpdf_dz, f, z_speed,
                                        scratch_dummy.buffer_vpavperpr_1[:,:,ir],
@@ -275,9 +289,8 @@ end
 
     dpdf_dvpa = @view scratch_dummy.buffer_vpavperpzr_2[:,:,:,ir]
     update_speed_vpa_no_sr!(vpa_advect, fields, moments, r_advect, alpha_advect, z_advect,
-                            vpa, vperp, z, collisions, 0.0, geometry,
-                            Val(moments.evolve_density), Val(moments.evolve_upar),
-                            Val(moments.evolve_p), is, ir)
+                            vpa, vperp, z, collisions, 0.0, geometry, Val(evolve_density),
+                            Val(evolve_upar), Val(evolve_p), is, ir)
     #calculate the upwind derivative of the ion pdf w.r.t. wpa
     @begin_anyzv_z_vperp_region()
     @loop_z_vperp iz ivperp begin
@@ -328,21 +341,20 @@ end
     # time derivatives that will be used in the shape function equation.
     ppar = @view moments.ion.ppar[:,ir,is]
     qpar = @view moments.ion.qpar[:,ir,is]
-    update_ppar_species_no_sr!(ppar, dens, upar, vth, p, f_in, vpa, vperp, z,
-                               evolve_density, evolve_upar, evolve_p)
-    calculate_ion_qpar_from_pdf_no_r!(qpar, dens, upar, vth, f_in, vpa, vperp, z,
+    update_ppar_species_no_sr!(ppar, dens, upar, vth, p, f, vpa, vperp, z, evolve_density,
+                               evolve_upar, evolve_p)
+    calculate_ion_qpar_from_pdf_no_r!(qpar, dens, upar, vth, f, vpa, vperp, z,
                                       evolve_density, evolve_upar, evolve_p)
     calculate_implicit_ion_moment_derivatives!(moments, scratch_dummy, z, vperp,
                                                z_spectral, is, ir)
-    continuity_equation_no_sr!(fvec_in, fields, moments, composition, geometry, dt,
+    continuity_equation_no_sr!(fvec, fields, moments, composition, geometry, dt,
                                collisions.reactions.ionization_frequency,
                                external_source_settings.ion, num_diss_params, is, ir)
-    force_balance_no_sr!(fvec_in, moments, fields, collisions, dt, composition, geometry,
+    force_balance_no_sr!(fvec, moments, fields, collisions, dt, composition, geometry,
                          external_source_settings.ion, num_diss_params, z, is, ir)
-    energy_equation_no_sr!(fvec_in, moments, fields, collisions, dt, composition,
-                           geometry, external_source_settings.ion, num_diss_params, is,
-                           ir)
-    update_derived_ion_moment_time_derivatives_no_sr!(fvec_in, moments, is, ir)
+    energy_equation_no_sr!(fvec, moments, fields, collisions, dt, composition, geometry,
+                           external_source_settings.ion, num_diss_params, is, ir)
+    update_derived_ion_moment_time_derivatives_no_sr!(fvec, moments, is, ir)
 
     # Reconstruct w_∥^3 moment of g_e from already-calculated qpar
     third_moment = @view scratch_dummy.buffer_zrs_1[:,ir,is]

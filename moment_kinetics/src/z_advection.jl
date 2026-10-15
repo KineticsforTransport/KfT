@@ -41,9 +41,8 @@ do a single stage time advance (potentially as part of a multi-stage RK scheme)
     end
 end
 
-@timeit global_timer z_advection_no_sr!(
-                         f_out, fvec_in, moments, fields, advect, z, vpa, vperp, dt,
-                         spectral, composition, geometry, scratch_dummy, is, ir) = begin
+function z_advection_no_sr!(f_out, fvec_in, moments, fields, advect, z, vpa, vperp, dt,
+                            spectral, composition, geometry, scratch_dummy, is, ir)
 
     # get the updated speed along the z direction using the current f
     @views update_speed_z_no_sr!(advect, fvec_in.upar, moments.ion.vth,

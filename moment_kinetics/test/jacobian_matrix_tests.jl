@@ -69,7 +69,7 @@ using moment_kinetics.numerical_dissipation: get_ion_vperp_dissipation_term_evol
                                              vpa_dissipation_no_sr!,
                                              vperp_dissipation_no_sr!
 using moment_kinetics.source_terms: source_terms_no_sr!, get_source_terms_evolve_nup
-using moment_kinetics.time_advance: ion_parallel_dynamics_euler_time_advance_no_sr!
+using moment_kinetics.implicit_ion_parallel_dynamics_functions: ion_parallel_dynamics_euler_time_advance_no_sr!
 using moment_kinetics.timer_utils: reset_mk_timers!
 using moment_kinetics.type_definitions: mk_float
 using moment_kinetics.velocity_moments: update_derived_moments!,
@@ -753,6 +753,8 @@ function test_ion_parallel_dynamics_kinetic_equation(test_input::AbstractDict)
         dqpar_dz = @view moments.ion.dqpar_dz[:,ir,is]
         Ez = @view fields.Ez[:,ir]
         dens_neutral = @view moments.neutral.dens[:,ir,is]
+        uz_neutral = @view moments.neutral.uz[:,ir,is]
+        p_neutral = @view moments.neutral.p[:,ir,is]
         z_spectral = spectral_objects.z_spectral
         vperp_spectral = spectral_objects.vperp_spectral
         vpa_spectral = spectral_objects.vpa_spectral
@@ -832,10 +834,11 @@ function test_ion_parallel_dynamics_kinetic_equation(test_input::AbstractDict)
 
         jacobian = nl_solver_params.ion_parallel_dynamics.preconditioners[1][2]
         fill_ion_kinetic_equation_Jacobian_evolve_nup!(
-            jacobian, f, dens, upar, p, dens_neutral, moments, fields, collisions,
-            external_source_settings, geometry, num_diss_params, scratch_dummy, r_advect,
-            alpha_advect, z_advect, vperp_advect, vpa_advect, z, vperp, vpa, z_spectral,
-            vperp_spectral, vpa_spectral, dt, is, ir)
+            jacobian, f, dens, upar, p, dens_neutral, uz_neutral, p_neutral, moments,
+            fields, composition, collisions, external_source_settings, geometry,
+            num_diss_params, scratch_dummy, r_advect, alpha_advect, z_advect,
+            vperp_advect, vpa_advect, z, vperp, vpa, z_spectral, vperp_spectral,
+            vpa_spectral, dt, is, ir)
 
         function residual_func!(residual, this_f)
             @begin_anyzv_z_region()
@@ -2981,7 +2984,7 @@ function run_ion_tests()
     @testset "Ion Jacobian matrix " verbose=use_verbose begin
         println("Ion Jacobian matrix")
         precon_list = String[]
-        push!(precon_list, "parallel_lu")
+        push!(precon_list, "parallel_dynamics_lu")
         @testset "$kinetic_ion_preconditioner" verbose=use_verbose for kinetic_ion_preconditioner ∈ precon_list
             println("    - $kinetic_ion_preconditioner")
 

@@ -80,10 +80,10 @@ function vpa_advection_no_sr!(f_out, fvec_in, fields, moments, vpa_advect, r_adv
 
     @begin_anyzv_z_vperp_region()
 
-    speed_args = get_speed_vpa_inner_args_no_sr(vpa_advect, fvec_in, moments, fields,
-                                                r_advect, alpha_advect, z_advect,
-                                                geometry, vperp, vpa, evolve_density,
-                                                evolve_upar, evolve_p, is, ir)
+    speed_args = get_speed_vpa_inner_args_no_sr(vpa_advect, moments, fields, r_advect,
+                                                alpha_advect, z_advect, geometry, vperp,
+                                                vpa, evolve_density, evolve_upar,
+                                                evolve_p, is, ir)
     f_in = fvec_in.pdf
     @loop_z iz begin
         speed_args_z = get_speed_vpa_inner_views_z(iz, speed_args...)

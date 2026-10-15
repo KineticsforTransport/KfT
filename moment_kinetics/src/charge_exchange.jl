@@ -8,6 +8,7 @@ export charge_exchange_collisions_1V!
 using ..debugging
 using ..looping
 using ..interpolation: interpolate_to_grid_vpa!
+using ..jacobian_matrices: NullTerm
 using ..timer_utils
 
 """
@@ -232,7 +233,11 @@ function get_ion_1V_charge_exchange_evolve_nup(sub_terms)
     n_neutral = sub_terms.n_neutral
     charge_exchange_frequency = sub_terms.charge_exchange_frequency
 
-    return charge_exchange_frequency * n_neutral * f
+    if charge_exchange_frequency === nothing
+        return NullTerm()
+    else
+        return charge_exchange_frequency * n_neutral * f
+    end
 end
 
 end

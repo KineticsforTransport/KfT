@@ -9,6 +9,7 @@ export neutral_ionization_collisions_3V!
 
 using ..debugging
 using ..interpolation: interpolate_to_grid_vpa!
+using ..jacobian_matrices: NullTerm
 using ..looping
 using ..timer_utils
 
@@ -217,7 +218,11 @@ function get_ion_1V_ionization_evolve_nup(sub_terms)
     n_neutral = sub_terms.n_neutral
     ionization_frequency = sub_terms.ionization_frequency
 
-    return ionization_frequency * n_neutral * f
+    if ionization_frequency === nothing
+        return NullTerm()
+    else
+        return ionization_frequency * n_neutral * f
+    end
 end
 
 end

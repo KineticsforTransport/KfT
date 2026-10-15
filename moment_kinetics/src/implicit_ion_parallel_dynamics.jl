@@ -4,6 +4,7 @@ export ion_parallel_dynamics_backward_euler!
 
 using ..alpha_advection: update_speed_alpha_no_sr!
 using ..boundary_conditions
+using ..calculus: reconcile_element_boundaries_MPI_z_pdf_vpavperpz!
 using ..charge_exchange: charge_exchange_collisions_mk_single_species_r!
 using ..communication
 using ..continuity: continuity_equation_no_sr!
@@ -12,6 +13,7 @@ using ..external_sources: total_external_Maxwellian_sources_no_sr!
 using ..force_balance: force_balance_no_sr!
 using ..ion_jacobian_terms
 using ..ionization: ionization_collisions_mk_ion_no_sr!
+using ..jacobian_matrices: get_sparse_joined_array
 using ..krook_collisions: krook_collisions_no_sr!
 using ..looping
 using ..moment_kinetics_structs
@@ -29,6 +31,7 @@ using ..vperp_advection: vperp_advection_no_sr!
 using ..z_advection: z_advection_no_sr!
 
 using ConcreteStructs
+using LinearAlgebra
 
 """
     ion_parallel_dynamics_backward_euler!(
@@ -62,14 +65,17 @@ Take a single backward euler timestep for the ion shape function \$g_i\$.
     upar = @view fvec_in.upar[:,ir,is]
     p = @view fvec_in.p[:,ir,is]
     dens_neutral = @view fvec_in.density_neutral[:,ir,is]
+    uz_neutral = @view fvec_in.uz_neutral[:,ir,is]
+    p_neutral = @view fvec_in.p_neutral[:,ir,is]
     f_new = @view fvec_out.pdf[:,:,:,ir,is]
 
     left_preconditioner, right_preconditioner, recalculate_preconditioner! =
         @views get_ion_parallel_dynamics_preconditioner(
             nl_solver_params, f_new, buffer_1, buffer_2, buffer_3, buffer_4, dens, upar,
-            p, dens_neutral, moments, fields, collisions, geometry, z, vperp, vpa,
-            spectral_objects.z_spectral, spectral_objects.vperp_spectral,
-            spectral_objects.vpa_spectral, advection_structs.r_advect[:,:,:,ir,is],
+            p, dens_neutral, uz_neutral, p_neutral, moments, fields, composition,
+            collisions, geometry, z, vperp, vpa, spectral_objects.z_spectral,
+            spectral_objects.vperp_spectral, spectral_objects.vpa_spectral,
+            advection_structs.r_advect[:,:,:,ir,is],
             advection_structs.alpha_advect[:,:,:,ir,is],
             advection_structs.z_advect[:,:,:,ir,is],
             advection_structs.vperp_advect[:,:,:,ir,is],
@@ -328,8 +334,11 @@ end
     upar
     p
     dens_neutral
+    uz_neutral
+    p_neutral
     moments
     fields
+    composition
     collisions
     geometry
     z
@@ -358,8 +367,11 @@ function (recalc::ion_parallel_dynamics_recalculate_lu!)()
     upar = recalc.upar
     p = recalc.p
     dens_neutral = recalc.dens_neutral
+    uz_neutral = recalc.uz_neutral
+    p_neutral = recalc.p_neutral
     moments = recalc.moments
     fields = recalc.fields
+    composition = recalc.composition
     collisions = recalc.collisions
     geometry = recalc.geometry
     z = recalc.z
@@ -390,10 +402,10 @@ global_rank[] == 0 && println("recalculating ion precon")
         nl_solver_params.preconditioners[ir]
 
     fill_ion_kinetic_equation_Jacobian_evolve_nup!(
-        precon, f_new, dens, upar, p, dens_neutral, moments, fields, collisions,
-        external_source_settings, geometry, num_diss_params, scratch_dummy, r_advect,
-        alpha_advect, z_advect, vperp_advect, vpa_advect, z, vperp, vpa, z_spectral,
-        vperp_spectral, vpa_spectral, dt, is, ir)
+        precon, f_new, dens, upar, p, dens_neutral, uz_neutral, p_neutral, moments,
+        fields, composition, collisions, external_source_settings, geometry,
+        num_diss_params, scratch_dummy, r_advect, alpha_advect, z_advect, vperp_advect,
+        vpa_advect, z, vperp, vpa, z_spectral, vperp_spectral, vpa_spectral, dt, is, ir)
 
     @begin_anyzv_region()
     if anyzv_subblock_rank[] == 0
@@ -439,7 +451,7 @@ end
     ir::mk_int
 end
 
-@timeit_debug global_timer (lu_pre::ion_parallel_dynamics_lu_precon!)(x) = begin
+@timeit_debug global_timer (lu_pre::ion_parallel_dynamics_lu_precon!)(precon_f) = begin
     nl_solver_params = lu_pre.nl_solver_params
     scratch_dummy = lu_pre.scratch_dummy
     buffer_1 = lu_pre.buffer_1
@@ -449,8 +461,6 @@ end
     z = lu_pre.z
     is = lu_pre.is
     ir = lu_pre.ir
-
-    precon_p, precon_f = x
 
     precon_lu, _, this_input_buffer, this_output_buffer =
         nl_solver_params.preconditioners[ir,is]
@@ -505,19 +515,21 @@ end
 
 function get_ion_parallel_dynamics_lu_preconditioner(
              nl_solver_params, f_new, buffer_1, buffer_2, buffer_3, buffer_4, dens, upar,
-             p, dens_neutral, moments, fields, collisions, geometry, z::coordinate,
-             vperp::coordinate, vpa::coordinate, z_spectral, vperp_spectral, vpa_spectral,
-             r_advect, alpha_advect, z_advect, vperp_advect, vpa_advect, scratch_dummy,
-             external_source_settings, num_diss_params, t_params, is::mk_int, ir::mk_int)
+             p, dens_neutral, uz_neutral, p_neutral, moments, fields, composition,
+             collisions, geometry, z::coordinate, vperp::coordinate, vpa::coordinate,
+             z_spectral, vperp_spectral, vpa_spectral, r_advect, alpha_advect, z_advect,
+             vperp_advect, vpa_advect, scratch_dummy, external_source_settings,
+             num_diss_params, t_params, is::mk_int, ir::mk_int)
 
     recalculate_lu_preconditioner! = ion_parallel_dynamics_recalculate_lu!(
                                          nl_solver_params, f_new, dens, upar, p,
-                                         dens_neutral, moments, fields, collisions,
-                                         geometry, z, vperp, vpa, z_spectral,
-                                         vperp_spectral, vpa_spectral, r_advect,
-                                         alpha_advect, z_advect, vperp_advect, vpa_advect,
-                                         scratch_dummy, external_source_settings,
-                                         num_diss_params, t_params, is, ir)
+                                         dens_neutral, uz_neutral, p_neutral, moments,
+                                         fields, composition, collisions, geometry, z,
+                                         vperp, vpa, z_spectral, vperp_spectral,
+                                         vpa_spectral, r_advect, alpha_advect, z_advect,
+                                         vperp_advect, vpa_advect, scratch_dummy,
+                                         external_source_settings, num_diss_params,
+                                         t_params, is, ir)
 
     lu_precon! = ion_parallel_dynamics_lu_precon!(; nl_solver_params, scratch_dummy,
                                                   buffer_1, buffer_2, buffer_3, buffer_4,
@@ -531,17 +543,18 @@ end
 
 function get_ion_parallel_dynamics_preconditioner(
              nl_solver_params, f_new, buffer_1, buffer_2, buffer_3, buffer_4, dens, upar,
-             p, dens_neutral, moments, fields, collisions, geometry, z, vperp, vpa,
-             z_spectral, vperp_spectral, vpa_spectral, r_advect, alpha_advect, z_advect,
-             vperp_advect, vpa_advect, scratch_dummy, external_source_settings,
-             num_diss_params, t_params, is, ir)
+             p, dens_neutral, uz_neutral, p_neutral, moments, fields, composition,
+             collisions, geometry, z, vperp, vpa, z_spectral, vperp_spectral,
+             vpa_spectral, r_advect, alpha_advect, z_advect, vperp_advect, vpa_advect,
+             scratch_dummy, external_source_settings, num_diss_params, t_params, is, ir)
     if nl_solver_params.preconditioner_type === Val(:ion_parallel_dynamics_lu)
         return get_ion_parallel_dynamics_lu_preconditioner(
                    nl_solver_params, f_new, buffer_1, buffer_2, buffer_3, buffer_4, dens,
-                   upar, p, dens_neutral, moments, fields, collisions, geometry, z, vperp,
-                   vpa, z_spectral, vperp_spectral, vpa_spectral, r_advect, alpha_advect,
-                   z_advect, vperp_advect, vpa_advect, scratch_dummy,
-                   external_source_settings, num_diss_params, t_params, is, ir)
+                   upar, p, dens_neutral, uz_neutral, p_neutral, moments, fields,
+                   composition, collisions, geometry, z, vperp, vpa, z_spectral,
+                   vperp_spectral, vpa_spectral, r_advect, alpha_advect, z_advect,
+                   vperp_advect, vpa_advect, scratch_dummy, external_source_settings,
+                   num_diss_params, t_params, is, ir)
     elseif nl_solver_params.preconditioner_type === Val(:none)
         left_preconditioner = identity
         right_preconditioner = identity
