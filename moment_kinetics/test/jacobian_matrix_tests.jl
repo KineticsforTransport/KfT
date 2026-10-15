@@ -11,8 +11,7 @@ using moment_kinetics.boundary_conditions: enforce_v_boundary_condition_local!,
                                            enforce_vperp_boundary_condition!,
                                            skip_f_electron_bc_points_in_Jacobian,
                                            skip_f_electron_bc_points_in_Jacobian_v_solve,
-                                           skip_f_electron_bc_points_in_Jacobian_z_solve,
-                                           zero_ion_parallel_dynamics_z_boundary_condition_points
+                                           skip_f_electron_bc_points_in_Jacobian_z_solve
 using moment_kinetics.calculus: derivative!, second_derivative!, integral
 using moment_kinetics.charge_exchange: get_ion_1V_charge_exchange_evolve_nup,
                                        charge_exchange_collisions_mk_single_species_r!
@@ -51,6 +50,7 @@ using moment_kinetics.external_sources: total_external_electron_sources!,
                                         total_external_Maxwellian_sources_no_sr!,
                                         get_total_external_ion_source_term_evolve_nup
 using moment_kinetics.force_balance: force_balance!, force_balance_no_sr!
+using moment_kinetics.implicit_ion_parallel_dynamics_functions: zero_ion_parallel_dynamics_z_boundary_condition_points
 using moment_kinetics.ion_jacobian_terms: get_ion_sub_terms_evolve_nup,
                                           fill_ion_kinetic_equation_Jacobian_evolve_nup!
 using moment_kinetics.ionization: ionization_collisions_mk_ion_no_sr!,
