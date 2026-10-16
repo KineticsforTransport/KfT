@@ -114,6 +114,11 @@ Take a single backward euler timestep for the ion shape function \$g_i\$.
                                    right_preconditioner=right_preconditioner,
                                    coords=(z=z, vperp=vperp, vpa=vpa))
 
+    if !newton_success
+        # Newton solve failed, so update the preconditioner
+        nl_solver_params.solves_since_precon_update[] = nl_solver_params.preconditioner_update_interval
+    end
+
     return newton_success
 end
 

@@ -3806,7 +3806,7 @@ end
                 if bcs_constraints_success != ""
                     success = bcs_constraints_success
                 end
-                if success != ""
+                if success != "" && t_params.dt[] > t_params.minimum_dt
                     # Break out of the istage loop, as passing `success != ""` to the
                     # adaptive timestep update function will signal a failed timestep, so
                     # that we restart this timestep with a smaller `dt`.
@@ -3858,7 +3858,7 @@ end
         if bcs_constraints_success != ""
             success = bcs_constraints_success
         end
-        if success != ""
+        if success != "" && t_params.dt[] > t_params.minimum_dt
             # Break out of the istage loop, as passing `success != ""` to the
             # adaptive timestep update function will signal a failed timestep, so
             # that we restart this timestep with a smaller `dt`.
@@ -3912,7 +3912,8 @@ end
                                   nl_total_its_soft_limit_reduce_dt)
         write_debug_IO(scratch[n_rk_stages+1], 0, "adaptive_timestep_update!")
     elseif success != ""
-        error("Implicit part of timestep failed")
+        #error("Implicit part of timestep failed")
+        println("Implicit part of timestep failed")
     end
 
     reset_nonlinear_per_stage_counters!(nl_solver_params.ion_advance)

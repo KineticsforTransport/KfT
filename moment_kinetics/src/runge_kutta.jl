@@ -1469,8 +1469,9 @@ function adaptive_timestep_update_t_params!(t_params, CFL_limits, error_norms,
         step_counter = @view t_params.step_counter[ir:ir]
         failure_counter = @view t_params.failure_counter[ir:ir]
     end
-    if success != ""
-        # Iteration failed in implicit part of timestep try decreasing timestep
+    if success != "" && dt[] > t_params.minimum_dt
+        # Iteration failed in implicit part of timestep try decreasing timestep, unless
+        # the timestep is already down to minimum_dt.
 
         failure_counter[] += 1
 
@@ -1654,8 +1655,11 @@ function adaptive_timestep_update_t_params!(t_params, CFL_limits, error_norms,
                 end
             end
 
-            # Prevent timestep from going below minimum_dt
-            if dt[] < t_params.minimum_dt
+            # Prevent timestep from going below minimum_dt. Also stick to minimum_dt if
+            # something failed, but the timestep was already minimum_dt so we cannot
+            # reduce it further (the case where something failed and dt>minimum_dt is
+            # handled by other cases above).
+            if dt[] < t_params.minimum_dt || success != ""
                 dt[] = t_params.minimum_dt
                 if is_block_root
                     this_limit_caused_by = "minimum_dt"
@@ -1671,7 +1675,7 @@ function adaptive_timestep_update_t_params!(t_params, CFL_limits, error_norms,
                 end
             end
 
-            if nl_total_its_soft_limit_reduce_dt && previous_dt[] > 0.0
+            if nl_total_its_soft_limit_reduce_dt && previous_dt[] > 0.0 && success == ""
                 # The last step took very many nonlinear iterations, so reduce the
                 # timestep slightly.
                 # If t_params.previous_dt[]==0.0, then the previous step failed so
@@ -1683,7 +1687,7 @@ function adaptive_timestep_update_t_params!(t_params, CFL_limits, error_norms,
                         this_limit_caused_by = "high_nl_iterations"
                     end
                 end
-            elseif (nl_max_its_fraction > 0.5 || nl_total_its_soft_limit) && previous_dt[] > 0.0
+            elseif (nl_max_its_fraction > 0.5 || nl_total_its_soft_limit) && previous_dt[] > 0.0 && success == ""
                 # The last step took many nonlinear iterations, so do not allow the
                 # timestep to increase.
                 # If previous_dt[]==0.0, then the previous step failed so
