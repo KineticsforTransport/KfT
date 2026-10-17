@@ -3871,20 +3871,13 @@ end
         nl_total_its_soft_limit = false
         nl_total_its_soft_limit_reduce_dt = false
         if t_params.kinetic_electron_solver ∈ (implicit_steady_state, implicit_time_evolving)
-            params_to_check = (nl_solver_params.ion_advance,
-                               nl_solver_params.vpa_advection,
-                               nl_solver_params.ion_fp_collisions,
-                               nl_solver_params.electron_conduction,
-                               nl_solver_params.electron_advance)
+            params_to_check = Tuple(p for p ∈ nl_solver_params)
         else
             # nl_solver_params.electron_advance is used for the backward-Euler timestep in
             # electron timestepping, so its iteration count is not relevant here. Instead,
             # check the number of electron pseudo-timesteps or pseudo-time increment
             # compared to their maximum values
-            params_to_check = (nl_solver_params.ion_advance,
-                               nl_solver_params.vpa_advection,
-                               nl_solver_params.ion_fp_collisions,
-                               nl_solver_params.electron_conduction)
+            params_to_check = Tuple(v for (k,v) ∈ pairs(nl_solver_params) if k !== :electron_advance)
             if t_params.electron !== nothing
                 electron_time_advance_fraction =
                     min(t_params.electron.max_step_count_this_ion_step[] / max_electron_pdf_iterations,
