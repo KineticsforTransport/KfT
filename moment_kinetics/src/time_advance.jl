@@ -2586,13 +2586,17 @@ function time_advance!(pdf, scratch, scratch_implicit, scratch_electron, t_param
 
                 # Re-update remaining velocity moments that are calculable from the evolved
                 # pdf These need to be re-calculated because `scratch[istage+1]` is now the
-                # state at the beginning of the timestep, because the timestep failed
+                # state at the beginning of the timestep, because the timestep failed.
+                # Don't really need to re-apply the moment constraints here, but passing
+                # `pdf_bc_constraints=false` would also disable the re-calculation of the
+                # derived moments and hopefully this branch is not called often.
+                reset_moments_status!(moments)
                 apply_all_bcs_constraints_update_moments!(
-                    scratch[t_params.n_rk_stages+1], pdf, moments, fields, nothing, nothing, vz,
-                    vr, vzeta, vpa, vperp, z, r, spectral_objects, advect_objects, composition,
-                    collisions, geometry, gyroavs, external_source_settings, num_diss_params,
-                    t_params, nl_solver_params, advance, scratch_dummy, false, 0, 0.0;
-                    pdf_bc_constraints=false)
+                    scratch[t_params.n_rk_stages+1], pdf, moments, fields, boundaries,
+                    nothing, vz, vr, vzeta, vpa, vperp, z, r, spectral_objects,
+                    advect_objects, composition, collisions, geometry, gyroavs,
+                    external_source_settings, num_diss_params, t_params, nl_solver_params,
+                    advance, scratch_dummy, false, 0, 0.0)
             end
 
             if finish_now
@@ -3316,215 +3320,217 @@ appropriate.
         end
     end
 
-    # Apply boundary conditions and constraints to the loworder approximation.
-    # Need to apply constraints using the high-order moments for consistency, to avoid
-    # potential for spurious error estimates at boundary points.
-    loworder_constraints_scratch =
-        scratch_pdf(scratch[2].pdf, scratch[t_params.n_rk_stages+1].density,
-                    scratch[t_params.n_rk_stages+1].upar,
-                    scratch[t_params.n_rk_stages+1].p,
-                    scratch[t_params.n_rk_stages+1].ion_external_source_controller_integral,
-                    scratch[t_params.n_rk_stages+1].temp_z_s,
-                    scratch[2].pdf_electron,
-                    scratch[t_params.n_rk_stages+1].electron_density,
-                    scratch[t_params.n_rk_stages+1].electron_upar,
-                    scratch[t_params.n_rk_stages+1].electron_p,
-                    scratch[t_params.n_rk_stages+1].electron_temp,
-                    #scratch[t_params.n_rk_stages+1].electron_external_source_controller_integral,
-                    scratch[2].pdf_neutral,
-                    scratch[t_params.n_rk_stages+1].density_neutral,
-                    scratch[t_params.n_rk_stages+1].uz_neutral,
-                    scratch[t_params.n_rk_stages+1].p_neutral,
-                    scratch[t_params.n_rk_stages+1].neutral_external_source_controller_integral)
-    apply_all_bcs_constraints_update_moments!(
-        loworder_constraints_scratch, pdf, moments, fields, boundaries, scratch_electron,
-        vz, vr, vzeta, vpa, vperp, z, r, spectral_objects, advect_objects, composition,
-        collisions, geometry, gyroavs, external_source_settings, num_diss_params,
-        t_params, nl_solver_params, advance, scratch_dummy, false, 0, 0.0)
+    if success == ""
+        # Apply boundary conditions and constraints to the loworder approximation.
+        # Need to apply constraints using the high-order moments for consistency, to avoid
+        # potential for spurious error estimates at boundary points.
+        loworder_constraints_scratch =
+            scratch_pdf(scratch[2].pdf, scratch[t_params.n_rk_stages+1].density,
+                        scratch[t_params.n_rk_stages+1].upar,
+                        scratch[t_params.n_rk_stages+1].p,
+                        scratch[t_params.n_rk_stages+1].ion_external_source_controller_integral,
+                        scratch[t_params.n_rk_stages+1].temp_z_s,
+                        scratch[2].pdf_electron,
+                        scratch[t_params.n_rk_stages+1].electron_density,
+                        scratch[t_params.n_rk_stages+1].electron_upar,
+                        scratch[t_params.n_rk_stages+1].electron_p,
+                        scratch[t_params.n_rk_stages+1].electron_temp,
+                        #scratch[t_params.n_rk_stages+1].electron_external_source_controller_integral,
+                        scratch[2].pdf_neutral,
+                        scratch[t_params.n_rk_stages+1].density_neutral,
+                        scratch[t_params.n_rk_stages+1].uz_neutral,
+                        scratch[t_params.n_rk_stages+1].p_neutral,
+                        scratch[t_params.n_rk_stages+1].neutral_external_source_controller_integral)
+        apply_all_bcs_constraints_update_moments!(
+            loworder_constraints_scratch, pdf, moments, fields, boundaries, scratch_electron,
+            vz, vr, vzeta, vpa, vperp, z, r, spectral_objects, advect_objects, composition,
+            collisions, geometry, gyroavs, external_source_settings, num_diss_params,
+            t_params, nl_solver_params, advance, scratch_dummy, false, 0, 0.0)
 
-    # Re-calculate moment derivatives in the `moments` struct, in case they were changed
-    # by the previous call
-    apply_all_bcs_constraints_update_moments!(
-        scratch[t_params.n_rk_stages+1], pdf, moments, fields, boundaries,
-        scratch_electron, vz, vr, vzeta, vpa, vperp, z, r, spectral_objects,
-        advect_objects, composition, collisions, geometry, gyroavs,
-        external_source_settings, num_diss_params, t_params, nl_solver_params, advance,
-        scratch_dummy, false, 0, 0.0; pdf_bc_constraints=false)
+        # Re-calculate moment derivatives in the `moments` struct, in case they were changed
+        # by the previous call
+        apply_all_bcs_constraints_update_moments!(
+            scratch[t_params.n_rk_stages+1], pdf, moments, fields, boundaries,
+            scratch_electron, vz, vr, vzeta, vpa, vperp, z, r, spectral_objects,
+            advect_objects, composition, collisions, geometry, gyroavs,
+            external_source_settings, num_diss_params, t_params, nl_solver_params, advance,
+            scratch_dummy, false, 0, 0.0; pdf_bc_constraints=false)
 
-    # Calculate the timstep error estimates
-    if z.bc == "wall" && (moments.evolve_upar || moments.evolve_p)
-        # Set error on last/first non-zero point in ion distribution function to zero, as
-        # this this point may cause unhelpful timestep failures when the cutoff moves from
-        # one point to another.
-        if z.irank == 0 || z.irank == z.nrank - 1
-            @begin_s_r_region()
-            @loop_s_r is ir begin
-                density = @view scratch[t_params.n_rk_stages+1].density[:,ir,is]
-                upar = @view scratch[t_params.n_rk_stages+1].upar[:,ir,is]
-                p = @view scratch[t_params.n_rk_stages+1].p[:,ir,is]
-                phi = @view fields.phi[:,ir]
-                vEz = @view fields.vEz[:,ir]
-                bz = @view geometry.bzed[:,ir]
-                last_negative_vpa_ind, _, first_positive_vpa_ind, _ =
-                    get_ion_z_boundary_cutoff_indices(density, upar, vEz, bz,
-                                                      moments.ion.vth[1,ir,is],
-                                                      moments.ion.vth[end,ir,is],
-                                                      moments.evolve_upar,
-                                                      moments.evolve_p, z, vpa,
-                                                      1.0e-14, phi)
-                if z.irank == 0
-                    scratch[2].pdf[last_negative_vpa_ind,:,1,ir,is] .=
-                        scratch[t_params.n_rk_stages+1].pdf[last_negative_vpa_ind,:,1,ir,is]
-                end
-                if z.irank == z.nrank - 1
-                    scratch[2].pdf[first_positive_vpa_ind,:,end,ir,is] .=
-                        scratch[t_params.n_rk_stages+1].pdf[first_positive_vpa_ind,:,end,ir,is]
+        # Calculate the timstep error estimates
+        if z.bc == "wall" && (moments.evolve_upar || moments.evolve_p)
+            # Set error on last/first non-zero point in ion distribution function to zero, as
+            # this this point may cause unhelpful timestep failures when the cutoff moves from
+            # one point to another.
+            if z.irank == 0 || z.irank == z.nrank - 1
+                @begin_s_r_region()
+                @loop_s_r is ir begin
+                    density = @view scratch[t_params.n_rk_stages+1].density[:,ir,is]
+                    upar = @view scratch[t_params.n_rk_stages+1].upar[:,ir,is]
+                    p = @view scratch[t_params.n_rk_stages+1].p[:,ir,is]
+                    phi = @view fields.phi[:,ir]
+                    vEz = @view fields.vEz[:,ir]
+                    bz = @view geometry.bzed[:,ir]
+                    last_negative_vpa_ind, _, first_positive_vpa_ind, _ =
+                        get_ion_z_boundary_cutoff_indices(density, upar, vEz, bz,
+                                                          moments.ion.vth[1,ir,is],
+                                                          moments.ion.vth[end,ir,is],
+                                                          moments.evolve_upar,
+                                                          moments.evolve_p, z, vpa,
+                                                          1.0e-14, phi)
+                    if z.irank == 0
+                        scratch[2].pdf[last_negative_vpa_ind,:,1,ir,is] .=
+                            scratch[t_params.n_rk_stages+1].pdf[last_negative_vpa_ind,:,1,ir,is]
+                    end
+                    if z.irank == z.nrank - 1
+                        scratch[2].pdf[first_positive_vpa_ind,:,end,ir,is] .=
+                            scratch[t_params.n_rk_stages+1].pdf[first_positive_vpa_ind,:,end,ir,is]
+                    end
                 end
             end
         end
-    end
-    ion_pdf_error = local_error_norm(scratch[2].pdf, scratch[t_params.n_rk_stages+1].pdf,
-                                     t_params.rtol, t_params.atol;
-                                     method=error_norm_method, skip_r_inner=skip_r_inner,
-                                     skip_z_lower=skip_z_lower,
-                                     error_sum_zero=t_params.error_sum_zero)
-    error_norms["pdf_accuracy"] = ion_pdf_error
-    push!(total_points,
-          vpa.n_global * vperp.n_global * z.n_global * r.n_global * n_ion_species)
-
-    # Calculate error for ion moments, if necessary
-    if moments.evolve_density
-        @begin_s_r_z_region()
-        ion_n_err = local_error_norm(scratch[2].density,
-                                     scratch[t_params.n_rk_stages+1].density,
-                                     t_params.rtol, t_params.atol;
-                                     method=error_norm_method, skip_r_inner=skip_r_inner,
-                                     skip_z_lower=skip_z_lower,
-                                     error_sum_zero=t_params.error_sum_zero)
-        error_norms["density_accuracy"] = ion_n_err
-        push!(total_points, z.n_global * r.n_global * n_ion_species)
-    end
-    if moments.evolve_upar
-        @begin_s_r_z_region()
-        ion_u_err = local_error_norm(scratch[2].upar,
-                                     scratch[t_params.n_rk_stages+1].upar, t_params.rtol,
-                                     t_params.atol; method=error_norm_method,
-                                     skip_r_inner=skip_r_inner, skip_z_lower=skip_z_lower,
-                                     error_sum_zero=t_params.error_sum_zero)
-        error_norms["upar_accuracy"] = ion_u_err
-        push!(total_points, z.n_global * r.n_global * n_ion_species)
-    end
-    if moments.evolve_p
-        @begin_s_r_z_region()
-        ion_p_err = local_error_norm(scratch[2].p,
-                                     scratch[t_params.n_rk_stages+1].p, t_params.rtol,
-                                     t_params.atol; method=error_norm_method,
-                                     skip_r_inner=skip_r_inner, skip_z_lower=skip_z_lower,
-                                     error_sum_zero=t_params.error_sum_zero)
-        error_norms["p_accuracy"] = ion_p_err
-        push!(total_points, z.n_global * r.n_global * n_ion_species)
-    end
-
-    if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
-        @begin_r_z_region()
-        electron_p_err = local_error_norm(scratch[2].electron_p,
-                                          scratch[t_params.n_rk_stages+1].electron_p,
-                                          t_params.rtol, t_params.atol;
-                                          method=error_norm_method,
-                                          skip_r_inner=skip_r_inner,
-                                          skip_z_lower=skip_z_lower,
-                                          error_sum_zero=t_params.error_sum_zero)
-        error_norms["electron_p_accuracy"] = electron_p_err
-        push!(total_points, z.n_global * r.n_global)
-
-        if t_params.kinetic_electron_solver == explicit_time_evolving
-            # Need to have an accurate electron_pdf solution to avoid crashing an
-            # explicit-timestepping simulation.
-            electron_pdf_error = local_error_norm(scratch[2].pdf_electron,
-                                                  scratch[t_params.n_rk_stages+1].pdf_electron,
-                                                  t_params.rtol, t_params.atol;
-                                                  method=error_norm_method,
-                                                  skip_r_inner=skip_r_inner,
-                                                  skip_z_lower=skip_z_lower,
-                                                  error_sum_zero=t_params.error_sum_zero)
-            error_norms["electron_pdf_accuracy"] = electron_pdf_error
-            push!(total_points,
-                  vpa.n_global * vperp.n_global * z.n_global * r.n_global)
-        end
-    end
-
-    if n_neutral_species > 0
-        # neutral z-advection
-        # Don't parallelise over species here, because get_minimum_CFL_*() does an MPI
-        # reduction over the shared-memory block, so all processes must calculate the same
-        # species at the same time.
-        update_speed_neutral_z!(neutral_z_advect, moments.neutral.uz, moments.neutral.vth,
-                                evolve_upar, evolve_p, vz, vr, vzeta, z, r, t_params.t[])
-        neutral_z_CFL = get_minimum_CFL_neutral_z(neutral_z_advect, z)
-        @serial_region begin
-            CFL_limits["neutral_CFL_z"] = t_params.CFL_prefactor * neutral_z_CFL
-        end
-
-        # neutral vz-advection
-        update_speed_neutral_vz!(neutral_vz_advect, fields,
-                                 scratch[t_params.n_rk_stages+1], moments, vz, vr, vzeta,
-                                 z, r, composition, collisions,
-                                 external_source_settings.neutral)
-        neutral_vz_CFL = get_minimum_CFL_neutral_vz(neutral_vz_advect, vz)
-        @serial_region begin
-            CFL_limits["neutral_CFL_vz"] = t_params.CFL_prefactor * neutral_vz_CFL
-        end
-
-        # Calculate error for neutral distribution functions
-        neut_pdf_error = local_error_norm(scratch[2].pdf_neutral,
-                                          scratch[t_params.n_rk_stages+1].pdf_neutral,
-                                          t_params.rtol, t_params.atol;
-                                          method=error_norm_method,
-                                          skip_r_inner=skip_r_inner,
-                                          skip_z_lower=skip_z_lower,
-                                          error_sum_zero=t_params.error_sum_zero)
-        error_norms["neutral_pdf_accuracy"] = neut_pdf_error
+        ion_pdf_error = local_error_norm(scratch[2].pdf, scratch[t_params.n_rk_stages+1].pdf,
+                                         t_params.rtol, t_params.atol;
+                                         method=error_norm_method, skip_r_inner=skip_r_inner,
+                                         skip_z_lower=skip_z_lower,
+                                         error_sum_zero=t_params.error_sum_zero)
+        error_norms["pdf_accuracy"] = ion_pdf_error
         push!(total_points,
-              vz.n_global * vr.n_global * vzeta.n_global * z.n_global * r.n_global *
-              n_neutral_species)
+              vpa.n_global * vperp.n_global * z.n_global * r.n_global * n_ion_species)
 
-        # Calculate error for neutral moments, if necessary
+        # Calculate error for ion moments, if necessary
         if moments.evolve_density
-            @begin_sn_r_z_region()
-            neut_n_err = local_error_norm(scratch[2].density_neutral,
-                                          scratch[t_params.n_rk_stages+1].density_neutral,
-                                          t_params.rtol, t_params.atol, true;
-                                          method=error_norm_method,
-                                          skip_r_inner=skip_r_inner,
-                                          skip_z_lower=skip_z_lower,
-                                          error_sum_zero=t_params.error_sum_zero)
-            error_norms["neutral_density_accuracy"] = neut_n_err
-            push!(total_points, z.n_global * r.n_global * n_neutral_species)
+            @begin_s_r_z_region()
+            ion_n_err = local_error_norm(scratch[2].density,
+                                         scratch[t_params.n_rk_stages+1].density,
+                                         t_params.rtol, t_params.atol;
+                                         method=error_norm_method, skip_r_inner=skip_r_inner,
+                                         skip_z_lower=skip_z_lower,
+                                         error_sum_zero=t_params.error_sum_zero)
+            error_norms["density_accuracy"] = ion_n_err
+            push!(total_points, z.n_global * r.n_global * n_ion_species)
         end
         if moments.evolve_upar
-            @begin_sn_r_z_region()
-            neut_u_err = local_error_norm(scratch[2].uz_neutral,
-                                          scratch[t_params.n_rk_stages+1].uz_neutral,
-                                          t_params.rtol, t_params.atol, true;
-                                          method=error_norm_method,
-                                          skip_r_inner=skip_r_inner,
-                                          skip_z_lower=skip_z_lower,
-                                          error_sum_zero=t_params.error_sum_zero)
-            error_norms["neutral_uz_accuracy"] = neut_u_err
-            push!(total_points, z.n_global * r.n_global * n_neutral_species)
+            @begin_s_r_z_region()
+            ion_u_err = local_error_norm(scratch[2].upar,
+                                         scratch[t_params.n_rk_stages+1].upar, t_params.rtol,
+                                         t_params.atol; method=error_norm_method,
+                                         skip_r_inner=skip_r_inner, skip_z_lower=skip_z_lower,
+                                         error_sum_zero=t_params.error_sum_zero)
+            error_norms["upar_accuracy"] = ion_u_err
+            push!(total_points, z.n_global * r.n_global * n_ion_species)
         end
         if moments.evolve_p
-            @begin_sn_r_z_region()
-            neut_p_err = local_error_norm(scratch[2].p_neutral,
-                                          scratch[t_params.n_rk_stages+1].p_neutral,
-                                          t_params.rtol, t_params.atol, true;
-                                          method=error_norm_method,
-                                          skip_r_inner=skip_r_inner,
-                                          skip_z_lower=skip_z_lower,
-                                          error_sum_zero=t_params.error_sum_zero)
-            error_norms["neutral_p_accuracy"] = neut_p_err
-            push!(total_points, z.n_global * r.n_global * n_neutral_species)
+            @begin_s_r_z_region()
+            ion_p_err = local_error_norm(scratch[2].p,
+                                         scratch[t_params.n_rk_stages+1].p, t_params.rtol,
+                                         t_params.atol; method=error_norm_method,
+                                         skip_r_inner=skip_r_inner, skip_z_lower=skip_z_lower,
+                                         error_sum_zero=t_params.error_sum_zero)
+            error_norms["p_accuracy"] = ion_p_err
+            push!(total_points, z.n_global * r.n_global * n_ion_species)
+        end
+
+        if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons,
+                                           kinetic_electrons_with_temperature_equation)
+            @begin_r_z_region()
+            electron_p_err = local_error_norm(scratch[2].electron_p,
+                                              scratch[t_params.n_rk_stages+1].electron_p,
+                                              t_params.rtol, t_params.atol;
+                                              method=error_norm_method,
+                                              skip_r_inner=skip_r_inner,
+                                              skip_z_lower=skip_z_lower,
+                                              error_sum_zero=t_params.error_sum_zero)
+            error_norms["electron_p_accuracy"] = electron_p_err
+            push!(total_points, z.n_global * r.n_global)
+
+            if t_params.kinetic_electron_solver == explicit_time_evolving
+                # Need to have an accurate electron_pdf solution to avoid crashing an
+                # explicit-timestepping simulation.
+                electron_pdf_error = local_error_norm(scratch[2].pdf_electron,
+                                                      scratch[t_params.n_rk_stages+1].pdf_electron,
+                                                      t_params.rtol, t_params.atol;
+                                                      method=error_norm_method,
+                                                      skip_r_inner=skip_r_inner,
+                                                      skip_z_lower=skip_z_lower,
+                                                      error_sum_zero=t_params.error_sum_zero)
+                error_norms["electron_pdf_accuracy"] = electron_pdf_error
+                push!(total_points,
+                      vpa.n_global * vperp.n_global * z.n_global * r.n_global)
+            end
+        end
+
+        if n_neutral_species > 0
+            # neutral z-advection
+            # Don't parallelise over species here, because get_minimum_CFL_*() does an MPI
+            # reduction over the shared-memory block, so all processes must calculate the same
+            # species at the same time.
+            update_speed_neutral_z!(neutral_z_advect, moments.neutral.uz, moments.neutral.vth,
+                                    evolve_upar, evolve_p, vz, vr, vzeta, z, r, t_params.t[])
+            neutral_z_CFL = get_minimum_CFL_neutral_z(neutral_z_advect, z)
+            @serial_region begin
+                CFL_limits["neutral_CFL_z"] = t_params.CFL_prefactor * neutral_z_CFL
+            end
+
+            # neutral vz-advection
+            update_speed_neutral_vz!(neutral_vz_advect, fields,
+                                     scratch[t_params.n_rk_stages+1], moments, vz, vr, vzeta,
+                                     z, r, composition, collisions,
+                                     external_source_settings.neutral)
+            neutral_vz_CFL = get_minimum_CFL_neutral_vz(neutral_vz_advect, vz)
+            @serial_region begin
+                CFL_limits["neutral_CFL_vz"] = t_params.CFL_prefactor * neutral_vz_CFL
+            end
+
+            # Calculate error for neutral distribution functions
+            neut_pdf_error = local_error_norm(scratch[2].pdf_neutral,
+                                              scratch[t_params.n_rk_stages+1].pdf_neutral,
+                                              t_params.rtol, t_params.atol;
+                                              method=error_norm_method,
+                                              skip_r_inner=skip_r_inner,
+                                              skip_z_lower=skip_z_lower,
+                                              error_sum_zero=t_params.error_sum_zero)
+            error_norms["neutral_pdf_accuracy"] = neut_pdf_error
+            push!(total_points,
+                  vz.n_global * vr.n_global * vzeta.n_global * z.n_global * r.n_global *
+                  n_neutral_species)
+
+            # Calculate error for neutral moments, if necessary
+            if moments.evolve_density
+                @begin_sn_r_z_region()
+                neut_n_err = local_error_norm(scratch[2].density_neutral,
+                                              scratch[t_params.n_rk_stages+1].density_neutral,
+                                              t_params.rtol, t_params.atol, true;
+                                              method=error_norm_method,
+                                              skip_r_inner=skip_r_inner,
+                                              skip_z_lower=skip_z_lower,
+                                              error_sum_zero=t_params.error_sum_zero)
+                error_norms["neutral_density_accuracy"] = neut_n_err
+                push!(total_points, z.n_global * r.n_global * n_neutral_species)
+            end
+            if moments.evolve_upar
+                @begin_sn_r_z_region()
+                neut_u_err = local_error_norm(scratch[2].uz_neutral,
+                                              scratch[t_params.n_rk_stages+1].uz_neutral,
+                                              t_params.rtol, t_params.atol, true;
+                                              method=error_norm_method,
+                                              skip_r_inner=skip_r_inner,
+                                              skip_z_lower=skip_z_lower,
+                                              error_sum_zero=t_params.error_sum_zero)
+                error_norms["neutral_uz_accuracy"] = neut_u_err
+                push!(total_points, z.n_global * r.n_global * n_neutral_species)
+            end
+            if moments.evolve_p
+                @begin_sn_r_z_region()
+                neut_p_err = local_error_norm(scratch[2].p_neutral,
+                                              scratch[t_params.n_rk_stages+1].p_neutral,
+                                              t_params.rtol, t_params.atol, true;
+                                              method=error_norm_method,
+                                              skip_r_inner=skip_r_inner,
+                                              skip_z_lower=skip_z_lower,
+                                              error_sum_zero=t_params.error_sum_zero)
+                error_norms["neutral_p_accuracy"] = neut_p_err
+                push!(total_points, z.n_global * r.n_global * n_neutral_species)
+            end
         end
     end
 

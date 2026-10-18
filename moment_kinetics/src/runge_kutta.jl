@@ -1354,9 +1354,15 @@ function adaptive_timestep_update_t_params!(t_params, CFL_limits, error_norms,
             @serial_region begin
                 # Get maximum error over all blocks
                 MPI.Allreduce!(error_norms_vec, max, comm_inter_block[])
-                max_error_variable_index = argmax(error_norms)
-                error_norm[] = error_norms_vec[max_error_variable_index]
-                max_error_variable = error_norms.keys[max_error_variable_index]
+                if length(error_norms_vec) == 0
+                    # This can happen if an implicit solve failed, but then
+                    # max_error_variable is not needed.
+                    max_error_variable = ""
+                else
+                    max_error_variable_index = argmax(error_norms)
+                    error_norm[] = error_norms_vec[max_error_variable_index]
+                    max_error_variable = error_norms.keys[max_error_variable_index]
+                end
             end
             MPI.Bcast!(error_norm, 0, comm_block[])
         elseif error_norm_method == "L2"
@@ -1380,8 +1386,14 @@ function adaptive_timestep_update_t_params!(t_params, CFL_limits, error_norms,
                 error_norm[] = mean(error_norms_vec)
 
                 # Record which variable had the maximum error
-                max_error_variable_index = argmax(error_norms_vec)
-                max_error_variable = error_norms.keys[max_error_variable_index]
+                if length(error_norms_vec) == 0
+                    # This can happen if an implicit solve failed, but then
+                    # max_error_variable is not needed.
+                    max_error_variable = ""
+                else
+                    max_error_variable_index = argmax(error_norms_vec)
+                    max_error_variable = error_norms.keys[max_error_variable_index]
+                end
             end
 
             MPI.Bcast!(error_norm, 0, comm_block[])
@@ -1423,9 +1435,15 @@ function adaptive_timestep_update_t_params!(t_params, CFL_limits, error_norms,
             @anyzv_serial_region begin
                 # Get maximum error over all blocks
                 MPI.Allreduce!(error_norms_vec, max, z.comm)
-                max_error_variable_index = argmax(error_norms)
-                error_norm[] = error_norms_vec[max_error_variable_index]
-                max_error_variable = error_norms.keys[max_error_variable_index]
+                if length(error_norms_vec) == 0
+                    # This can happen if an implicit solve failed, but then
+                    # max_error_variable is not needed.
+                    max_error_variable = ""
+                else
+                    max_error_variable_index = argmax(error_norms)
+                    error_norm[] = error_norms_vec[max_error_variable_index]
+                    max_error_variable = error_norms.keys[max_error_variable_index]
+                end
             end
             MPI.Bcast!(error_norm, 0, comm_anyzv_subblock[])
         elseif error_norm_method == "L2"
@@ -1449,8 +1467,14 @@ function adaptive_timestep_update_t_params!(t_params, CFL_limits, error_norms,
                 error_norm[] = mean(error_norms_vec)
 
                 # Record which variable had the maximum error
-                max_error_variable_index = argmax(error_norms_vec)
-                max_error_variable = error_norms.keys[max_error_variable_index]
+                if length(error_norms_vec) == 0
+                    # This can happen if an implicit solve failed, but then
+                    # max_error_variable is not needed.
+                    max_error_variable = ""
+                else
+                    max_error_variable_index = argmax(error_norms_vec)
+                    max_error_variable = error_norms.keys[max_error_variable_index]
+                end
             end
 
             MPI.Bcast!(error_norm, 0, comm_anyzv_subblock[])
