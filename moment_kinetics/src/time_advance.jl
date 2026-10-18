@@ -3916,6 +3916,7 @@ end
     end
 
     reset_nonlinear_per_stage_counters!(nl_solver_params.ion_advance)
+    reset_nonlinear_per_stage_counters!(nl_solver_params.ion_parallel_dynamics)
     reset_nonlinear_per_stage_counters!(nl_solver_params.vpa_advection)
     reset_nonlinear_per_stage_counters!(nl_solver_params.electron_conduction)
     if t_params.kinetic_electron_solver != implicit_steady_state && t_params.electron !== nothing
