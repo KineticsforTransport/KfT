@@ -44,7 +44,7 @@ using MPI
 using SparseArrays
 using StatsBase: mean
 
-struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon,Tpretype}
+struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon,Tpretype,Towned}
     rtol::mk_float
     atol::mk_float
     nonlinear_max_iterations::mk_int
@@ -79,6 +79,13 @@ struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon,Tpretype}
     preconditioner_type::Tpretype
     preconditioner_update_interval::mk_int
     preconditioners::Tprecon
+    # Ranks in `shared_comm` divide the block-owned entries of each unknown.
+    # `distributed_comm` is `MPI.COMM_NULL` except on rank 0 of `shared_comm`.
+    # `owned_indices` is one tuple entry per unknown array. Each entry is the
+    # flat index ranges updated by this rank, fastest index first.
+    shared_comm::MPI.Comm
+    distributed_comm::MPI.Comm
+    owned_indices::Towned
 end
 
 """
@@ -222,6 +229,12 @@ function setup_nonlinear_solve(nl_solver_input, coords, outer_coords=();
 
     linear_initial_guess = zeros(linear_restart)
 
+    shared_comm, distributed_comm = _solver_comms(
+        coords; serial_solve=serial_solve, anysv_region=anysv_region,
+        anyzv_region=anyzv_region, electron_p_pdf_solve=electron_p_pdf_solve)
+    owned_indices = _solver_owned_indices(coords, shared_comm;
+                                          electron_p_pdf_solve=electron_p_pdf_solve)
+
     return nl_solver_info(mk_float(nl_solver_input.rtol), mk_float(nl_solver_input.atol),
                           nl_solver_input.nonlinear_max_iterations,
                           mk_float(nl_solver_input.linear_rtol),
@@ -234,7 +247,206 @@ function setup_nonlinear_solve(nl_solver_input, coords, outer_coords=();
                           zeros(mk_int, n_vcut_inds), serial_solve, anysv_region,
                           anyzv_region, Ref(0), Ref(0),
                           nl_solver_input.total_its_soft_limit, preconditioner_type,
-                          nl_solver_input.preconditioner_update_interval, preconditioners)
+                          nl_solver_input.preconditioner_update_interval, preconditioners,
+                          shared_comm, distributed_comm, owned_indices)
+end
+
+"""
+    _solver_comms(coords; serial_solve, anysv_region, anyzv_region, electron_p_pdf_solve)
+
+Select `shared_comm` and `distributed_comm` for one nonlinear solve. The flags are tested
+in order as follows, and the first match is used:
+
+`serial_solve` is implicit `vpa` advection, called inside an already-parallel loop over
+species, `r`, `z`, and `vperp`. `shared_comm` is `MPI.COMM_SELF` and `distributed_comm` is
+`MPI.COMM_NULL`.
+
+`electron_p_pdf_solve` or `anyzv_region` is kinetic electrons, unknowns `(p_e, f_e)` at one
+`r`, or Braginskii electron heat conduction, unknown `p_e(z)` at one `r`. `shared_comm` is
+`comm_anyzv_subblock`. Rank 0 of that communicator gets `coords.z.comm` as
+`distributed_comm`.
+
+`anysv_region` is ion Fokker-Planck self-collisions at one `(r, z)`. `shared_comm` is
+`comm_anysv_subblock` and `distributed_comm` is `MPI.COMM_NULL`.
+
+The remaining case is the implicit ion advance of the distribution on the local block.
+`shared_comm` is `comm_block`. Rank 0 of that communicator gets `comm_inter_block` as
+`distributed_comm`.
+"""
+function _solver_comms(coords; serial_solve::Bool, anysv_region::Bool,
+                       anyzv_region::Bool, electron_p_pdf_solve::Bool)
+    if serial_solve
+        shared_comm = MPI.COMM_SELF
+        distributed_comm = MPI.COMM_NULL
+    elseif electron_p_pdf_solve || anyzv_region
+        shared_comm = comm_anyzv_subblock[]
+        distributed_comm = _distributed_comm_for_lead_rank(shared_comm, coords.z.comm)
+    elseif anysv_region
+        shared_comm = comm_anysv_subblock[]
+        distributed_comm = MPI.COMM_NULL
+    else
+        shared_comm = comm_block[]
+        distributed_comm = _distributed_comm_for_lead_rank(shared_comm, comm_inter_block[])
+    end
+    return shared_comm, distributed_comm
+end
+
+function _distributed_comm_for_lead_rank(shared_comm::MPI.Comm, lead_comm::MPI.Comm)
+    if shared_comm == MPI.COMM_NULL || MPI.Comm_rank(shared_comm) != 0
+        return MPI.COMM_NULL
+    end
+    return lead_comm
+end
+
+"""
+    _solver_owned_indices(coords, shared_comm; electron_p_pdf_solve)
+
+Flat index ranges updated by this rank. Callers pass `coords` slowest-varying first. The
+ranges index array memory, which is fastest-varying first. The entries are divided across
+the `shared_comm` selected by `_solver_comms`. A rank with `MPI.COMM_NULL`, or a
+rank in the communicator that owns no entries, gets an empty list. Membership of
+`shared_comm` is unchanged.
+
+A single unknown returns a one-element tuple of ranges. Implicit `vpa` advection,
+Braginskii conduction, Fokker-Planck, and the implicit ion advance use this form.
+
+`electron_p_pdf_solve` returns `(pressure_ranges, pdf_ranges)`. Pressure uses `coords.z`
+only. The distribution uses every dimension in `coords`. The two lists are split
+separately, so each unknown keeps its own norm.
+
+The last local index of a distributed coordinate is omitted on every block except the last
+along that coordinate, where the index duplicates the next block's boundary. Consecutive
+indices are stored as one range.
+"""
+function _solver_owned_indices(coords, shared_comm::MPI.Comm; electron_p_pdf_solve::Bool)
+    if !electron_p_pdf_solve
+        dim_sizes, exclude_last = _sizes_and_excluded(coords)
+        return (_split_ranges_across_comm(
+            _block_owned_ranges(dim_sizes, exclude_last), shared_comm),)
+    end
+    z = coords.z
+    pressure_ranges = _split_ranges_across_comm(
+        _block_owned_ranges((Int(z.n),), (_dimension_excludes_boundary(z),)),
+        shared_comm)
+    pdf_sizes, pdf_exclude = _sizes_and_excluded(coords)
+    pdf_ranges = _split_ranges_across_comm(
+        _block_owned_ranges(pdf_sizes, pdf_exclude), shared_comm)
+    return pressure_ranges, pdf_ranges
+end
+
+# `coords` is ordered slowest-varying first. Array memory is fastest-varying first.
+function _sizes_and_excluded(coords::NamedTuple{Names}) where {Names}
+    N = length(Names)
+    dim_sizes = ntuple(Val(N)) do i
+        c = coords[i]
+        Int(isa(c, coordinate) ? c.n : c)
+    end
+    exclude_last = ntuple(Val(N)) do i
+        _dimension_excludes_boundary(coords[i])
+    end
+    return reverse(dim_sizes), reverse(exclude_last)
+end
+
+function _dimension_excludes_boundary(c)
+    return c isa coordinate && c.nrank > 1 && c.irank < c.nrank - 1
+end
+
+# Contiguous flat-index ranges for the points owned by this distributed-memory
+# block. The last local index of a distributed dimension is the copy of the
+# next block's boundary point, so it is omitted.
+function _block_owned_ranges(dim_sizes::NTuple{N,Int}, exclude_last::NTuple{N,Bool}) where {N}
+    owned_sizes = ntuple(d -> exclude_last[d] ? dim_sizes[d] - 1 : dim_sizes[d], N)
+    if any(s -> s <= 0, owned_sizes)
+        return UnitRange{Int}[]
+    end
+    if N == 1
+        return UnitRange{Int}[1:owned_sizes[1]]
+    end
+    inner = owned_sizes[1]
+    ranges = UnitRange{Int}[]
+    outer_index = ones(Int, N - 1)
+    nouter = prod(owned_sizes[2:end])
+    sizehint!(ranges, nouter)
+    for _ in 1:nouter
+        offset = 0
+        stride = dim_sizes[1]
+        for j in 1:(N - 1)
+            offset += (outer_index[j] - 1) * stride
+            stride *= dim_sizes[j + 1]
+        end
+        push!(ranges, (offset + 1):(offset + inner))
+        for j in 1:(N - 1)
+            outer_index[j] += 1
+            if outer_index[j] <= owned_sizes[j + 1]
+                break
+            end
+            outer_index[j] = 1
+        end
+    end
+    return _coalesce_ranges(ranges)
+end
+
+function _coalesce_ranges(ranges::Vector{UnitRange{Int}})
+    isempty(ranges) && return ranges
+    coalesced = UnitRange{Int}[]
+    start_ind = first(first(ranges))
+    stop_ind = last(first(ranges))
+    for r in @view ranges[2:end]
+        if first(r) == stop_ind + 1
+            stop_ind = last(r)
+        else
+            push!(coalesced, start_ind:stop_ind)
+            start_ind = first(r)
+            stop_ind = last(r)
+        end
+    end
+    push!(coalesced, start_ind:stop_ind)
+    return coalesced
+end
+
+function _split_ranges_across_comm(block_ranges::Vector{UnitRange{Int}}, comm::MPI.Comm)
+    if comm == MPI.COMM_NULL
+        return UnitRange{Int}[]
+    end
+    n_owned = sum(length, block_ranges; init=0)
+    mine = _chunk_of_owned_count(n_owned, MPI.Comm_rank(comm), MPI.Comm_size(comm))
+    return _slice_owned_ranges(block_ranges, mine)
+end
+
+function _chunk_of_owned_count(n_owned::Int, rank::Int, nrank::Int)
+    base, remainder = divrem(n_owned, nrank)
+    if rank < remainder
+        start_ind = rank * (base + 1) + 1
+        return start_ind:(start_ind + base)
+    else
+        start_ind = remainder * (base + 1) + (rank - remainder) * base + 1
+        return start_ind:(start_ind + base - 1)
+    end
+end
+
+function _slice_owned_ranges(block_ranges::Vector{UnitRange{Int}}, mine::UnitRange{Int})
+    if isempty(mine)
+        return UnitRange{Int}[]
+    end
+    sliced = UnitRange{Int}[]
+    position = 1
+    for r in block_ranges
+        rlen = length(r)
+        range_end = position + rlen - 1
+        overlap_start = max(first(mine), position)
+        overlap_stop = min(last(mine), range_end)
+        if overlap_start <= overlap_stop
+            shift = overlap_start - position
+            len = overlap_stop - overlap_start + 1
+            start_ind = first(r) + shift
+            push!(sliced, start_ind:(start_ind + len - 1))
+        end
+        position = range_end + 1
+        if position > last(mine)
+            break
+        end
+    end
+    return sliced
 end
 
 """
