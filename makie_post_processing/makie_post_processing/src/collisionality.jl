@@ -351,7 +351,7 @@ function collisionality_plots(run_info, run_info_dfns, plot_prefix=nothing)
         end
 
         if run_info_dfns[1].dfns && input.plot_compare_Maxwellian
-            f_input = Dict_to_NamedTuple(input_dict["f"])
+            f_input = Dict_to_NamedTuple(input_dict_dfns["f"])
 
             f = get_variable(run_info_dfns, "f_unnorm"; it=f_input.it0, is=1, ir=f_input.ir0, ivperp=f_input.ivperp0)
             f_M = get_variable(run_info_dfns, "local_Maxwellian"; it=f_input.it0, is=1, ir=f_input.ir0, ivperp=f_input.ivperp0)
@@ -427,10 +427,12 @@ function collisionality_plots(run_info, run_info_dfns, plot_prefix=nothing)
         end
 
         if run_info_dfns[1].dfns && input.animate_compare_Maxwellian
-            f_input = Dict_to_NamedTuple(input_dict["f"])
+            f_input = Dict_to_NamedTuple(input_dict_dfns["f"])
 
             f = get_variable(run_info_dfns, "f_unnorm"; is=1, ir=f_input.ir0, ivperp=f_input.ivperp0)
             f_M = get_variable(run_info_dfns, "local_Maxwellian"; is=1, ir=f_input.ir0, ivperp=f_input.ivperp0)
+
+            nt_dfns = minimum(size(f[ri], ndims(f[ri])) for ri in eachindex(run_info))
 
             fig, ax, colorbar_place = get_2d_ax(3*length(run_info_dfns); xlabel="wpa", ylabel="z")
             frame_index = Observable(1)
@@ -452,7 +454,7 @@ function collisionality_plots(run_info, run_info_dfns, plot_prefix=nothing)
                            frame_index=frame_index)
             end
 
-            save_animation(fig, frame_index, nt, plot_prefix * "Maxwellian_difference_vs_vpa_z.gif")
+            save_animation(fig, frame_index, nt_dfns, plot_prefix * "Maxwellian_difference_vs_vpa_z.gif")
 
             iz0 = f_input.iz0
             fig, ax, legend_place = get_1d_ax(2; xlabel="wpa", get_legend_place=:below)
@@ -472,7 +474,7 @@ function collisionality_plots(run_info, run_info_dfns, plot_prefix=nothing)
             ax[2].ylabel = "f - f_M"
             Legend(legend_place[2], ax[2]; tellheight=true, tellwidth=false)
 
-            save_animation(fig, frame_index, nt, plot_prefix * "Maxwellian_difference_vs_vpa.gif")
+            save_animation(fig, frame_index, nt_dfns, plot_prefix * "Maxwellian_difference_vs_vpa.gif")
 
             fig, ax, colorbar_place = get_2d_ax(3*length(run_info_dfns); xlabel="wpa", ylabel="z")
             frame_index = Observable(1)
@@ -497,7 +499,7 @@ function collisionality_plots(run_info, run_info_dfns, plot_prefix=nothing)
                            transform=x->positive_or_nan(abs(x); epsilon=1.e-16))
             end
 
-            save_animation(fig, frame_index, nt, plot_prefix * "Maxwellian_difference_log_vs_vpa_z.gif")
+            save_animation(fig, frame_index, nt_dfns, plot_prefix * "Maxwellian_difference_log_vs_vpa_z.gif")
 
             iz0 = f_input.iz0
             fig, ax, legend_place = get_1d_ax(; yscale=log10, xlabel="wpa",
@@ -519,7 +521,7 @@ function collisionality_plots(run_info, run_info_dfns, plot_prefix=nothing)
             ax.ylabel = "f"
             Legend(legend_place, ax; tellheight=true, tellwidth=false)
 
-            save_animation(fig, frame_index, nt, plot_prefix * "Maxwellian_difference_log_vs_vpa.gif")
+            save_animation(fig, frame_index, nt_dfns, plot_prefix * "Maxwellian_difference_log_vs_vpa.gif")
         end
     end
 end
