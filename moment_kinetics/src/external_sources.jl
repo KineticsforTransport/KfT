@@ -1488,9 +1488,9 @@ source amplitude.
                          ion_source_settings, index, vperp, dt) = begin
     is = 1
     ion_moments = moments.ion
-    density = @view fvec_in.density[:,:,is]
-    upar = @view fvec_in.upar[:,:,is]
-    p = @view fvec_in.p[:,:,is]
+    density = fvec_in.density
+    upar = fvec_in.upar
+    p = fvec_in.p
     external_source_pressure_amplitude = ion_moments.external_source_pressure_amplitude
     external_source_momentum_amplitude = ion_moments.external_source_momentum_amplitude
     source_T_array = ion_source_settings.source_T_array
@@ -1505,13 +1505,13 @@ source amplitude.
             if vperp.n == 1
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir]^2) *
+			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir,is]^2) *
 			source_strength * r_amplitude[ir] * z_amplitude[iz]
                 end
             else
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir]^2) *
+			(source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir,is]^2) *
 			source_strength * r_amplitude[ir] * z_amplitude[iz]
                 end
             end
@@ -1522,7 +1522,7 @@ source amplitude.
 
             @loop_r_z ir iz begin
                 external_source_momentum_amplitude[iz,ir,index] =
-                    - density[iz,ir] * upar[iz,ir] *
+                    - density[iz,ir,is] * upar[iz,ir,is] *
 		      source_strength * r_amplitude[ir] * z_amplitude[iz]
             end
         end
@@ -1532,15 +1532,15 @@ source amplitude.
             if vperp.n == 1
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir]^2
-                         - p[iz,ir] / density[iz,ir]) *
+			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir,is]^2
+                         - p[iz,ir,is] / density[iz,ir,is]) *
 			source_strength * r_amplitude[ir] * z_amplitude[iz]
                 end
             else
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir]^2
-			 - p[iz,ir] / density[iz,ir]) *
+			(source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir,is]^2
+			 - p[iz,ir,is] / density[iz,ir,is]) *
 			source_strength * r_amplitude[ir] * z_amplitude[iz]
                 end
             end
@@ -1596,13 +1596,13 @@ source amplitude.
             if vperp.n == 1
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir]^2) *
+			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir,is]^2) *
                         amplitude * controller_source_profile[iz,ir]
                 end
             else
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-                        (source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir]^2) *
+                        (source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir,is]^2) *
                         amplitude * controller_source_profile[iz,ir]
                 end
             end
@@ -1649,7 +1649,7 @@ source amplitude.
         if moments.evolve_upar
             @loop_r_z ir iz begin
                 external_source_momentum_amplitude[iz,ir,index] =
-                    - density[iz,ir] * upar[iz,ir] * amplitude *
+                    - density[iz,ir] * upar[iz,ir,is] * amplitude *
                     controller_source_profile[iz,ir]
             end
         end
@@ -1657,15 +1657,15 @@ source amplitude.
             if vperp.n == 1
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir]^2
-                         - p[iz,ir] / density[iz,ir]) *
+			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir,is]^2
+                         - p[iz,ir,is] / density[iz,ir,is]) *
                         amplitude * controller_source_profile[iz,ir]
                 end
             else
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-                        (source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir]^2 -
-                         p[iz,ir] / density[iz,ir]) *
+                        (source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir,is]^2 -
+                         p[iz,ir,is] / density[iz,ir,is]) *
                         amplitude * controller_source_profile[iz,ir]
                 end
             end
@@ -1694,13 +1694,13 @@ source amplitude.
             if vperp.n == 1
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir]^2) *
+			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir,is]^2) *
                         amplitude[iz,ir,index]
                 end
             else
                 @loop_r_z ir iz begin
                     ion_moments.external_source_pressure_amplitude[iz,ir,index] =
-                        (source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir]^2) *
+                        (source_T_array[iz,ir] + 1.0/3.0 * upar[iz,ir,is]^2) *
                         amplitude[iz,ir,index]
                 end
             end
@@ -1876,9 +1876,9 @@ source amplitude.
 
     isn = 1
     neutral_moments = moments.neutral
-    density = @view fvec_in.density_neutral[:,:,isn]
-    uz = @view fvec_in.uz_neutral[:,:,isn]
-    p = @view fvec_in.p_neutral[:,:,isn]
+    density = fvec_in.density_neutral
+    uz = fvec_in.uz_neutral
+    p = fvec_in.p_neutral
     external_source_amplitude = neutral_moments.external_source_amplitude
     external_source_momentum_amplitude = neutral_moments.external_source_momentum_amplitude
     external_source_pressure_amplitude = neutral_moments.external_source_pressure_amplitude
@@ -1892,13 +1892,13 @@ source amplitude.
             if vzeta.n == 1 && vr.n == 1
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir]^2) *
+			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir,isn]^2) *
                         external_source_amplitude[iz,ir,index]
                 end
             else
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir]^2) *
+			(source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir,isn]^2) *
                         external_source_amplitude[iz,ir,index]
                 end
             end
@@ -1907,7 +1907,7 @@ source amplitude.
         if moments.evolve_upar
             @loop_r_z ir iz begin
                 external_source_momentum_amplitude[iz,ir,index] =
-                    - density[iz,ir] * uz[iz,ir] *
+                    - density[iz,ir,isn] * uz[iz,ir,isn] *
 		      source_strength * r_amplitude[ir] * z_amplitude[iz]
             end
         end
@@ -1916,14 +1916,14 @@ source amplitude.
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
                         (1.0/3.0 * source_T_array[iz,ir] +
-                         1.0/3.0 * uz[iz,ir]^2 - p[iz,ir] / density[iz,ir]) *
+                         1.0/3.0 * uz[iz,ir,isn]^2 - p[iz,ir,isn] / density[iz,ir,isn]) *
 			source_strength * r_amplitude[ir] * z_amplitude[iz]
                 end
             else
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir]^2
-			 - p[iz,ir] / density[iz,ir]) *
+			(source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir,isn]^2
+			 - p[iz,ir,isn] / density[iz,ir,isn]) *
 			source_strength * r_amplitude[ir] * z_amplitude[iz]
                 end
             end
@@ -1939,7 +1939,7 @@ source amplitude.
                 # This process has the target point
 
                 n_mid = density[neutral_source_settings.PI_density_target_iz,
-                                neutral_source_settings.PI_density_target_ir]
+                                neutral_source_settings.PI_density_target_ir, isn]
                 n_error = neutral_source_settings.PI_density_target - n_mid
 
                 # Only want a source, so never allow amplitude to be negative
@@ -1977,13 +1977,13 @@ source amplitude.
             if vzeta.n == 1 && vr.n == 1
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir]^2) *
+			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir,isn]^2) *
                         amplitude * controller_source_profile[iz,ir,index]
                 end
             else
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir]^2) *
+			(source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir,isn]^2) *
                         amplitude * controller_source_profile[iz,ir,index]
                 end
             end
@@ -1997,7 +1997,7 @@ source amplitude.
         amplitude = neutral_moments.external_source_amplitude
         external_source_density_amplitude = neutral_moments.external_source_density_amplitude
         @loop_r_z ir iz begin
-            n_error = target[iz,ir] - density[iz,ir,is]
+            n_error = target[iz,ir] - density[iz,ir,isn]
             amplitude[iz,ir,index] = P * n_error + neutral_external_source_controller_integral[iz,ir,index]
             # Add time derivative to controller integral after using the current value.
             neutral_external_source_controller_integral[iz,ir] += dt * I * n_error
@@ -2011,13 +2011,13 @@ source amplitude.
             if vzeta.n == 1 && vr.n == 1
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir]^2) *
+			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir,isn]^2) *
                         amplitude[iz,ir,index]
                 end
             else
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir]^2) *
+			(source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir,isn]^2) *
                         amplitude[iz,ir,index]
                 end
             end
@@ -2069,13 +2069,13 @@ source amplitude.
             if vzeta.n == 1 && vr.n == 1
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir]^2) *
+			(1.0/3.0 * source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir,isn]^2) *
                         amplitude[iz,ir,index]
                 end
             else
                 @loop_r_z ir iz begin
                     external_source_pressure_amplitude[iz,ir,index] =
-			(source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir]^2) *
+			(source_T_array[iz,ir] + 1.0/3.0 * uz[iz,ir,isn]^2) *
                         amplitude[iz,ir,index]
                 end
             end
