@@ -1268,6 +1268,8 @@ shared-memory-parallelised loop.
     elseif bc == "wall"
         # Need integrals over vpa at wall boundaries in z, so cannot parallelize over z
         # or vpa.
+        vth = moments.ion.vth
+        ppar = moments.ion.ppar
         @begin_s_r_region()
         @loop_s is begin
             # zero incoming BC for ions, as they recombine at the wall
@@ -1275,9 +1277,9 @@ shared-memory-parallelised loop.
                 @loop_r ir begin
                     @views enforce_zero_incoming_bc!(
                         pdf[:,:,:,ir,is], z, vperp, vpa, density[:,ir,is], upar[:,ir,is],
-                        p[:,ir,is], fields.vEz[:,ir,is], geometry.bzed[:,ir],
-                        moments.evolve_upar, moments.evolve_p, zero, fields.phi[:,ir],
-                        vpavperp_buffer)
+                        vth[:,ir,is], ppar[:,ir,is], fields.vEz[:,ir,is],
+                        geometry.bzed[:,ir], moments.evolve_upar, moments.evolve_p, zero,
+                        fields.phi[:,ir], vpavperp_buffer)
                 end
             else
                 @loop_r ir begin
@@ -2011,8 +2013,8 @@ function get_ion_z_boundary_cutoff_indices(density, upar, vEz, bz, vth0, vthL,
     return last_negative_vpa_ind, wpa_cut_lower, first_positive_vpa_ind, wpa_cut_upper
 end
 function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::coordinate,
-                                   density, upar, p, vEz, bz, evolve_upar, evolve_p, zero,
-                                   phi, vpavperp_buffer)
+                                   density, upar, vth, ppar, vEz, bz, evolve_upar,
+                                   evolve_p, zero, phi, vpavperp_buffer)
     if z.irank != 0 && z.irank != z.nrank - 1
         # No z-boundary in this block
         return nothing
@@ -2023,8 +2025,10 @@ function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::c
     # some version of the peculiar velocity (dz/dt - upar),
     # so use advection speed below instead of vpa
 
-    vth0 = sqrt(2.0 * p[1] / density[1])
-    vthL = sqrt(2.0 * p[end] / density[end])
+    vth0 = vth[1]
+    vthL = vth[end]
+    vthpar0 = sqrt(2.0 * ppar[1] / density[1])
+    vthparL = sqrt(2.0 * ppar[end] / density[end])
 
     # absolute velocity at left boundary
     last_negative_vpa_ind, wpa_cut_lower, first_positive_vpa_ind, wpa_cut_upper =
@@ -2060,16 +2064,19 @@ function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::c
         # Both z-boundaries in this block
         z_range = (1,nz)
         vth_list = (vth0, vthL)
+        vthpar_list = (vthpar0, vthparL)
     elseif z.irank == 0
         z_range = (1,)
         vth_list = (vth0,)
+        vthpar_list = (vthpar0,)
     elseif z.irank == z.nrank - 1
         z_range = (nz,)
         vth_list = (vthL,)
+        vthpar_list = (vthparL,)
     else
         error("No boundary in this block, should have returned already")
     end
-    for (iz, vth) ∈ zip(z_range, vth_list)
+    for (iz, vth, vthpar) ∈ zip(z_range, vth_list, vthpar_list)
         @debug_consistency_checks size(pdf,2) == 1
         f = @view pdf[:,:,iz]
         if evolve_p && evolve_upar
@@ -2084,7 +2091,7 @@ function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::c
             # b^z (vth*w_∥ + u_∥) + vEz ≶ 0
             # Store v_parallel/vth with cutoff shift removed (which is equal to
             # v^z/vth/b^z) in vpa.scratch
-            @. vpa.scratch = vpa.grid + (upar[iz] + vEz[iz] / bz[iz])/vth
+            @. vpa.scratch = vth * vpa.grid + upar[iz] + vEz[iz] / bz[iz]
             # Introduce factors to ensure corrections go smoothly to zero near
             # v_parallel=0, and that there are no large corrections aw large w_parallel as
             # those can have a strong effect on the parallel heat flux and make
@@ -2098,7 +2105,7 @@ function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::c
                 one_over_scale_factor = 1.0
             end
 
-            @. vpa.scratch2 = abs(vpa.scratch) / (one_over_scale_factor + abs(vpa.scratch)) / (1.0 + (4.0 * vpa.scratch / vpa.L)^4)
+            @. vpa.scratch2 = abs(vpa.scratch) / (vthpar + abs(vpa.scratch)) / (1.0 + (4.0 * vpa.scratch / vpa.L / vthpar)^4)
             # vpa is the first index of vpavperp_buffer, so this broadcast operation can handle vpa.scratch being copied along
             # the columns of vpavperp_buffer. Even if vpa.n = vperp.n, the operation is unambiguous.
             @. vpavperp_buffer .= vpa.scratch2 * f
