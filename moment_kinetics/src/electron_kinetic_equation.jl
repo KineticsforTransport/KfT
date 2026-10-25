@@ -3,8 +3,6 @@ module electron_kinetic_equation
 using ConcreteStructs
 using LinearAlgebra
 using MPI
-using MPISchurComplements
-using MPISchurComplements.FakeMPILUs # This is not performant, use only for comparison/testing.
 using MPIStaticCondensations
 using OrderedCollections
 using SparseArrays
