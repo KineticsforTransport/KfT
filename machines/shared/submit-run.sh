@@ -32,13 +32,15 @@ POSTPROC_FOLLOWFROM=""
 MAKIEPOSTPROCESS=1
 WARN_OLD_SYSIMAGE=0
 PERFORMANCE_RUN=1
-while getopts "haf:g:m:n:p:oq:Rr:st:u:wx" opt; do
+TASKSPERNODE=-1
+while getopts "hac:f:g:m:n:p:oq:Rr:st:u:wx" opt; do
   case $opt in
     h)
       echo "Submit jobs for a simulation (using INPUT_FILE for input) and post-processing to the queue
 Usage: submit-run.sh [option] INPUT_FILE
 -h             Print help and exit
 -a             Do not submit post-processing job after the run
+-c NCPU        Specify number of cpus per node to use (default is all physical cpus)
 -f JOBID       Make this job start after JOBID finishes successfully
 -g JOBID       Make the post processing job start after JOBID finishes successfully (as well as after the simulation run finishes)
 -m MEM         The requested memory for post-processing
@@ -57,6 +59,9 @@ Usage: submit-run.sh [option] INPUT_FILE
       ;;
     a)
       POSTPROC=1
+      ;;
+    c)
+      TASKSPERNODE=$OPTARG
       ;;
     f)
       FOLLOWFROM="-d afterok:$OPTARG"
@@ -166,6 +171,9 @@ else
   RUNTEMPLATE=machines/$MACHINE/jobscript-run.template
 fi
 sed -e "s|NODES|$NODES|" -e "s|RUNTIME|$RUNTIME|" -e "s|ACCOUNT|$ACCOUNT|" -e "s|PARTITION|$PARTITION|" -e "s|QOS|$QOS|" -e "s|RUNDIR|$RUNDIR|" -e "s|INPUTFILE|$INPUTFILE|" -e "s|RESTARTFROM|$RESTARTFROM|" -e "s|RUNSCRIPT|$RUNSCRIPT|" $RUNTEMPLATE > $RUNJOBSCRIPT
+if [ ! $TASKSPERNODE -eq -1 ]; then
+  sed -i -e "/#SBATCH --ntasks-per-node=/c\#SBATCH --ntasks-per-node=$TASKSPERNODE" $RUNJOBSCRIPT
+fi
 
 if [[ "$WARN_OLD_SYSIMAGE" -eq 0 ]]; then
   # Check that source code has not been changed since moment_kinetics.so was created
