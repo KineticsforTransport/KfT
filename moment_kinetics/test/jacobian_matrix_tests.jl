@@ -344,10 +344,10 @@ end
 function test_get_pdf_term(test_input::AbstractDict, label::String, get_term::Function,
                            rhs_func!::Function, rtol::mk_float,
                            expected::Union{Nothing,NamedTuple})
-    test_input = deepcopy(test_input)
-    test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
+    this_test_input = deepcopy(test_input)
+    this_test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
     println("        - $label")
-    if test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_separate_dp_dz_dq_dz"
+    if this_test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_separate_dp_dz_dq_dz"
         # This preconditioner option has larger errors compared to the regression test
         # values (that were generated from "lu") than the others. Not sure why - maybe
         # there is a bug somewhere, or maybe the extra entries in the matrix just increase
@@ -364,7 +364,7 @@ function test_get_pdf_term(test_input::AbstractDict, label::String, get_term::Fu
             composition, collisions, geometry, gyroavs, boundary_distributions,
             external_source_settings, num_diss_params, nl_solver_params, advance,
             advance_implicit, fp_arrays, scratch_dummy, manufactured_source_list,
-            ascii_io, io_moments, io_dfns = get_mk_state(test_input)
+            ascii_io, io_moments, io_dfns = get_mk_state(this_test_input)
 
         dens = @view moments.electron.dens[:,ir]
         ddens_dz = @view moments.electron.ddens_dz[:,ir]
@@ -524,7 +524,7 @@ function test_get_pdf_term(test_input::AbstractDict, label::String, get_term::Fu
         equation_term = get_term(sub_terms)
         add_term_to_Jacobian!(jacobian, :electron_pdf, dt, equation_term, z_speed)
 
-        if test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_no_separate_moments"
+        if this_test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_no_separate_moments"
             # ADI only (currently?) supported for "lu_no_separate_moments".
             # Test 'ADI Jacobians' before other tests, because residual_func() may modify some
             # variables (vth, etc.).
@@ -915,10 +915,10 @@ end
 function test_get_p_term(test_input::AbstractDict, label::String, get_term::Function,
                          rhs_func!::Function, rtol::mk_float,
                          expected::Union{Nothing,NamedTuple})
-    test_input = deepcopy(test_input)
-    test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
+    this_test_input = deepcopy(test_input)
+    this_test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
     println("        - $label")
-    if test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_separate_dp_dz_dq_dz"
+    if this_test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_separate_dp_dz_dq_dz"
         # This preconditioner option has larger errors compared to the regression test
         # values (that were generated from "lu") than the others. Not sure why - maybe
         # there is a bug somewhere, or maybe the extra entries in the matrix just increase
@@ -935,7 +935,7 @@ function test_get_p_term(test_input::AbstractDict, label::String, get_term::Func
             composition, collisions, geometry, gyroavs, boundary_distributions,
             external_source_settings, num_diss_params, nl_solver_params, advance,
             advance_implicit, fp_arrays, scratch_dummy, manufactured_source_list,
-            ascii_io, io_moments, io_dfns = get_mk_state(test_input)
+            ascii_io, io_moments, io_dfns = get_mk_state(this_test_input)
 
         dens = @view moments.electron.dens[:,ir]
         upar = @view moments.electron.upar[:,ir]
@@ -1080,7 +1080,7 @@ function test_get_p_term(test_input::AbstractDict, label::String, get_term::Func
         equation_term = get_term(sub_terms)
         add_term_to_Jacobian!(jacobian, :electron_p, dt, equation_term, z_speed)
 
-        if test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_no_separate_moments"
+        if this_test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_no_separate_moments"
             # ADI only (currently?) supported for "lu_no_separate_moments".
             # Test 'ADI Jacobians' before other tests, because residual_func() may modify some
             # variables (vth, etc.).
@@ -1417,18 +1417,22 @@ end
 
 function test_electron_kinetic_equation(test_input; rtol=(5.0e2*epsilon)^2,
                                         expected_constant::Union{Nothing,NamedTuple},
-                                        expected_wall::Union{Nothing,NamedTuple})
+                                        expected_constant_nodiss::Union{Nothing,NamedTuple},
+                                        expected_wall::Union{Nothing,NamedTuple},
+                                        expected_wall_nodiss::Union{Nothing,NamedTuple})
 
     # Looser rtol for "wall" bc because integral corrections not accounted for in wall bc
     # Jacobian (yet?).
-    @testset "electron_kinetic_equation bc=$bc" for (bc, adi_tol, expected) ∈ (("constant", 1.0e-15, expected_constant),
-                                                                               ("wall", 1.0e-13, expected_wall))
-        println("        - electron_kinetic_equation $bc")
+    @testset "electron_kinetic_equation bc=$bc diss=$diss" for (bc, adi_tol, diss, expected) ∈ (("constant", 1.0e-15, true, expected_constant),
+                                                                                                ("constant", 1.0e-15, false, expected_constant_nodiss),
+                                                                                                ("wall", 1.0e-13, true, expected_wall),
+                                                                                                ("wall", 1.0e-13, false, expected_wall_nodiss))
+        println("        - electron_kinetic_equation $bc diss=$diss")
         this_test_input = deepcopy(test_input)
         label = "electron_kinetic_equation_$bc"
-        test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
+        this_test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
         this_test_input["z"]["bc"] = bc
-        if test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_separate_dp_dz_dq_dz"
+        if this_test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_separate_dp_dz_dq_dz"
             # This preconditioner option has larger errors compared to the regression test
             # values (that were generated from "lu") than the others. Not sure why - maybe
             # there is a bug somewhere, or maybe the extra entries in the matrix just increase
@@ -1436,6 +1440,9 @@ function test_electron_kinetic_equation(test_input; rtol=(5.0e2*epsilon)^2,
             regression_tol = 5.0e-10
         else
             regression_tol = 1.0e-11
+        end
+        if !diss
+            pop!(this_test_input["electron_numerical_dissipation"], "vpa_dissipation_coefficient", 0.0)
         end
 
         # Suppress console output while running
@@ -1579,7 +1586,7 @@ function test_electron_kinetic_equation(test_input; rtol=(5.0e2*epsilon)^2,
         #    scratch_dummy, external_source_settings, num_diss_params,
         #    t_params.electron, ion_dt, ir, true)
 
-        if test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_no_separate_moments"
+        if this_test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_no_separate_moments"
             # ADI only (currently?) supported for "lu_no_separate_moments".
             # Test 'ADI Jacobians' before other tests, because residual_func() may modify some
             # variables (vth, etc.).
@@ -2004,23 +2011,23 @@ end
 
 function test_electron_wall_bc(test_input; atol=(10.0*epsilon)^2,
                                expected::Union{Nothing,NamedTuple})
-    test_input = deepcopy(test_input)
+    this_test_input = deepcopy(test_input)
     label = "electron_wall_bc"
-    test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
+    this_test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
     println("        - electron_wall_bc")
 
     # This test only affects the end-points in z, so only include those points to avoid an
     # over-optimistic error estimate due the time update matrix for all other z-indices
     # just being the identity.
-    test_input["z"]["nelement"] = 1
-    test_input["z"]["ngrid"] = 2
-    test_input["z"]["bc"] = "wall"
+    this_test_input["z"]["nelement"] = 1
+    this_test_input["z"]["ngrid"] = 2
+    this_test_input["z"]["bc"] = "wall"
 
     # Interpolation done during the boundary condition needs to be reasonably accurate for
     # the simplified form (without constraints) that is done in the 'Jacobian matrix' to
     # match the full version, so increase vpa resolution.
-    test_input["vpa"]["nelement"] = 256
-    test_input["vz"]["nelement"] = 256
+    this_test_input["vpa"]["nelement"] = 256
+    this_test_input["vz"]["nelement"] = 256
 
     @testset "electron_wall_bc" begin
         # Suppress console output while running
@@ -2029,7 +2036,7 @@ function test_electron_wall_bc(test_input; atol=(10.0*epsilon)^2,
             composition, collisions, geometry, gyroavs, boundary_distributions,
             external_source_settings, num_diss_params, nl_solver_params, advance,
             advance_implicit, fp_arrays, scratch_dummy, manufactured_source_list,
-            ascii_io, io_moments, io_dfns = get_mk_state(test_input)
+            ascii_io, io_moments, io_dfns = get_mk_state(this_test_input)
 
         dens = @view moments.electron.dens[:,ir]
         upar = @view moments.electron.upar[:,ir]
@@ -2136,7 +2143,7 @@ function test_electron_wall_bc(test_input; atol=(10.0*epsilon)^2,
             vpa_advect, moments, num_diss_params.electron.vpa_dissipation_coefficient, me,
             ir, :all)
 
-        if test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_no_separate_moments"
+        if this_test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_no_separate_moments"
             # ADI only (currently?) supported for "lu_no_separate_moments".
             # Test 'ADI Jacobians' before other tests, because residual_func() may modify some
             # variables (vth, etc.).
@@ -2464,7 +2471,7 @@ function test_jacobian_inversion(test_input; rtol=2.0e-11)
         println("        - jacobian_inversion $bc diss=$diss")
         this_test_input = deepcopy(test_input)
         label = "jacobian_inversion"
-        test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
+        this_test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
         this_test_input["z"]["bc"] = bc
         if !diss
             pop!(this_test_input["electron_numerical_dissipation"], "vpa_dissipation_coefficient", 0.0)
@@ -2759,8 +2766,11 @@ function runtests()
 
             test_electron_wall_bc(this_test_input; expected=expected_wall)
 
-            test_electron_kinetic_equation(this_test_input; expected_constant=expected_ke_constant,
-                                           expected_wall=expected_ke_wall)
+            test_electron_kinetic_equation(this_test_input;
+                                           expected_constant=expected_ke_constant,
+                                           expected_constant_nodiss=expected_ke_constant_nodiss,
+                                           expected_wall=expected_ke_wall,
+                                           expected_wall_nodiss=expected_ke_wall_nodiss)
 
             test_jacobian_inversion(this_test_input)
         end
