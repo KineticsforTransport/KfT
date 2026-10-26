@@ -82,7 +82,9 @@ struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon,Tpretype,Towned}
     # Ranks in `shared_comm` divide the block-owned entries of each unknown.
     # `distributed_comm` is `MPI.COMM_NULL` except on rank 0 of `shared_comm`.
     # `owned_indices` is one tuple entry per unknown array. Each entry is the
-    # flat index ranges updated by this rank, fastest index first.
+    # pair `(local_ranges, owned_ranges)`, fastest index first. `local_ranges`
+    # is every slot this rank writes, including the duplicated boundary.
+    # `owned_ranges` omits that point on every block except the last.
     shared_comm::MPI.Comm
     distributed_comm::MPI.Comm
     owned_indices::Towned
@@ -301,37 +303,49 @@ end
 """
     _solver_owned_indices(coords, shared_comm; electron_p_pdf_solve)
 
-Flat index ranges updated by this rank. Callers pass `coords` slowest-varying first. The
+Flat index ranges for this rank. Callers pass `coords` slowest-varying first. The
 ranges index array memory, which is fastest-varying first. The entries are divided across
 the `shared_comm` selected by `_solver_comms`. A rank with `MPI.COMM_NULL`, or a
-rank in the communicator that owns no entries, gets an empty list. Membership of
+rank in the communicator that receives no entries, gets an empty list. Membership of
 `shared_comm` is unchanged.
 
-A single unknown returns a one-element tuple of ranges. Implicit `vpa` advection,
-Braginskii conduction, Fokker-Planck, and the implicit ion advance use this form.
+For each unknown the pair `(local_ranges, owned_ranges)` is returned. `local_ranges`
+is every slot this rank writes, including the duplicated block-boundary point.
+`owned_ranges` is like that but with the duplicated point omitted on every block except
+the last along a distributed coordinate. Consecutive indices are stored as one range.
 
-`electron_p_pdf_solve` returns `(pressure_ranges, pdf_ranges)`. Pressure uses `coords.z`
-only. The distribution uses every dimension in `coords`. The two lists are split
+A single unknown returns a one-element tuple whose element is that pair. Implicit `vpa`
+advection, Braginskii conduction, Fokker-Planck, and the implicit ion advance use this
+form.
+
+`electron_p_pdf_solve` returns two pairs, pressure then the distribution. Pressure uses
+`coords.z` only. The distribution uses every dimension in `coords`. The pairs are split
 separately, so each unknown keeps its own norm.
-
-The last local index of a distributed coordinate is omitted on every block except the last
-along that coordinate, where the index duplicates the next block's boundary. Consecutive
-indices are stored as one range.
 """
 function _solver_owned_indices(coords, shared_comm::MPI.Comm; electron_p_pdf_solve::Bool)
     if !electron_p_pdf_solve
         dim_sizes, exclude_last = _sizes_and_excluded(coords)
-        return (_split_ranges_across_comm(
-            _block_owned_ranges(dim_sizes, exclude_last), shared_comm),)
+        owned_ranges = _split_ranges_across_comm(
+            _block_owned_ranges(dim_sizes, exclude_last), shared_comm)
+        local_block = _block_owned_ranges(dim_sizes,
+            ntuple(_ -> false, length(dim_sizes)))
+        local_ranges = _split_ranges_across_comm(local_block, shared_comm)
+        return ((local_ranges, owned_ranges),)
     end
     z = coords.z
-    pressure_ranges = _split_ranges_across_comm(
+    pressure_owned_ranges = _split_ranges_across_comm(
         _block_owned_ranges((Int(z.n),), (_dimension_excludes_boundary(z),)),
         shared_comm)
+    pressure_local_ranges = _split_ranges_across_comm(
+        _block_owned_ranges((Int(z.n),), (false,)), shared_comm)
     pdf_sizes, pdf_exclude = _sizes_and_excluded(coords)
-    pdf_ranges = _split_ranges_across_comm(
+    pdf_owned_ranges = _split_ranges_across_comm(
         _block_owned_ranges(pdf_sizes, pdf_exclude), shared_comm)
-    return pressure_ranges, pdf_ranges
+    pdf_local_block = _block_owned_ranges(pdf_sizes,
+        ntuple(_ -> false, length(pdf_sizes)))
+    pdf_local_ranges = _split_ranges_across_comm(pdf_local_block, shared_comm)
+    return (pressure_local_ranges, pressure_owned_ranges),
+        (pdf_local_ranges, pdf_owned_ranges)
 end
 
 # `coords` is ordered slowest-varying first. Array memory is fastest-varying first.
