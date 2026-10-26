@@ -54,7 +54,7 @@ using moment_kinetics.moment_constraints: electron_implicit_constraint_forcing!,
                                           get_electron_implicit_constraint_forcing_term,
                                           hard_force_moment_constraints!
 using moment_kinetics.timer_utils: reset_mk_timers!
-using moment_kinetics.type_definitions: mk_float
+using moment_kinetics.type_definitions: mk_float, mk_int
 using moment_kinetics.velocity_moments: calculate_electron_moment_derivatives_no_r!
 
 using moment_kinetics.BlockBandedMatrices
@@ -343,9 +343,9 @@ end
 
 function test_get_pdf_term(test_input::AbstractDict, label::String, get_term::Function,
                            rhs_func!::Function, rtol::mk_float,
-                           expected::Union{Nothing,NamedTuple})
+                           expected::Union{Nothing,NamedTuple}, counter::mk_int)
     this_test_input = deepcopy(test_input)
-    this_test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
+    this_test_input["output"]["run_name"] *= "_$counter"
     println("        - $label")
     if this_test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_separate_dp_dz_dq_dz"
         # This preconditioner option has larger errors compared to the regression test
@@ -914,9 +914,9 @@ end
 
 function test_get_p_term(test_input::AbstractDict, label::String, get_term::Function,
                          rhs_func!::Function, rtol::mk_float,
-                         expected::Union{Nothing,NamedTuple})
+                         expected::Union{Nothing,NamedTuple}, counter::mk_int)
     this_test_input = deepcopy(test_input)
-    this_test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
+    this_test_input["output"]["run_name"] *= "_$counter"
     println("        - $label")
     if this_test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_separate_dp_dz_dq_dz"
         # This preconditioner option has larger errors compared to the regression test
@@ -1415,7 +1415,8 @@ function test_get_p_term(test_input::AbstractDict, label::String, get_term::Func
     return nothing
 end
 
-function test_electron_kinetic_equation(test_input; rtol=(5.0e2*epsilon)^2,
+function test_electron_kinetic_equation(test_input, counter::mk_int;
+                                        rtol=(5.0e2*epsilon)^2,
                                         expected_constant::Union{Nothing,NamedTuple},
                                         expected_constant_nodiss::Union{Nothing,NamedTuple},
                                         expected_wall::Union{Nothing,NamedTuple},
@@ -1423,6 +1424,7 @@ function test_electron_kinetic_equation(test_input; rtol=(5.0e2*epsilon)^2,
 
     # Looser rtol for "wall" bc because integral corrections not accounted for in wall bc
     # Jacobian (yet?).
+    counter2 = 0
     @testset "electron_kinetic_equation bc=$bc diss=$diss" for (bc, adi_tol, diss, expected) ∈ (("constant", 1.0e-15, true, expected_constant),
                                                                                                 ("constant", 1.0e-15, false, expected_constant_nodiss),
                                                                                                 ("wall", 1.0e-13, true, expected_wall),
@@ -1430,7 +1432,7 @@ function test_electron_kinetic_equation(test_input; rtol=(5.0e2*epsilon)^2,
         println("        - electron_kinetic_equation $bc diss=$diss")
         this_test_input = deepcopy(test_input)
         label = "electron_kinetic_equation_$bc"
-        this_test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
+        this_test_input["output"]["run_name"] *= "_$(counter)_$(counter2+=1)"
         this_test_input["z"]["bc"] = bc
         if this_test_input["timestepping"]["kinetic_electron_preconditioner"] == "lu_separate_dp_dz_dq_dz"
             # This preconditioner option has larger errors compared to the regression test
@@ -2009,11 +2011,11 @@ function test_electron_kinetic_equation(test_input; rtol=(5.0e2*epsilon)^2,
     return nothing
 end
 
-function test_electron_wall_bc(test_input; atol=(10.0*epsilon)^2,
+function test_electron_wall_bc(test_input, counter::mk_int; atol=(10.0*epsilon)^2,
                                expected::Union{Nothing,NamedTuple})
     this_test_input = deepcopy(test_input)
     label = "electron_wall_bc"
-    this_test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
+    this_test_input["output"]["run_name"] *= "_$counter"
     println("        - electron_wall_bc")
 
     # This test only affects the end-points in z, so only include those points to avoid an
@@ -2461,8 +2463,9 @@ function test_electron_wall_bc(test_input; atol=(10.0*epsilon)^2,
     return nothing
 end
 
-function test_jacobian_inversion(test_input; rtol=2.0e-11)
+function test_jacobian_inversion(test_input, counter::mk_int; rtol=2.0e-11)
 
+    counter2 = 0
     @testset "jacobian_inversion $bc diss=$diss" for (bc, diss, expected) ∈ (("wall", true, expected_jacobian_inversion_wall),
                                                                              ("wall", false, expected_jacobian_inversion_wall_nodiss),
                                                                              ("periodic", true, expected_jacobian_inversion_periodic),
@@ -2471,7 +2474,7 @@ function test_jacobian_inversion(test_input; rtol=2.0e-11)
         println("        - jacobian_inversion $bc diss=$diss")
         this_test_input = deepcopy(test_input)
         label = "jacobian_inversion"
-        this_test_input["output"]["run_name"] *= "_" * label[1:min(11, length(label))]
+        this_test_input["output"]["run_name"] *= "_$(counter)_$(counter2+=1)"
         this_test_input["z"]["bc"] = bc
         if !diss
             pop!(this_test_input["electron_numerical_dissipation"], "vpa_dissipation_coefficient", 0.0)
@@ -2596,6 +2599,7 @@ function runtests()
     test_output_directory = get_MPI_tempdir()
     test_input["output"]["base_directory"] = test_output_directory
 
+    counter = 0
     @testset "Jacobian matrix " verbose=use_verbose begin
         println("Jacobian matrix")
         precon_list = String[]
@@ -2607,7 +2611,6 @@ function runtests()
             println("    - $kinetic_electron_preconditioner")
 
             this_test_input = deepcopy(test_input)
-            this_test_input["output"]["run_name"] *= "_" * kinetic_electron_preconditioner
             this_test_input["timestepping"]["kinetic_electron_preconditioner"] = kinetic_electron_preconditioner
 
             # Quite large multipliers for rtol in these tests, but it is plausible that a
@@ -2623,7 +2626,7 @@ function runtests()
             end
             test_get_pdf_term(this_test_input, "electron_z_advection",
                               get_electron_z_advection_term, z_advection_wrapper!,
-                              (2.5e2*epsilon)^2, expected_z)
+                              (2.5e2*epsilon)^2, expected_z, counter+=1)
 
             function vpa_advection_wrapper!(; kwargs...)
                 electron_vpa_advection!(kwargs[:residual], kwargs[:this_f], kwargs[:dens],
@@ -2637,7 +2640,7 @@ function runtests()
             end
             test_get_pdf_term(this_test_input, "electron_vpa_advection",
                               get_electron_vpa_advection_term, vpa_advection_wrapper!,
-                              (3.0e2*epsilon)^2, expected_vpa)
+                              (3.0e2*epsilon)^2, expected_vpa, counter+=1)
 
             function contribution_from_electron_pdf_term_wrapper!(; kwargs...)
                 add_contribution_from_pdf_term!(kwargs[:residual], kwargs[:this_f],
@@ -2651,7 +2654,7 @@ function runtests()
             test_get_pdf_term(this_test_input, "contribution_from_electron_pdf_term",
                               get_contribution_from_electron_pdf_term,
                               contribution_from_electron_pdf_term_wrapper!,
-                              (4.0e2*epsilon)^2, expected_pdf_term)
+                              (4.0e2*epsilon)^2, expected_pdf_term, counter+=1)
 
             function contribution_from_electron_dissipation_term!(; kwargs...)
                 add_dissipation_term!(kwargs[:residual], kwargs[:this_f],
@@ -2663,7 +2666,7 @@ function runtests()
             test_get_pdf_term(this_test_input, "electron_dissipation_term",
                               get_electron_dissipation_term,
                               contribution_from_electron_dissipation_term!,
-                              (1.0e1*epsilon)^2, expected_dissipation)
+                              (1.0e1*epsilon)^2, expected_dissipation, counter+=1)
 
             function contribution_from_krook_collisions!(; kwargs...)
                 electron_krook_collisions!(kwargs[:residual], kwargs[:this_f], kwargs[:dens],
@@ -2675,7 +2678,7 @@ function runtests()
             test_get_pdf_term(this_test_input, "electron_krook_collisions",
                               get_electron_krook_collisions_term,
                               contribution_from_krook_collisions!, (2.0e1*epsilon)^2,
-                              expected_krook)
+                              expected_krook, counter+=1)
 
             function contribution_from_external_electron_sources!(; kwargs...)
                 total_external_electron_sources!(kwargs[:residual], kwargs[:this_f],
@@ -2689,7 +2692,7 @@ function runtests()
             test_get_pdf_term(this_test_input, "external_electron_sources",
                               get_total_external_electron_source_term,
                               contribution_from_external_electron_sources!,
-                              (3.0e1*epsilon)^2, expected_sources)
+                              (3.0e1*epsilon)^2, expected_sources, counter+=1)
 
             # For this test where only the 'constraint forcing' term is added to the residual,
             # the residual is exactly zero for the initial condition (because that is
@@ -2723,7 +2726,7 @@ function runtests()
             test_get_pdf_term(this_test_input, "implicit_constraint_forcing",
                               get_electron_implicit_constraint_forcing_term,
                               contribution_from_implicit_constraint_forcing!,
-                              (2.5e0*epsilon), expected_constraint)
+                              (2.5e0*epsilon), expected_constraint, counter+=1)
 
             function contribution_from_electron_energy_equation!(; kwargs...)
                 electron_energy_equation_no_r!(
@@ -2739,7 +2742,7 @@ function runtests()
             test_get_p_term(this_test_input, "electron_energy_equation",
                             get_electron_energy_equation_term,
                             contribution_from_electron_energy_equation!,
-                            (6.0e2*epsilon)^2, expected_energy)
+                            (6.0e2*epsilon)^2, expected_energy, counter+=1)
 
             function contribution_from_ion_dt_forcing_of_electron_p!(; kwargs...)
                 p_previous_ion_step = kwargs[:moments].electron.p
@@ -2762,17 +2765,17 @@ function runtests()
             test_get_p_term(this_test_input, "ion_dt_forcing_of_electron_p",
                             get_ion_dt_forcing_of_electron_p_term,
                             contribution_from_ion_dt_forcing_of_electron_p!,
-                            (1.5e1*epsilon)^2, expected_ion_dt)
+                            (1.5e1*epsilon)^2, expected_ion_dt, counter+=1)
 
-            test_electron_wall_bc(this_test_input; expected=expected_wall)
+            test_electron_wall_bc(this_test_input, counter+=1; expected=expected_wall)
 
-            test_electron_kinetic_equation(this_test_input;
+            test_electron_kinetic_equation(this_test_input, counter+=1;
                                            expected_constant=expected_ke_constant,
                                            expected_constant_nodiss=expected_ke_constant_nodiss,
                                            expected_wall=expected_ke_wall,
                                            expected_wall_nodiss=expected_ke_wall_nodiss)
 
-            test_jacobian_inversion(this_test_input)
+            test_jacobian_inversion(this_test_input, counter+=1)
         end
     end
 
