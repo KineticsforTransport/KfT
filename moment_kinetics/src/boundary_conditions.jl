@@ -2779,7 +2779,8 @@ function enforce_vperp_boundary_condition!(f::AbstractArray{mk_float,3}, bc, vpe
 end
 
 """
-    skip_f_electron_bc_points_in_Jacobian(z_speed, ivpa, ivperp, iz, vpa, vperp, z)
+    skip_f_electron_bc_points_in_Jacobian(speeds, both_zero_flags, ivpa, ivperp, iz,
+                                          vpa, vperp, z)
 
 This function returns `true` when the grid point specified by `iz`, `ivperp`, `ivpa` would
 be set by the boundary conditions on the electron distribution function. When this
@@ -2787,26 +2788,30 @@ happens, the corresponding row should be skipped when adding contributions to th
 matrix, so that the row remains the same as a row of the identity matrix, so that the
 Jacobian matrix does not modify those points. Returns `false` otherwise.
 """
-function skip_f_electron_bc_points_in_Jacobian(z_speed, ivpa, ivperp, iz, vpa, vperp, z)
+function skip_f_electron_bc_points_in_Jacobian(speeds, both_zero_flags, ivpa, ivperp, iz,
+                                               vpa, vperp, z)
     # z boundary condition
     # Treat as if using Dirichlet boundary condition for incoming part of the distribution
     # function on the block boundary, regardless of the actual boundary condition and
     # whether this is an internal boundary or an actual domain boundary. This prevents the
     # matrix evaluated for a single block (without coupling to neighbouring blocks) from
     # becoming singular
-    if iz == 1 && z_speed[ivpa,ivperp,iz] ≥ 0.0
+    if iz == 1 && speeds[3][ivpa,ivperp,iz] ≥ 0.0
         return true
     end
-    if iz == z.n && z_speed[ivpa,ivperp,iz] ≤ 0.0
+    if iz == z.n && speeds[3][ivpa,ivperp,iz] ≤ 0.0
         return true
     end
 
     # vperp boundary condition
-    if vperp.n > 1 && ivperp == vperp.n
+    if vperp.n > 1 && ivperp == vperp.n && (both_zero_flags[2] || speeds[2][ivpa,ivperp,iz] ≤ 0.0)
         return true
     end
 
-    if ivpa == 1 || ivpa == vpa.n
+    if ivpa == 1 && (both_zero_flags[1] || speeds[1][ivpa,ivperp,iz] ≥ 0.0)
+        return true
+    end
+    if ivpa == vpa.n && (both_zero_flags[1] || speeds[1][ivpa,ivperp,iz] ≤ 0.0)
         return true
     end
 
@@ -2814,7 +2819,8 @@ function skip_f_electron_bc_points_in_Jacobian(z_speed, ivpa, ivperp, iz, vpa, v
 end
 
 """
-    skip_f_electron_bc_points_in_Jacobian_z_periodic(z_speed, ivpa, ivperp, iz, vpa, vperp, z)
+    skip_f_electron_bc_points_in_Jacobian_z_periodic(speeds, both_zero_flags, ivpa,
+                                                     ivperp, iz, vpa, vperp, z)
 
 This function returns `true` when the grid point specified by `iz`, `ivperp`, `ivpa` would
 be set by the boundary conditions on the electron distribution function, for the case when
@@ -2825,13 +2831,17 @@ Returns `false` otherwise.
 
 This function is for the periodic case.
 """
-function skip_f_electron_bc_points_in_Jacobian_z_periodic(z_speed, ivpa, ivperp, iz, vpa, vperp, z)
+function skip_f_electron_bc_points_in_Jacobian_z_periodic(speeds, both_zero_flags, ivpa,
+                                                          ivperp, iz, vpa, vperp, z)
     # vperp boundary condition
-    if vperp.n > 1 && ivperp == vperp.n
+    if vperp.n > 1 && ivperp == vperp.n && (both_zero_flags[2] || speeds[2][ivpa,ivperp,iz] ≤ 0.0)
         return true
     end
 
-    if ivpa == 1 || ivpa == vpa.n
+    if ivpa == 1 && (both_zero_flags[1] || speeds[1][ivpa,ivperp,iz] ≥ 0.0)
+        return true
+    end
+    if ivpa == vpa.n && (both_zero_flags[1] || speeds[1][ivpa,ivperp,iz] ≤ 0.0)
         return true
     end
 
@@ -2839,7 +2849,9 @@ function skip_f_electron_bc_points_in_Jacobian_z_periodic(z_speed, ivpa, ivperp,
 end
 
 """
-    skip_f_electron_bc_points_in_Jacobian_z_periodic_serial(z_speed, ivpa, ivperp, iz, vpa, vperp, z)
+    skip_f_electron_bc_points_in_Jacobian_z_periodic_serial(speeds, both_zero_flags,
+                                                            ivpa, ivperp, iz, vpa,
+                                                            vperp, z)
 
 This function returns `true` when the grid point specified by `iz`, `ivperp`, `ivpa` would
 be set by the boundary conditions on the electron distribution function, for the case when
@@ -2852,24 +2864,30 @@ This function is for the serial, periodic case - then the upper boundary is set 
 periodicity constraint, so the corresponding rows should not have any Jacobian
 contributions added to them.
 """
-function skip_f_electron_bc_points_in_Jacobian_z_periodic_serial(z_speed, ivpa, ivperp, iz, vpa, vperp, z)
+function skip_f_electron_bc_points_in_Jacobian_z_periodic_serial(speeds, both_zero_flags,
+                                                                 ivpa, ivperp, iz, vpa,
+                                                                 vperp, z)
     if iz == z.n
         return true
     end
 
     # vperp boundary condition
-    if vperp.n > 1 && ivperp == vperp.n
+    if vperp.n > 1 && ivperp == vperp.n && (both_zero_flags[2] || speeds[2][ivpa,ivperp,iz] ≤ 0.0)
         return true
     end
 
-    if ivpa == 1 || ivpa == vpa.n
+    if ivpa == 1 && (both_zero_flags[1] || speeds[1][ivpa,ivperp,iz] ≥ 0.0)
+        return true
+    end
+    if ivpa == vpa.n && (both_zero_flags[1] || speeds[1][ivpa,ivperp,iz] ≤ 0.0)
         return true
     end
 
     return false
 end
 
-function skip_p_electron_bc_points_in_Jacobian_z_periodic_serial(z_speed, iz, z)
+function skip_p_electron_bc_points_in_Jacobian_z_periodic_serial(speeds, both_zero_flags,
+                                                                 iz, z)
     if iz == z.n
         return true
     end
@@ -2877,45 +2895,55 @@ function skip_p_electron_bc_points_in_Jacobian_z_periodic_serial(z_speed, iz, z)
     return false
 end
 
-function skip_f_electron_bc_points_in_Jacobian_v_solve(z_speed, ivpa, ivperp, vpa, vperp)
+function skip_f_electron_bc_points_in_Jacobian_v_solve(boundary_flag_and_speeds,
+                                                       both_zero_flags, ivpa, ivperp, vpa,
+                                                       vperp)
     # z boundary condition
     # Treat as if using Dirichlet boundary condition for incoming part of the distribution
     # function on the block boundary, regardless of the actual boundary condition and
     # whether this is an internal boundary or an actual domain boundary. This prevents the
     # matrix evaluated for a single block (without coupling to neighbouring blocks) from
     # becoming singular
-    if z_speed !== nothing
-        is_lower_boundary, speed = z_speed
+    is_lower_boundary, speeds = boundary_flag_and_speeds
+    if is_lower_boundary !== nothing
         if is_lower_boundary
-            if speed[ivpa,ivperp] ≥ 0.0
+            if speeds[3][ivpa,ivperp] ≥ 0.0
                 return true
             end
         else
-            if speed[ivpa,ivperp] ≤ 0.0
+            if speeds[3][ivpa,ivperp] ≤ 0.0
                 return true
             end
         end
     end
 
     # vperp boundary condition
-    if vperp.n > 1 && ivperp == vperp.n
+    if vperp.n > 1 && ivperp == vperp.n && (both_zero_flags[2] || speeds[2][ivpa,ivperp] ≤ 0.0)
         return true
     end
 
-    if ivpa == 1 || ivpa == vpa.n
+    if ivpa == 1 && (both_zero_flags[1] || speeds[1][ivpa,ivperp] ≥ 0.0)
+        return true
+    end
+    if ivpa == vpa.n && (both_zero_flags[1] || speeds[1][ivpa,ivperp] ≤ 0.0)
         return true
     end
 
     return false
 end
 
-function skip_f_electron_bc_points_in_Jacobian_v_solve_z_periodic(z_speed, ivpa, ivperp, vpa, vperp)
+function skip_f_electron_bc_points_in_Jacobian_v_solve_z_periodic(speeds, both_zero_flags,
+                                                                  ivpa, ivperp, vpa,
+                                                                  vperp)
     # vperp boundary condition
-    if vperp.n > 1 && ivperp == vperp.n
+    if vperp.n > 1 && ivperp == vperp.n && (both_zero_flags[2] || speeds[2][ivpa,ivperp,iz] ≤ 0.0)
         return true
     end
 
-    if ivpa == 1 || ivpa == vpa.n
+    if ivpa == 1 && (both_zero_flags[1] || speeds[1][ivpa,ivperp,iz] ≥ 0.0)
+        return true
+    end
+    if ivpa == vpa.n && (both_zero_flags[1] || speeds[1][ivpa,ivperp,iz] ≤ 0.0)
         return true
     end
 
@@ -2924,42 +2952,61 @@ end
 
 skip_f_electron_bc_points_in_Jacobian_v_solve_z_periodic_serial(args...) = skip_f_electron_bc_points_in_Jacobian_v_solve_z_periodic(args...)
 
-function skip_p_electron_bc_points_in_Jacobian_v_solve_z_periodic_serial(z_speed, iz, z)
+function skip_p_electron_bc_points_in_Jacobian_v_solve_z_periodic_serial(
+             speeds, both_zero_flags, iz, z)
     return false
 end
 
-@inline function get_ADI_boundary_v_solve_z_speed(z_speed, z, iz)
+@inline function get_ADI_boundary_v_solve_speeds(speeds, z, iz)
     if iz == 1
-        return (true, z_speed)
+        return (true, speeds)
     elseif iz == z.n
-        return (false, z_speed)
+        return (false, speeds)
     else
-        return nothing
+        return (nothing, speeds)
     end
 end
 
-function skip_f_electron_bc_points_in_Jacobian_z_solve(z_speed, iz, z)
+function skip_f_electron_bc_points_in_Jacobian_z_solve(boundary_flags_and_speeds,
+                                                       both_zero_flags, iz, z)
+    is_vperp_upper_boundary, is_vpa_lower_boundary, is_vpa_upper_boundary, speeds =
+        boundary_flags_and_speeds
+
     # z boundary condition
     # Treat as if using Dirichlet boundary condition for incoming part of the distribution
     # function on the block boundary, regardless of the actual boundary condition and
     # whether this is an internal boundary or an actual domain boundary. This prevents the
     # matrix evaluated for a single block (without coupling to neighbouring blocks) from
     # becoming singular
-    if iz == 1 && z_speed[iz] ≥ 0.0
+    if iz == 1 && speeds[3][iz] ≥ 0.0
         return true
     end
-    if iz == z.n && z_speed[iz] ≤ 0.0
+    if iz == z.n && speeds[3][iz] ≤ 0.0
+        return true
+    end
+
+    # vperp boundary condition
+    if is_vperp_upper_boundary && (both_zero_flags[2] || speeds[2][iz] ≤ 0.0)
+        return true
+    end
+
+    if is_vpa_lower_boundary && (both_zero_flags[1] || speeds[1][iz] ≥ 0.0)
+        return true
+    end
+    if is_vpa_upper_boundary && (both_zero_flags[1] || speeds[1][iz] ≤ 0.0)
         return true
     end
 
     return false
 end
 
-function skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic(z_speed, iz, z)
+function skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic(speeds, both_zero_flags,
+                                                                  iz, z)
     return false
 end
 
-function skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial(z_speed, iz, z)
+function skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial(
+             speeds, both_zero_flags, iz, z)
     if iz == z.n
         return true
     end
@@ -2967,12 +3014,17 @@ function skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial(z_speed
     return false
 end
 
-function skip_p_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial(z_speed, iz, z)
+function skip_p_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial(
+             speeds, both_zero_flags, iz, z)
     if iz == z.n
         return true
     end
 
     return false
+end
+
+@inline function get_ADI_boundary_z_solve_speeds(speeds, vperp, vpa, ivperp, ivpa)
+    return ((vperp.n > 1 && ivperp == vperp.n), ivpa == 1, ivpa == vpa.n, speeds)
 end
 
 end # boundary_conditions

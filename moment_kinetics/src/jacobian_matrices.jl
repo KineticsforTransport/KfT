@@ -37,6 +37,7 @@ struct mini_coordinate
     wgts::Vector{mk_float}
     irank::mk_int
     nrank::mk_int
+    bc::String
     periodic::Bool
     radau_first_element::Bool
 
@@ -127,13 +128,14 @@ because it is set by boundary conditions.
 `synchronize` is the function to be called to synchronize all processes in the
 shared-memory group that is working with this `jacobian_info` object.
 """
-struct jacobian_info{Tmat,N2,NTerms,Tvecinds,Tvecdims,Tveccoords,Tdimsizes,Tdimsteps,Tranges,Tfranges,Tlbranges,Tcoords,Tspectral,Tbskip,Tsync}
+struct jacobian_info{Tmat,N2,NTerms,Tvecinds,Tvecdims,Tvecdimnums,Tveccoords,Tdimsizes,Tdimsteps,Tdissf,Tranges,Tfranges,Tlbranges,Tcoords,Tspectral,Tbskip,Tsync}
     matrix::Tmat
     n_entries::mk_int
     n_entries_squared_val::Val{N2}
     state_vector_entries::NTuple{NTerms, Symbol}
     state_vector_numbers::Tvecinds
     state_vector_dims::Tvecdims
+    state_vector_dim_numbers::Tvecdimnums
     state_vector_coords::Tveccoords
     state_vector_is_constraint::NTuple{NTerms, Bool}
     state_vector_sizes::NTuple{NTerms, mk_int}
@@ -144,6 +146,7 @@ struct jacobian_info{Tmat,N2,NTerms,Tvecinds,Tvecdims,Tveccoords,Tdimsizes,Tdims
     local_block_ranges::Tlbranges
     coords::Tcoords
     spectral::Tspectral
+    both_zero_flags::Tdissf
     boundary_skip_funcs::Tbskip
     synchronize::Tsync
 end
@@ -168,13 +171,18 @@ with all the needed 'spectral' objects.
 `comm` is the communicator to use to allocate shared memory arrays. `synchronize` is the
 function used to synchronize between shared-memory operations.
 
+`both_zero_flags` indicate which dimensions either include dissipation or have "both_zero"
+boundary conditions set, as this affects how velocity space boundary conditions are
+applied.
+
 `boundary_skip_funcs` is a NamedTuple whose keys are the variable names and whose values
 are functions to use to skip points that would be set by boundary conditions (or `nothing`
 if no function is needed for the variable).
 """
 function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=comm_block[],
                               synchronize::Union{Function,Nothing}=_block_synchronize,
-                              boundary_skip_funcs::BSF=nothing, block_banded=true, kwargs...) where {BSF}
+                              boundary_skip_funcs::BSF=nothing, both_zero_flags=nothing,
+                              block_banded=true, kwargs...) where {BSF}
 
     @debug_consistency_checks all(all(d ∈ keys(coords) for d ∈ v[2]) for v ∈ values(kwargs)) || error("Some coordinate required by the state variables were not included in `coords`.")
 
@@ -184,8 +192,10 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
     state_vector_entries = Tuple(keys(kwargs))
     n_entries = length(state_vector_entries)
     state_vector_numbers = (; (name => i for (i,name) ∈ enumerate(state_vector_entries))...)
+    dim_numbers = (; (name => i for (i,name) ∈ enumerate(keys(coords)))...)
     state_vector_region_types = Tuple(v[1] for v ∈ values(kwargs))
     state_vector_dims = Tuple(Tuple(v[2]) for v ∈ values(kwargs))
+    state_vector_dim_numbers = Tuple(Tuple(dim_numbers[d] for d ∈ v) for v ∈ state_vector_dims)
     state_vector_coords = Tuple(Tuple(mini_coords[d] for d ∈ v) for v ∈ state_vector_dims)
     state_vector_is_constraint = Tuple(v[3] for v ∈ values(kwargs))
     state_vector_sizes = Tuple(prod(mini_coords[d].n for d ∈ dims; init=1) for dims ∈ state_vector_dims)
@@ -395,12 +405,12 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
 
     return jacobian_info(jacobian_matrix, n_entries, Val(n_entries^2),
                          state_vector_entries, state_vector_numbers, state_vector_dims,
-                         state_vector_coords, state_vector_is_constraint,
-                         state_vector_sizes, state_vector_dim_sizes,
-                         state_vector_dim_steps, state_vector_local_ranges,
-                         state_vector_local_flattened_ranges, local_block_ranges,
-                         mini_coords, mini_spectral, boundary_skip_funcs,
-                         synchronize)
+                         state_vector_dim_numbers, state_vector_coords,
+                         state_vector_is_constraint, state_vector_sizes,
+                         state_vector_dim_sizes, state_vector_dim_steps,
+                         state_vector_local_ranges, state_vector_local_flattened_ranges,
+                         local_block_ranges, mini_coords, mini_spectral, both_zero_flags,
+                         boundary_skip_funcs, synchronize)
 end
 
 """
@@ -1833,20 +1843,20 @@ end
 """
     add_term_to_Jacobian!(jacobian::jacobian_info, rows_variable::Symbol,
                           prefactor::mk_float, terms::EquationTerm,
-                          boundary_speed=nothing)
+                          boundary_speeds=nothing)
 
 Add the contribution of `terms` to `jacobian`. The terms should be all or part of the
 evolution equation for `rows_variable`.
 
 `prefactor` multiplies all the terms. Usually it will be the timestep.
 
-`boundary_speed` is the speed needed by `jacobian.boundary_skip_funcs` to determine
-whether a grid point is set by the boundary conditions. This will usually be the speed in
-the z-direction.
+`boundary_speeds` are the speeds needed by `jacobian.boundary_skip_funcs` to determine
+whether a grid point is set by the boundary conditions. This will usually be the speeds
+corresponding to each dimension.
 """
 @timeit global_timer add_term_to_Jacobian!(jacobian::jacobian_info, rows_variable::Symbol,
                                            prefactor::mk_float, terms::EquationTerm,
-                                           boundary_speed=nothing) = begin
+                                           boundary_speeds=nothing) = begin
     if rows_variable ∉ jacobian.state_vector_entries
         # This term not being used at the moment.
         return nothing
@@ -1857,20 +1867,22 @@ the z-direction.
         rows_variable_number = jacobian.state_vector_numbers[rows_variable]
         @debug_consistency_checks jacobian.state_vector_is_constraint[rows_variable_number] && prefactor != 1.0 && error("Prefactor should be 1 for constraint equation, got $prefactor for $rows_variable equation")
         rows_variable_dims = jacobian.state_vector_dims[rows_variable_number]
+        rows_variable_dim_numbers = jacobian.state_vector_dim_numbers[rows_variable_number]
         rows_variable_dim_sizes = jacobian.state_vector_dim_sizes[rows_variable_number]
         rows_variable_local_ranges = jacobian.state_vector_local_ranges[rows_variable_number]
         rows_variable_coords = jacobian.state_vector_coords[rows_variable_number]
 
         boundary_skip = jacobian.boundary_skip_funcs[rows_variable]
+        both_zero_flags = jacobian.both_zero_flags
 
         set_dimension_numbers!(jacobian, rows_variable_number, terms)
 
         block_row = jacobian_matrix[rows_variable_number]
 
-        add_term_to_Jacobian!(jacobian, rows_variable, prefactor, terms, boundary_speed,
+        add_term_to_Jacobian!(jacobian, rows_variable, prefactor, terms, boundary_speeds,
                               block_row, rows_variable_number, rows_variable_dims,
                               rows_variable_dim_sizes, rows_variable_local_ranges,
-                              rows_variable_coords, boundary_skip)
+                              rows_variable_coords, boundary_skip, both_zero_flags)
     end
 
     return nothing
@@ -1882,16 +1894,18 @@ end
 # `jacobian.state_vector_local_ranges` has to happen before this function is called to
 # ensure type stability.
 function add_term_to_Jacobian!(jacobian::jacobian_info, rows_variable::Symbol,
-                               prefactor::mk_float, terms::EquationTerm, boundary_speed,
+                               prefactor::mk_float, terms::EquationTerm, boundary_speeds,
                                block_row::NTuple{N,AbstractMatrix{mk_float}} where N,
                                rows_variable_number::mk_int, rows_variable_dims::Tuple,
                                rows_variable_dim_sizes::Tuple,
                                rows_variable_local_ranges::Tuple,
-                               rows_variable_coords::Tuple, boundary_skip::F) where {F}
+                               rows_variable_coords::Tuple, boundary_skip::F,
+                               both_zero_flags) where {F}
     @inbounds begin
         for indices_CartesianIndex ∈ CartesianIndices(rows_variable_local_ranges)
             indices = Tuple(indices_CartesianIndex)
-            if boundary_skip !== nothing && boundary_skip(boundary_speed, indices...,
+            if boundary_skip !== nothing && boundary_skip(boundary_speeds,
+                                                          both_zero_flags, indices...,
                                                           rows_variable_coords...)
                 continue
             end
@@ -1902,7 +1916,7 @@ function add_term_to_Jacobian!(jacobian::jacobian_info, rows_variable::Symbol,
             set_current_values!(jacobian, terms, indices)
 
             add_term_to_Jacobian_row!(jacobian, jacobian_row, rows_variable, prefactor, terms,
-                                      indices, boundary_speed)
+                                      indices, boundary_speeds)
         end
 
         id_hash = @debug_block_synchronize_quick_ifelse(
