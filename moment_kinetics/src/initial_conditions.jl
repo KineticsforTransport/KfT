@@ -777,12 +777,17 @@ function initialize_electron_pdf!(scratch, scratch_electron, pdf, moments, field
                                    nl_solver_params.electron_advance.precon_lowerz_vcut_inds,
                                    nl_solver_params.electron_advance.precon_upperz_vcut_inds,
                                    nl_solver_params.electron_advance.serial_solve,
+                                   nl_solver_params.electron_advance.anysv_region,
+                                   nl_solver_params.electron_advance.anyzv_region,
                                    nl_solver_params.electron_advance.max_nonlinear_iterations_this_step,
                                    nl_solver_params.electron_advance.max_linear_iterations_this_step,
                                    nl_solver_params.electron_advance.total_its_soft_limit,
                                    nl_solver_params.electron_advance.preconditioner_type,
                                    nl_solver_params.electron_advance.preconditioner_update_interval,
                                    nl_solver_params.electron_advance.preconditioners,
+                                   nl_solver_params.electron_advance.shared_comm,
+                                   nl_solver_params.electron_advance.distributed_comm,
+                                   nl_solver_params.electron_advance.owned_indices,
                                   )
                 # Run implicit solve with dt=0 so that we don't update electron_ppar here
                 success =
