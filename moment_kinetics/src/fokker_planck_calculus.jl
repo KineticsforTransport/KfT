@@ -1264,24 +1264,30 @@ function calculate_boundary_data!(func_data::vpa_vperp_boundary_data,
                                   func_input,vpa,vperp)
     nvpa = vpa.n
     nvperp = vperp.n
+    func_lower_boundary_vpa = func_data.lower_boundary_vpa
+    func_upper_boundary_vpa = func_data.upper_boundary_vpa
+    func_upper_boundary_vperp = func_data.upper_boundary_vperp
+    weight_lower_vpa_boundary = weight.lower_vpa_boundary
+    weight_upper_vpa_boundary = weight.upper_vpa_boundary
+    weight_upper_vperp_boundary = weight.upper_vperp_boundary
     @begin_anysv_vperp_region(true)
     @loop_vperp ivperp begin
-        func_data.lower_boundary_vpa[ivperp] = 0.0
-        func_data.upper_boundary_vpa[ivperp] = 0.0
+        func_lower_boundary_vpa[ivperp] = 0.0
+        func_upper_boundary_vpa[ivperp] = 0.0
         for ivperpp in 1:nvperp
             for ivpap in 1:nvpa
-                func_data.lower_boundary_vpa[ivperp] += weight.lower_vpa_boundary[ivpap,ivperpp,ivperp]*func_input[ivpap,ivperpp]
-                func_data.upper_boundary_vpa[ivperp] += weight.upper_vpa_boundary[ivpap,ivperpp,ivperp]*func_input[ivpap,ivperpp]
+                func_lower_boundary_vpa[ivperp] += weight_lower_vpa_boundary[ivpap,ivperpp,ivperp]*func_input[ivpap,ivperpp]
+                func_upper_boundary_vpa[ivperp] += weight_upper_vpa_boundary[ivpap,ivperpp,ivperp]*func_input[ivpap,ivperpp]
             end
         end
     end
     #for ivpa in 1:nvpa
     @begin_anysv_vpa_region(true)
     @loop_vpa ivpa begin
-        func_data.upper_boundary_vperp[ivpa] = 0.0
+        func_upper_boundary_vperp[ivpa] = 0.0
         for ivperpp in 1:nvperp
             for ivpap in 1:nvpa
-                func_data.upper_boundary_vperp[ivpa] += weight.upper_vperp_boundary[ivpap,ivperpp,ivpa]*func_input[ivpap,ivperpp]
+                func_upper_boundary_vperp[ivpa] += weight_upper_vperp_boundary[ivpap,ivperpp,ivpa]*func_input[ivpap,ivperpp]
             end
         end
     end
@@ -3290,34 +3296,42 @@ function assemble_explicit_collision_operator_rhs_parallel!(rhsvpavperp,pdfs,d2G
     ngrid_vpa, ngrid_vperp = vpa.ngrid, vperp.ngrid
     vperp_igrid_full = vperp.igrid_full
     vpa_igrid_full = vpa.igrid_full
+    YY0perp = YY_arrays.YY0perp
+    YY1perp = YY_arrays.YY1perp
+    YY2perp = YY_arrays.YY2perp
+    YY3perp = YY_arrays.YY3perp
+    YY0par = YY_arrays.YY0par
+    YY1par = YY_arrays.YY1par
+    YY2par = YY_arrays.YY2par
+    YY3par = YY_arrays.YY3par
     @loop_vperp_vpa ivperp_global ivpa_global begin
         igrid_vpa, ielement_vpax, ielement_vpa_low, ielement_vpa_hi, igrid_vperp, ielement_vperpx, ielement_vperp_low, ielement_vperp_hi = get_element_limit_indices(ivpa_global,ivperp_global,vpa,vperp)
         # loop over elements belonging to this collocation point
         for ielement_vperp in ielement_vperp_low:ielement_vperp_hi
             # correct local ivperp in the case that we on a boundary point
             ivperp_local = igrid_vperp + (ielement_vperp - ielement_vperp_low)*(1-ngrid_vperp)
-            @views YY0perp = YY_arrays.YY0perp[:,:,ivperp_local,ielement_vperp]
-            @views YY1perp = YY_arrays.YY1perp[:,:,ivperp_local,ielement_vperp]
-            @views YY2perp = YY_arrays.YY2perp[:,:,ivperp_local,ielement_vperp]
-            @views YY3perp = YY_arrays.YY3perp[:,:,ivperp_local,ielement_vperp]
+            @views YY0perp_ii = YY0perp[:,:,ivperp_local,ielement_vperp]
+            @views YY1perp_ii = YY1perp[:,:,ivperp_local,ielement_vperp]
+            @views YY2perp_ii = YY2perp[:,:,ivperp_local,ielement_vperp]
+            @views YY3perp_ii = YY3perp[:,:,ivperp_local,ielement_vperp]
             vperp_igrid_full_view = @view vperp_igrid_full[:,ielement_vperp]
 
             for ielement_vpa in ielement_vpa_low:ielement_vpa_hi
                 # correct local ivpa in the case that we on a boundary point
                 ivpa_local = igrid_vpa + (ielement_vpa - ielement_vpa_low)*(1-ngrid_vpa)
-                @views YY0par = YY_arrays.YY0par[:,:,ivpa_local,ielement_vpa]
-                @views YY1par = YY_arrays.YY1par[:,:,ivpa_local,ielement_vpa]
-                @views YY2par = YY_arrays.YY2par[:,:,ivpa_local,ielement_vpa]
-                @views YY3par = YY_arrays.YY3par[:,:,ivpa_local,ielement_vpa]
+                @views YY0par_ii = YY0par[:,:,ivpa_local,ielement_vpa]
+                @views YY1par_ii = YY1par[:,:,ivpa_local,ielement_vpa]
+                @views YY2par_ii = YY2par[:,:,ivpa_local,ielement_vpa]
+                @views YY3par_ii = YY3par[:,:,ivpa_local,ielement_vpa]
                 vpa_igrid_full_view = @view vpa_igrid_full[:,ielement_vpa]
 
                 # carry out the matrix sum on each 2D element
                 rhsvpavperp[ivpa_global,ivperp_global] +=
                     assemble_explicit_collision_operator_rhs_parallel_inner_loop(
-                        nussp, ms, msp, YY0perp, YY0par, YY1perp, YY1par, YY2perp, YY2par,
-                        YY3perp, YY3par, pdfs, d2Gspdvpa2, d2Gspdvperpdvpa, d2Gspdvperp2,
-                        dHspdvpa, dHspdvperp, ngrid_vperp, vperp_igrid_full_view,
-                        ngrid_vpa, vpa_igrid_full_view)
+                        nussp, ms, msp, YY0perp_ii, YY0par_ii, YY1perp_ii, YY1par_ii,
+                        YY2perp_ii, YY2par_ii, YY3perp_ii, YY3par_ii, pdfs, d2Gspdvpa2,
+                        d2Gspdvperpdvpa, d2Gspdvperp2, dHspdvpa, dHspdvperp, ngrid_vperp,
+                        vperp_igrid_full_view, ngrid_vpa, vpa_igrid_full_view)
             end
         end
     end
@@ -3390,34 +3404,42 @@ function assemble_explicit_collision_operator_rhs_parallel_analytical_inputs!(rh
     ngrid_vpa, ngrid_vperp = vpa.ngrid, vperp.ngrid
     vperp_igrid_full = vperp.igrid_full
     vpa_igrid_full = vpa.igrid_full
+    YY0perp = YY_arrays.YY0perp
+    YY1perp = YY_arrays.YY1perp
+    YY2perp = YY_arrays.YY2perp
+    YY3perp = YY_arrays.YY3perp
+    YY0par = YY_arrays.YY0par
+    YY1par = YY_arrays.YY1par
+    YY2par = YY_arrays.YY2par
+    YY3par = YY_arrays.YY3par
     @loop_vperp_vpa ivperp_global ivpa_global begin
         igrid_vpa, ielement_vpax, ielement_vpa_low, ielement_vpa_hi, igrid_vperp, ielement_vperpx, ielement_vperp_low, ielement_vperp_hi = get_element_limit_indices(ivpa_global,ivperp_global,vpa,vperp)
         # loop over elements belonging to this collocation point
         for ielement_vperp in ielement_vperp_low:ielement_vperp_hi
             # correct local ivperp in the case that we on a boundary point
             ivperp_local = igrid_vperp + (ielement_vperp - ielement_vperp_low)*(1-ngrid_vperp)
-            @views YY0perp = YY_arrays.YY0perp[:,:,ivperp_local,ielement_vperp]
-            @views YY1perp = YY_arrays.YY1perp[:,:,ivperp_local,ielement_vperp]
-            @views YY2perp = YY_arrays.YY2perp[:,:,ivperp_local,ielement_vperp]
-            @views YY3perp = YY_arrays.YY3perp[:,:,ivperp_local,ielement_vperp]
+            @views YY0perp_ii = YY0perp[:,:,ivperp_local,ielement_vperp]
+            @views YY1perp_ii = YY1perp[:,:,ivperp_local,ielement_vperp]
+            @views YY2perp_ii = YY2perp[:,:,ivperp_local,ielement_vperp]
+            @views YY3perp_ii = YY3perp[:,:,ivperp_local,ielement_vperp]
             vperp_igrid_full_view = @view vperp_igrid_full[:,ielement_vperp]
 
             for ielement_vpa in ielement_vpa_low:ielement_vpa_hi
                 # correct local ivpa in the case that we on a boundary point
                 ivpa_local = igrid_vpa + (ielement_vpa - ielement_vpa_low)*(1-ngrid_vpa)
-                @views YY0par = YY_arrays.YY0par[:,:,ivpa_local,ielement_vpa]
-                @views YY1par = YY_arrays.YY1par[:,:,ivpa_local,ielement_vpa]
-                @views YY2par = YY_arrays.YY2par[:,:,ivpa_local,ielement_vpa]
-                @views YY3par = YY_arrays.YY3par[:,:,ivpa_local,ielement_vpa]
+                @views YY0par_ii = YY0par[:,:,ivpa_local,ielement_vpa]
+                @views YY1par_ii = YY1par[:,:,ivpa_local,ielement_vpa]
+                @views YY2par_ii = YY2par[:,:,ivpa_local,ielement_vpa]
+                @views YY3par_ii = YY3par[:,:,ivpa_local,ielement_vpa]
                 vpa_igrid_full_view = @view vpa_igrid_full[:,ielement_vpa]
 
                 # carry out the matrix sum on each 2D element
                 rhsvpavperp[ivpa_global,ivperp_global] +=
                     assemble_explicit_collision_operator_rhs_parallel_analytical_inputs_inner_loop(
                         nussp, ms, msp, pdfs, dpdfsdvpa, dpdfsdvperp, d2Gspdvperp2,
-                        d2Gspdvpa2, d2Gspdvperpdvpa, dHspdvperp, dHspdvpa, YY0perp,
-                        YY0par, YY1perp, YY1par, ngrid_vperp, vperp_igrid_full_view,
-                        ngrid_vpa, vpa_igrid_full_view)
+                        d2Gspdvpa2, d2Gspdvperpdvpa, dHspdvperp, dHspdvpa, YY0perp_ii,
+                        YY0par_ii, YY1perp_ii, YY1par_ii, ngrid_vperp,
+                        vperp_igrid_full_view, ngrid_vpa, vpa_igrid_full_view)
             end
         end
     end
