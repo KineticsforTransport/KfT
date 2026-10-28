@@ -2093,7 +2093,7 @@ function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::c
             # v^z/vth/b^z) in vpa.scratch
             @. vpa.scratch = vth * vpa.grid + upar[iz] + vEz[iz] / bz[iz]
             # Introduce factors to ensure corrections go smoothly to zero near
-            # v_parallel=0, and that there are no large corrections aw large w_parallel as
+            # v_parallel=0, and that there are no large corrections at large w_parallel as
             # those can have a strong effect on the parallel heat flux and make
             # timestepping unstable when the cut-off point jumps from one grid point to
             # another.
@@ -2116,8 +2116,8 @@ function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::c
             J4 = integral((vperp,vpa)->((vpa^2+vperp^2)^2), vpavperp_buffer, vperp, vpa)
             J5 = integral((vperp,vpa)->(vpa^2), vpavperp_buffer, vperp, vpa)
             # Given a corrected distribution function
-            #   F = A * Fhat + (B*wpa + C*wpa^2) * s*|vpa/vth| / (1 + s*|vpa/vth|) / (1 +(4*vpa/vth/Lvpa)^4) * Fhat
-            # calling the prefactor in the second term on the RHS (coefficient of (B*wpa + C*wpa^2)*Fhat) as P(vpa,vperp,z,t),
+            #   F = A * Fhat + (B*wpa + C*(wpa^2 + wperp^2)) * s*|vpa/vth| / (1 + s*|vpa/vth|) / (1 +(4*vpa/vth/Lvpa)^4) * Fhat
+            # calling the prefactor in the second term on the RHS (coefficient of (B*wpa + C*(wpa^2 + wperp^2))*Fhat) as P(vpa,vperp,z,t),
             #
             # the constraints 
             #   ∫d^3w F = 1
@@ -2152,7 +2152,10 @@ function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::c
             B = (J3*I2 - I1*J4 + 1.5*(J2*I1 - I0*J3)) / determinant
             C = (I1*J3 - J5*I2 + 1.5*(I0*J5 - I1*J1)) / determinant
 
-            @. f = A*f + B*vpa.grid*vpa.scratch2*f + C*vpa.grid*vpa.grid*vpa.scratch2*f
+            # @. f = A*f + B*vpa.grid*vpa.scratch2*f + C*vpa.grid*vpa.grid*vpa.scratch2*f
+            @loop_vperp_vpa ivperp ivpa begin
+                f[ivpa,ivperp] = f[ivpa,ivperp] * (A + B*vpa.grid[ivpa]*vpa.scratch2[ivpa] + C*(vpa.grid[ivpa]^2 + vperp.grid[ivperp]^2)*vpa.scratch2[ivpa])
+            end
         elseif evolve_upar
             I0 = integral((vperp,vpa)->(1), f, vperp, vpa)
             I1 = integral((vperp,vpa)->(vpa), f, vperp, vpa)
