@@ -46,6 +46,7 @@ using ..calculus: derivative!, integral
 using ..communication
 using ..lagrange_polynomials: lagrange_poly, lagrange_poly_optimised
 using ..looping
+using ..timer_utils
 using ..velocity_moments: get_density, get_upar, get_p, get_ppar, get_pperp
 using ..input_structs: direct_integration, multipole_expansion, delta_f_multipole
 using ..fokker_planck_test: F_Maxwellian, G_Maxwellian, H_Maxwellian, dHdvpa_Maxwellian, dHdvperp_Maxwellian
@@ -3608,6 +3609,7 @@ function calculate_rosenbluth_potentials_via_elliptic_solve!(GG,HH,dHdvpa,dHdvpe
     rhsvpavperp_copy3 = fkpl_arrays.rhsvpavperp_copy3
 
     # calculate the boundary data
+@timeit global_timer "rosenbluth boundary data" begin
     if boundary_data_option == multipole_expansion
         calculate_rosenbluth_potential_boundary_data_multipole!(rpbd,ffsp_in,vpa,vperp,vpa_spectral,vperp_spectral,
           calculate_GG=calculate_GG,calculate_dGdvperp=(calculate_dGdvperp||algebraic_solve_for_d2Gdvperp2))
@@ -3623,6 +3625,8 @@ function calculate_rosenbluth_potentials_via_elliptic_solve!(GG,HH,dHdvpa,dHdvpe
               or  boundary_data_option='$delta_f_multipole' \n
               or boundary_data_option='$direct_integration'")
     end
+end
+@timeit global_timer "rosenbluth elliptic solves A" begin
     # carry out the elliptic solves required
     @begin_anysv_vperp_vpa_region()
     @loop_vperp_vpa ivperp ivpa begin
@@ -3651,7 +3655,9 @@ function calculate_rosenbluth_potentials_via_elliptic_solve!(GG,HH,dHdvpa,dHdvpe
     @loop_vperp_vpa ivperp ivpa begin
         S_dummy[ivpa,ivperp] = 2.0*HH[ivpa,ivperp]
     end
+end
 
+@timeit global_timer "rosenbluth elliptic solves B" begin
     # The following four solves can be done in parallel. Note: do the two that are always
     # done on ranks 0 and 1 of the subblock and the first optional one that actually needs
     # doing on rank 3 to maximise the chances that all solves get run on separate
@@ -3680,7 +3686,9 @@ function calculate_rosenbluth_potentials_via_elliptic_solve!(GG,HH,dHdvpa,dHdvpe
         elliptic_solve!(d2Gdvperpdvpa, S_dummy, rpbd.d2Gdvperpdvpa_data, lu_obj_LV,
                         PPparPUperp2D_sparse, rhsvpavperp_copy1, vpa, vperp)
     end
+end
 
+@timeit global_timer "rosenbluth elliptic solves C" begin
     if algebraic_solve_for_d2Gdvperp2
         @begin_anysv_vperp_vpa_region()
         @loop_vperp_vpa ivperp ivpa begin
@@ -3711,6 +3719,7 @@ function calculate_rosenbluth_potentials_via_elliptic_solve!(GG,HH,dHdvpa,dHdvpe
                             vperp)
         end
     end
+end
     @_anysv_subblock_synchronize
     return nothing
 end

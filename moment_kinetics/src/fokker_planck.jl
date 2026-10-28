@@ -387,8 +387,10 @@ Function for advancing with the explicit, weak-form, self-collision operator.
     @begin_r_z_anysv_region()
     @loop_r_z ir iz begin
         is = 1
+@timeit global_timer "mk_prefactor" begin
         prefactor = moment_kinetic_collision_frequency_prefactor(density[iz,ir,is],
                                             vth[iz,ir,is], evolve_p, evolve_density)
+end
         # first argument is Fs, and second argument is Fs' in C[Fs,Fs'] 
         @views fokker_planck_self_collision_operator_weak_form!(
             pdf_in[:,:,iz,ir,is], ms, nuss*prefactor, fkpl_arrays,
@@ -396,21 +398,25 @@ Function for advancing with the explicit, weak-form, self-collision operator.
             boundary_data_option = boundary_data_option,
             use_conserving_corrections = use_conserving_corrections)
         # advance this part of s,r,z with the resulting C[Fs,Fs]
+@timeit global_timer "update pdf" begin
         @begin_anysv_vperp_vpa_region()
         CC = fkpl_arrays.CC
         @loop_vperp_vpa ivperp ivpa begin
             pdf_out[ivpa,ivperp,iz,ir,is] += dt*CC[ivpa,ivperp]
         end
+end
         if diagnose_entropy_production
+@timeit global_timer "calculate_entropy_production!" begin
             calculate_entropy_production!(dSdt, pdf_in, fkpl_arrays, density, vth,
                                           evolve_density, evolve_p, vpa, vperp, iz, ir,
                                           is)
+end
         end
     end
     return nothing
 end
 
-@timeit fokker_planck_self_collision_operator_weak_form!(
+@timeit global_timer fokker_planck_self_collision_operator_weak_form!(
                          pdf_in, ms, nuss,
                          fkpl_arrays::fokkerplanck_weakform_arrays_struct, vperp, vpa,
                          vperp_spectral, vpa_spectral; 
@@ -426,7 +432,9 @@ end
     enforce_vpavperp_BCs!(CC,vpa,vperp,vpa_spectral,vperp_spectral)
     # make ad-hoc conserving corrections appropriate only for the self operator
     if use_conserving_corrections
+@timeit global_timer "conserving_corrections!" begin
         conserving_corrections!(CC, pdf_in, vpa, vperp)
+end
     end
     return nothing
 end
@@ -485,12 +493,14 @@ with \$\\gamma_\\mathrm{ref} = 2 \\pi e^4 \\ln \\Lambda_{ii} / (4 \\pi
         calculate_rosenbluth_potentials_via_analytical_Maxwellian!(GG,HH,dHdvpa,dHdvperp,
                  d2Gdvpa2,dGdvperp,d2Gdvperpdvpa,d2Gdvperp2,ffsp_in,vpa,vperp,msp)
     else
+@timeit global_timer "calculate_rosenbluth_potentials_via_elliptic_solve!" begin
         calculate_rosenbluth_potentials_via_elliptic_solve!(GG,HH,dHdvpa,dHdvperp,
              d2Gdvpa2,dGdvperp,d2Gdvperpdvpa,d2Gdvperp2,ffsp_in,
              vpa,vperp,vpa_spectral,vperp_spectral,fkpl_arrays,
              algebraic_solve_for_d2Gdvperp2=algebraic_solve_for_d2Gdvperp2,
              calculate_GG=calculate_GG,calculate_dGdvperp=calculate_dGdvperp,
              boundary_data_option=boundary_data_option)
+end
     end
     # assemble the RHS of the collision operator matrix eq
     if use_Maxwellian_field_particle_distribution
@@ -521,11 +531,14 @@ with \$\\gamma_\\mathrm{ref} = 2 \\pi e^4 \\ln \\Lambda_{ii} / (4 \\pi
           vpa,vperp,YY_arrays)
     else
         @_anysv_subblock_synchronize()
+@timeit global_timer "assemble_explicit_collision_operator_rhs_parallel!" begin
         assemble_explicit_collision_operator_rhs_parallel!(rhsvpavperp,ffs_in,
           d2Gdvpa2,d2Gdvperpdvpa,d2Gdvperp2,
           dHdvpa,dHdvperp,ms,msp,nussp,
           vpa,vperp,YY_arrays)
+end
     end
+@timeit global_timer "invert mass matrix" begin
     # solve the collision operator matrix eq
     @begin_anysv_region()
     @anysv_serial_region begin
@@ -536,6 +549,7 @@ with \$\\gamma_\\mathrm{ref} = 2 \\pi e^4 \\ln \\Lambda_{ii} / (4 \\pi
         # invert mass matrix and fill fc
         ldiv!(sc, lu_obj_MM, rhsc)
     end
+end
     return nothing
 end
 
