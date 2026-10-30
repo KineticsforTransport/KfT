@@ -47,7 +47,7 @@ discretization = "chebyshev_pseudospectral"
 nelement = 32
 L = 70.0
 element_spacing_option = "coarse_tails8"
-bc = "zero"
+bc = "both_zero"
 
 [ion_species_1]
 initial_temperature = 0.33333333333333333333333
