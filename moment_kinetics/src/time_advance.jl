@@ -2780,24 +2780,32 @@ moments and moment derivatives
         # depends on phi) is needed for the sheath-entrance boundary condition on the
         # distribution function.
         if moments.evolve_density && moments.evolve_upar
+@timeit global_timer "calculate_electron_moments!" begin
             calculate_electron_moments!(this_scratch, pdf, moments, composition,
                                         collisions, r, z, vperp, vpa)
+end
+@timeit global_timer "calculate_electron_moment_derivatives!" begin
             calculate_electron_moment_derivatives!(moments, this_scratch, scratch_dummy,
                                                    z, z_spectral,
                                                    num_diss_params.electron.moment_dissipation_coefficient,
                                                    composition.electron_physics)
+end
             # update the electron parallel friction force
+@timeit global_timer "calculate_electron_parallel_friction_force!" begin
             calculate_electron_parallel_friction_force!(
                 moments.electron.parallel_friction, this_scratch.electron_density,
                 this_scratch.electron_upar, this_scratch.upar, moments.electron.dT_dz,
                 composition.me_over_mi, collisions.electron_fluid.nu_ei,
                 composition.electron_physics)
+end
 
             # update the electrostatic potential phi, electric fields, and ExB velocity
             # components.
+@timeit global_timer "update_phi!" begin
             update_phi!(fields, this_scratch, vperp, z, r, composition, collisions,
                         moments, geometry, z_spectral, r_spectral, scratch_dummy, gyroavs,
                         boundaries)
+end
 
             enforce_boundary_conditions_f!(this_scratch, moments, fields, boundaries, vpa,
                                            vperp, z, r, vpa_spectral, vperp_spectral,
@@ -2813,9 +2821,11 @@ moments and moment derivatives
             # be calculated before that is applied. Also may be needed to calculate
             # advection speeds for for CFL stability limit calculations in
             # adaptive_timestep_update!().
+@timeit global_timer "update_derived_moments!" begin
             update_derived_moments!(this_scratch, moments, vpa, vperp, z, r, composition,
                                     r_spectral, geometry, gyroavs, scratch_dummy,
                                     z_advect, collisions, diagnostic_moments)
+end
         else
             # We fudge this boundary condition a bit for the 'standard drift kinetic'
             # case. The sheath entrance boundary condition on f_i depends on phi through
@@ -2848,39 +2858,52 @@ moments and moment derivatives
             # be calculated before that is applied. Also may be needed to calculate
             # advection speeds for for CFL stability limit calculations in
             # adaptive_timestep_update!().
+@timeit global_timer "update_derived_moments!" begin
             update_derived_moments!(this_scratch, moments, vpa, vperp, z, r, composition,
                                     r_spectral, geometry, gyroavs, scratch_dummy,
                                     z_advect, collisions, diagnostic_moments)
+end
 
+@timeit global_timer "calculate_electron_moments!" begin
             calculate_electron_moments!(this_scratch, pdf, moments, composition,
                                         collisions, r, z, vperp, vpa)
+end
+@timeit global_timer "calculate_electron_moment_derivatives!" begin
             calculate_electron_moment_derivatives!(moments, this_scratch, scratch_dummy,
                                                    z, z_spectral,
                                                    num_diss_params.electron.moment_dissipation_coefficient,
                                                    composition.electron_physics)
+end
             # update the electron parallel friction force
+@timeit global_timer "calculate_electron_parallel_friction_force!" begin
             calculate_electron_parallel_friction_force!(
                 moments.electron.parallel_friction, this_scratch.electron_density,
                 this_scratch.electron_upar, this_scratch.upar, moments.electron.dT_dz,
                 composition.me_over_mi, collisions.electron_fluid.nu_ei,
                 composition.electron_physics)
+end
 
             # update the electrostatic potential phi, electric fields, and ExB velocity
             # components.
+@timeit global_timer "update_phi!" begin
             update_phi!(fields, this_scratch, vperp, z, r, composition, collisions,
                         moments, geometry, z_spectral, r_spectral, scratch_dummy, gyroavs,
                         boundaries)
+end
         end
 
+@timeit global_timer "update_phi!" begin
         enforce_boundary_conditions_moments!(this_scratch, moments, fields, boundaries,
                                              z, r, z_advect, r_advect, composition,
                                              geometry, advance.r_diffusion)
+end
 
 
         if (composition.electron_physics ∈ (kinetic_electrons,
                                            kinetic_electrons_with_temperature_equation)
                 && length(this_scratch.pdf_electron) > 0)
 
+@timeit global_timer "apply_electron_bc_and_constraints" begin
             @begin_r_anyzv_region()
             @loop_r ir begin
                 @views apply_electron_bc_and_constraints_no_r!(
@@ -2889,6 +2912,7 @@ moments and moment derivatives
                            electron_vpa_advect, num_diss_params, composition, ir,
                            nl_solver_params.electron_advance, scratch_dummy)
             end
+end
         end
     end
 
@@ -2919,15 +2943,18 @@ moments and moment derivatives
                     moments, geometry, z_spectral, r_spectral, scratch_dummy, gyroavs,
                     boundaries)
     else
+@timeit global_timer "calculate_ion_moment_derivatives!" begin
         calculate_ion_moment_derivatives!(moments, fields, geometry, collisions,
                                           composition, this_scratch, scratch_dummy, r, z,
                                           vperp, r_spectral, z_spectral,
                                           num_diss_params.ion.moment_dissipation_coefficient)
+end
     end
 
     if composition.electron_physics ∈ (kinetic_electrons,
                                        kinetic_electrons_with_temperature_equation)
 
+@timeit global_timer "copy electron moments to scratch" begin
         # Copy ion and electron moments from `scratch` into `moments` to be used in
         # electron kinetic equation update
         @begin_r_z_region()
@@ -2946,6 +2973,7 @@ moments and moment derivatives
             moments.electron.upar[iz,ir] = this_scratch.electron_upar[iz,ir]
             moments.electron.p[iz,ir] = this_scratch.electron_p[iz,ir]
         end
+end
     end
 
     if composition.n_neutral_species > 0
@@ -2977,9 +3005,12 @@ moments and moment derivatives
         end
 
         # update remaining velocity moments that are calculable from the evolved pdf
+@timeit global_timer "update_derived_moments_neutral!" begin
         update_derived_moments_neutral!(this_scratch, moments, vz, vr, vzeta, z, r,
                                         composition)
+end
         # update the thermal speed
+@timeit global_timer "neutral moments" begin
         @begin_sn_r_z_region()
         @loop_sn_r_z isn ir iz begin
             moments.neutral.vth[iz,ir,isn] = sqrt(2.0*this_scratch.p_neutral[iz,ir,isn]/this_scratch.density_neutral[iz,ir,isn])
@@ -2991,10 +3022,13 @@ moments and moment derivatives
                            moments.neutral.vth, this_scratch.pdf_neutral, vz, vr, vzeta, z,
                            r, composition, moments.evolve_density, moments.evolve_upar,
                            moments.evolve_p)
+end
 
+@timeit global_timer "calculate_neutral_moment_derivatives!" begin
         calculate_neutral_moment_derivatives!(moments, this_scratch, scratch_dummy, z,
                                               z_spectral,
                                               num_diss_params.neutral.moment_dissipation_coefficient)
+end
     end
 
     return success
