@@ -12,7 +12,9 @@ export ARTIFACT_DIR=$PWD
 # Note CMake module is required for compiling ADIOS2, but would cause linking
 # errors if loaded while running moment_kinetics, so just load/unload
 # explicitly here.
+set +e
 CMAKE_LOADED=$(module is-loaded cmake)
+set -e
 if [ ! $CMAKE_LOADED ]; then
   module load cmake
 fi
