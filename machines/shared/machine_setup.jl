@@ -8,6 +8,8 @@ export machine_setup_moment_kinetics
 using Pkg
 using TOML
 
+include("get_input_with_path_completion.jl")
+
 # Default settings for the arguments to machine_setup_moment_kinetics(), set like this
 # so that they can be passed to the bash script `machine_setup.sh`
 default_settings = Dict{String,Dict{String,String}}()
