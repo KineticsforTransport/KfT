@@ -31,7 +31,7 @@ fi
 
 export JULIA_DEPOT_PATH=$TMPDIR/$USER/compute-node-temp.julia
 
-bin/julia -t 128 --project -O3 precompile-no-run.jl
+srun bin/julia -t 128 --project -O3 precompile-no-run.jl
 
 # Don't re-save the tar file, because it might overwrite one being created by
 # machines/machine-setup.sh (e.g. one with post-processing packages included).
