@@ -2152,7 +2152,6 @@ function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::c
             B = (J3*I2 - I1*J4 + 1.5*(J2*I1 - I0*J3)) / determinant
             C = (I1*J3 - J5*I2 + 1.5*(I0*J5 - I1*J1)) / determinant
 
-            # @. f = A*f + B*vpa.grid*vpa.scratch2*f + C*vpa.grid*vpa.grid*vpa.scratch2*f
             @loop_vperp_vpa ivperp ivpa begin
                 f[ivpa,ivperp] = f[ivpa,ivperp] * (A + B*vpa.grid[ivpa]*vpa.scratch2[ivpa] + C*(vpa.grid[ivpa]^2 + vperp.grid[ivperp]^2)*vpa.scratch2[ivpa])
             end
