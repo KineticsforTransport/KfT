@@ -749,14 +749,22 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
     return success
 end
 
+# Weighted RMS of the scaled entries. `residual` is the vector being measured
+# and `x` is the current Newton state, used as the scale `rtol*abs(x)+atol`.
+# Works with a tuple of arrays; a bare array is wrapped as a one-element list.
+# Each unknown is divided by its own point count, then those mean squares are
+# averaged so that multiple unknowns have equal weight.
 @timeit_debug global_timer distributed_norm(residual, owned_indices,
                           shared_comm, distributed_comm, buffer, rtol, atol, x) = begin
     residuals = residual isa AbstractArray ? (residual,) : residual
     xs = x isa AbstractArray ? (x,) : x
-    n = length(residuals)         # number of unknowns n
-    fill!(buffer, zero(mk_float)) # buffer to hold (sum, count) pair per unknown, size 2n
+    n = length(residuals)
+    # Slot 2k-1 is the sum of squares and slot 2k is the point count.
+    # The loop adds into the buffer, so clear it on every call.
+    fill!(buffer, zero(mk_float))
     for k in 1:n
-	    for r in owned_indices[k][owned_ranges_index] # indices for this unknown (no duplicate points)
+        # Owned ranges omit the boundary point duplicated on the next block.
+        for r in owned_indices[k][owned_ranges_index]
             for i in r
                 buffer[2k - 1] += (residuals[k][i] / (rtol * abs(xs[k][i]) + atol))^2
             end
@@ -771,14 +779,18 @@ end
     return sqrt(mean_square / n)
 end
 
+# Sum-reduce the (sum, count) pairs to every rank.
 function _reduce_sums!(buffer, shared_comm, distributed_comm)
     if shared_comm != MPI.COMM_NULL
+        # The total is present on rank 0 only until the broadcast below.
         MPI.Reduce!(buffer, +, shared_comm)
     end
     if distributed_comm != MPI.COMM_NULL
+        # Sum across blocks. Allreduce leaves the total on every rank in this comm.
         MPI.Allreduce!(buffer, +, distributed_comm)
     end
     if shared_comm != MPI.COMM_NULL
+        # Copy rank 0's buffer to the other ranks in the shared group.
         MPI.Bcast!(buffer, shared_comm; root=0)
     end
     return buffer

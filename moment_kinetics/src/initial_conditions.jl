@@ -788,6 +788,7 @@ function initialize_electron_pdf!(scratch, scratch_electron, pdf, moments, field
                                    nl_solver_params.electron_advance.shared_comm,
                                    nl_solver_params.electron_advance.distributed_comm,
                                    nl_solver_params.electron_advance.owned_indices,
+                                   nl_solver_params.electron_advance.reduction_buffer,
                                   )
                 # Run implicit solve with dt=0 so that we don't update electron_ppar here
                 success =
