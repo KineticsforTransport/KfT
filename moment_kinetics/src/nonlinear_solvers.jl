@@ -434,14 +434,17 @@ function _split_ranges_across_comm(block_ranges::Vector{UnitRange{Int}}, comm::M
     return _slice_owned_ranges(block_ranges, mine)
 end
 
+# Cut the same as `get_local_range`: extra points go to the higher ranks, so this
+# rank reads the entries it writes.
 function _chunk_of_owned_count(n_owned::Int, rank::Int, nrank::Int)
     base, remainder = divrem(n_owned, nrank)
-    if rank < remainder
-        start_ind = rank * (base + 1) + 1
-        return start_ind:(start_ind + base)
-    else
-        start_ind = remainder * (base + 1) + (rank - remainder) * base + 1
+    n_low = nrank - remainder
+    if rank < n_low
+        start_ind = rank * base + 1
         return start_ind:(start_ind + base - 1)
+    else
+        start_ind = n_low * base + (rank - n_low) * (base + 1) + 1
+        return start_ind:(start_ind + base)
     end
 end
 
@@ -757,26 +760,50 @@ end
 @timeit_debug global_timer distributed_norm(residual, owned_indices,
                           shared_comm, distributed_comm, buffer, rtol, atol, x) = begin
     residuals = residual isa AbstractArray ? (residual,) : residual
+    mean = _weighted_mean(owned_indices, shared_comm, distributed_comm,
+                          buffer, rtol, atol, x) do k, i
+        residuals[k][i] * residuals[k][i]
+    end
+    return sqrt(mean)
+end
+
+# Same mean as `distributed_norm`, with the product of `v` and `w` as the weight.
+@timeit_debug global_timer distributed_dot(v, w, owned_indices,
+                          shared_comm, distributed_comm, buffer, rtol, atol, x) = begin
+    vs = v isa AbstractArray ? (v,) : v
+    ws = w isa AbstractArray ? (w,) : w
+    return _weighted_mean(owned_indices, shared_comm, distributed_comm,
+                          buffer, rtol, atol, x) do k, i
+        vs[k][i] * ws[k][i]
+    end
+end
+
+# Mean of `weight(k, i) / scale^2`, with `scale = rtol*abs(x)+atol`.
+# Slot 2k-1 is the sum of those weights and slot 2k is the point count.
+# `_reduce_sums!` runs before the division, then the per-unknown means are averaged.
+@inline function _weighted_mean(weight, owned_indices, shared_comm, distributed_comm,
+                                buffer, rtol, atol, x)
     xs = x isa AbstractArray ? (x,) : x
-    n = length(residuals)
-    # Slot 2k-1 is the sum of squares and slot 2k is the point count.
+    n = length(xs)
     # The loop adds into the buffer, so clear it on every call.
     fill!(buffer, zero(mk_float))
     for k in 1:n
         # Owned ranges omit the boundary point duplicated on the next block.
         for r in owned_indices[k][owned_ranges_index]
             for i in r
-                buffer[2k - 1] += (residuals[k][i] / (rtol * abs(xs[k][i]) + atol))^2
+                scale = rtol * abs(xs[k][i]) + atol
+                buffer[2k - 1] += weight(k, i) / scale^2
             end
             buffer[2k] += length(r)
         end
     end
     _reduce_sums!(buffer, shared_comm, distributed_comm)
-    mean_square = 0.0
+    mean = 0.0
+    # Unknowns weighted equally.
     for k in 1:n
-        mean_square += buffer[2k - 1] / buffer[2k]
+        mean += buffer[2k - 1] / buffer[2k]
     end
-    return sqrt(mean_square / n)
+    return mean / n
 end
 
 # Sum-reduce the (sum, count) pairs to every rank.
@@ -796,7 +823,97 @@ function _reduce_sums!(buffer, shared_comm, distributed_comm)
     return buffer
 end
 
- @timeit_debug global_timer distributed_norm(
+# 0 input parallel_map (1 unknown)
+@inline function parallel_map(func, result::AbstractArray, owned_indices)
+    value = func()
+    ranges = owned_indices[1][local_ranges_index]
+    for r in ranges
+        fill!(@view(result[r]), value) # Just replace values in result itself.
+    end
+    return nothing
+end
+# 0 input parallel_map (multiple unknowns)
+@inline function parallel_map(func, result::Tuple, owned_indices)
+    value = func()
+    n = length(owned_indices)
+    for k in 1:n
+        field = result[k]
+        for r in owned_indices[k][local_ranges_index]
+            fill!(@view(field[r]), value)
+        end
+    end
+    return nothing
+end
+
+# 1 input parallel_map (1 unknown)
+@inline function parallel_map(func, result::AbstractArray, x1, owned_indices)
+    ranges = owned_indices[1][local_ranges_index]
+    _map_ranges!(ranges) do idx
+        result[idx] = func(x1[idx])
+    end
+    return nothing
+end
+# 1 input parallel_map (multiple unknowns)
+@inline function parallel_map(func, result::Tuple, x1, owned_indices)
+
+    n = length(owned_indices)
+    for k in 1:n
+        field = result[k]
+        ranges = owned_indices[k][local_ranges_index]
+        _map_ranges!(ranges) do idx
+            result[idx] = func(x1[idx])
+	end
+    end
+    return nothing
+end
+
+# 2 input parallel_map (1 unknown)
+@inline function parallel_map(func, result::AbstractArray, x1, x2, owned_indices)
+    ranges = owned_indices[1][local_ranges_index]
+    if x2 isa AbstractArray
+        _map_ranges!(ranges) do idx
+            result[idx] = func(x1[idx], x2[idx])
+        end
+    else
+        _map_ranges!(ranges) do idx
+            result[idx] = func(x1[idx], x2)
+        end
+    end
+    return nothing
+end
+
+# 2 input parallel_map (multiple unknowns)
+@inline function parallel_map(func, result::Tuple, x1, x2, owned_indices)
+    n = length(owned_indices)
+    if x2 isa AbstractArray
+        for k=1:n
+            ranges = owned_indices[k][local_ranges_index]
+            _map_ranges!(ranges) do idx
+                result[idx] = func(x1[idx], x2[idx])
+            end
+	end
+    else
+	for k=1:n
+            ranges = owned_indices[k][local_ranges_index]
+            _map_ranges!(ranges) do idx
+                result[idx] = func(x1[idx], x2)
+            end
+	end
+    end
+    return nothing
+end
+
+@inline function _map_ranges!(f, ranges)
+    for r in ranges
+        for idx in r
+            f(idx)
+        end
+    end
+    return nothing
+end
+
+
+@timeit_debug global_timer distributed_norm(
                                ::Val{:z}, residual::AbstractArray{mk_float, 1}, coords,
                                rtol, atol, x) = begin
     z = coords.z
@@ -1679,7 +1796,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
             # Gram-Schmidt orthogonalization
             for j ∈ 1:i
                 parallel_map(solver_type, (V) -> V, v, select_from_V(V, j))
-                w_dot_Vj = distributed_dot(solver_type, w, v, norm_params...)
+                w_dot_Vj = distributed_dot(w, v, new_norm_params...)
                 if serial_solve
                     H[j,i] = w_dot_Vj
                 elseif anysv_region
