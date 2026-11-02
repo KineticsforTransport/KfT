@@ -597,9 +597,12 @@ function newton_solve!(x, residual_func!::F, residual, delta_x, rhs_delta, v, w,
     atol = nl_solver_params.atol
 
     norm_params = (coords, nl_solver_params.rtol, nl_solver_params.atol, x)
+    new_norm_params = (nl_solver_params.owned_indices,
+                       nl_solver_params.shared_comm,
+                       nl_solver_params.distributed_comm, rtol, atol, x)
 
     residual_func!(residual, x)
-    residual_norm = distributed_norm(solver_type, residual, norm_params...)
+    residual_norm = distributed_norm(residual, new_norm_params...)
     counter = 0
     linear_counter = 0
 
@@ -620,7 +623,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
         #   J δx = -RHS(x)
         parallel_map(solver_type, ()->0.0, delta_x)
         linear_its = linear_solve!(x, residual_func!, residual, delta_x, v, w,
-                                   solver_type, norm_params; coords=coords,
+                                   solver_type, norm_params, new_norm_params; coords=coords,
                                    rtol=nl_solver_params.linear_rtol,
                                    atol=nl_solver_params.linear_atol,
                                    restart=nl_solver_params.linear_restart,
@@ -651,7 +654,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
         # For the Newton iteration, we want the norm divided by the (sqrt of the) number
         # of grid points, so we can use a tolerance that is independent of the size of the
         # grid. This is unlike the norms needed in `linear_solve!()`.
-        residual_norm = distributed_norm(solver_type, residual, norm_params...)
+        residual_norm = distributed_norm(residual, new_norm_params...)
         if isnan(residual_norm)
             error("NaN in Newton iteration at iteration $counter")
         end
@@ -738,7 +741,42 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
     return success
 end
 
-@timeit_debug global_timer distributed_norm(
+@timeit_debug global_timer distributed_norm(residual, owned_indices,
+			      shared_comm, distributed_comm, rtol, atol, x) = begin
+    residuals = residual isa AbstractArray ? (residual,) : residual
+    xs = x isa AbstractArray ? (x,) : x
+    n = length(residuals) # number of unknowns
+    buffer = zeros(2n)    # flat (sum, count) pair per unknown [TODO: allocate in solver setup]
+    for k in 1:n
+        for r in owned_indices[k][2] # indices for this unknown (2 => no duplicate points)
+            for i in r
+                buffer[2k - 1] += (residuals[k][i] / (rtol * abs(xs[k][i]) + atol))^2
+            end
+            buffer[2k] += length(r)
+        end
+    end
+    _reduce_sums!(buffer, shared_comm, distributed_comm)
+    mean_square = 0.0
+    for k in 1:n
+        mean_square += buffer[2k - 1] / buffer[2k]
+    end
+    return sqrt(mean_square / n)
+end
+
+function _reduce_sums!(buffer, shared_comm, distributed_comm)
+    if shared_comm != MPI.COMM_NULL
+        MPI.Reduce!(buffer, +, shared_comm)
+    end
+    if distributed_comm != MPI.COMM_NULL
+        MPI.Allreduce!(buffer, +, distributed_comm)
+    end
+    if shared_comm != MPI.COMM_NULL
+        MPI.Bcast!(buffer, shared_comm; root=0)
+    end
+    return buffer
+end
+
+ @timeit_debug global_timer distributed_norm(
                                ::Val{:z}, residual::AbstractArray{mk_float, 1}, coords,
                                rtol, atol, x) = begin
     z = coords.z
@@ -816,70 +854,6 @@ end
 
     @timeit_debug global_timer "MPI.Bcast! comm_block" MPI.Bcast!(global_norm, comm_anysv_subblock[]; root=0)
     
-    return global_norm[]
-end
-
-@timeit_debug global_timer distributed_norm(
-                               ::Val{:zvperpvpa},
-                               residual::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}},
-                               coords, rtol, atol, x) = begin
-    ppar_residual, pdf_residual = residual
-    x_ppar, x_pdf = x
-    z = coords.z
-    vperp = coords.vperp
-    vpa = coords.vpa
-
-    if z.irank < z.nrank - 1
-        zend = z.n
-    else
-        zend = z.n + 1
-    end
-
-    @begin_anyzv_z_region()
-
-    ppar_local_norm_square = 0.0
-    @loop_z iz begin
-        if iz == zend
-            continue
-        end
-        ppar_local_norm_square += (ppar_residual[iz] / (rtol * abs(x_ppar[iz]) + atol))^2
-    end
-
-    @_anyzv_subblock_synchronize()
-    global_norm_ppar = Ref(ppar_local_norm_square) # global_norm_ppar is now the norm_square for ppar in the subblock
-    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(global_norm_ppar, +, comm_anyzv_subblock[])
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(global_norm_ppar, +, z.comm) # global_norm_ppar is now the norm_square for ppar in the whole {z,vperp,vpa} grid
-        global_norm_ppar[] = global_norm_ppar[] / z.n_global
-    end
-
-    @begin_anyzv_z_vperp_vpa_region()
-
-    pdf_local_norm_square = 0.0
-    @loop_z iz begin
-        if iz == zend
-            continue
-        end
-        @loop_vperp_vpa ivperp ivpa begin
-            pdf_local_norm_square += (pdf_residual[ivpa,ivperp,iz] / (rtol * abs(x_pdf[ivpa,ivperp,iz]) + atol))^2
-        end
-    end
-
-    @_anyzv_subblock_synchronize()
-    global_norm = Ref(pdf_local_norm_square)
-    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(global_norm, +, comm_anyzv_subblock[]) # global_norm is now the norm_square for the subblock
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(global_norm, +, z.comm) # global_norm is now the norm_square for the whole {z,vperp,vpa} grid
-        global_norm[] = global_norm[] / (z.n_global * vperp.n_global * vpa.n_global)
-
-        global_norm[] = sqrt(mean((global_norm_ppar[], global_norm[])))
-    end
-    @_anyzv_subblock_synchronize()
-
-    @timeit_debug global_timer "MPI.Bcast! comm_anyzv_subblock" MPI.Bcast!(global_norm, comm_anyzv_subblock[]; root=0)
-
     return global_norm[]
 end
 
@@ -1603,7 +1577,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 """
 @timeit global_timer linear_solve!(
                          x, residual_func!::F, residual0, delta_x, v, w, solver_type::Val,
-                         norm_params; coords, rtol, atol, restart, max_restarts,
+                         norm_params, new_norm_params; coords, rtol, atol, restart, max_restarts,
                          left_preconditioner::LP, right_preconditioner::RP, H, c, s, g, V,
                          rhs_delta, initial_guess, serial_solve, anysv_region,
                          anyzv_region, initial_delta_x_is_zero) where {F,LP,RP} = begin
@@ -1642,7 +1616,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
     parallel_map(solver_type, (residual0, v) -> -residual0 - v, w, w, v)
-    beta = distributed_norm(solver_type, w, norm_params...)
+    beta = distributed_norm(w, new_norm_params...)
     parallel_map(solver_type, (w,beta) -> w/beta, select_from_V(V, 1), w, beta)
     if serial_solve
         g[1] = beta
@@ -1706,7 +1680,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
                 end
                 parallel_map(solver_type, (w, V) -> w - H[j,i] * V, w, w, select_from_V(V, j))
             end
-            norm_w = distributed_norm(solver_type, w, norm_params...)
+            norm_w = distributed_norm(w, new_norm_params...)
             if serial_solve
                 H[i+1,i] = norm_w
             elseif anysv_region
@@ -1823,7 +1797,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 
         # Note residual0 has already had the left_preconditioner() applied to it.
         parallel_map(solver_type, (residual0, v) -> -residual0 - v, v, residual0, v)
-        beta = distributed_norm(solver_type, v, norm_params...)
+        beta = distributed_norm(v, new_norm_params...)
         for i ∈ 2:length(y)
             parallel_map(solver_type, () -> 0.0, select_from_V(V, i))
         end
