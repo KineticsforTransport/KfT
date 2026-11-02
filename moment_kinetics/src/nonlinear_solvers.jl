@@ -88,10 +88,12 @@ struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon,Tpretype,Towned}
     shared_comm::MPI.Comm
     distributed_comm::MPI.Comm
     owned_indices::Towned
+    # One (sum, count) pair per unknown. Reused by every norm call.
+    reduction_buffer::Vector{mk_float}
 end
 
-const local_ranges_index = 1 # index for local points
-const owned_ranges_index = 2 # index for points without duplicates
+const local_ranges_index = 1 # index for local points in owned_indices
+const owned_ranges_index = 2 # index for points without duplicates in owned_indices
 
 """
 
@@ -239,6 +241,7 @@ function setup_nonlinear_solve(nl_solver_input, coords, outer_coords=();
         anyzv_region=anyzv_region, electron_p_pdf_solve=electron_p_pdf_solve)
     owned_indices = _solver_owned_indices(coords, shared_comm;
                                           electron_p_pdf_solve=electron_p_pdf_solve)
+    reduction_buffer = zeros(mk_float, 2 * length(owned_indices))
 
     return nl_solver_info(mk_float(nl_solver_input.rtol), mk_float(nl_solver_input.atol),
                           nl_solver_input.nonlinear_max_iterations,
@@ -253,7 +256,8 @@ function setup_nonlinear_solve(nl_solver_input, coords, outer_coords=();
                           anyzv_region, Ref(0), Ref(0),
                           nl_solver_input.total_its_soft_limit, preconditioner_type,
                           nl_solver_input.preconditioner_update_interval, preconditioners,
-                          shared_comm, distributed_comm, owned_indices)
+                          shared_comm, distributed_comm, owned_indices,
+                          reduction_buffer)
 end
 
 """
@@ -602,7 +606,8 @@ function newton_solve!(x, residual_func!::F, residual, delta_x, rhs_delta, v, w,
     norm_params = (coords, nl_solver_params.rtol, nl_solver_params.atol, x)
     new_norm_params = (nl_solver_params.owned_indices,
                        nl_solver_params.shared_comm,
-                       nl_solver_params.distributed_comm, rtol, atol, x)
+                       nl_solver_params.distributed_comm,
+                       nl_solver_params.reduction_buffer, rtol, atol, x)
 
     residual_func!(residual, x)
     residual_norm = distributed_norm(residual, new_norm_params...)
@@ -745,11 +750,11 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
 end
 
 @timeit_debug global_timer distributed_norm(residual, owned_indices,
-			      shared_comm, distributed_comm, rtol, atol, x) = begin
+                          shared_comm, distributed_comm, buffer, rtol, atol, x) = begin
     residuals = residual isa AbstractArray ? (residual,) : residual
     xs = x isa AbstractArray ? (x,) : x
-    n = length(residuals) # number of unknowns
-    buffer = zeros(2n)    # flat (sum, count) pair per unknown [TODO: allocate in solver setup]
+    n = length(residuals)         # number of unknowns n
+    fill!(buffer, zero(mk_float)) # buffer to hold (sum, count) pair per unknown, size 2n
     for k in 1:n
 	    for r in owned_indices[k][owned_ranges_index] # indices for this unknown (no duplicate points)
             for i in r
