@@ -90,6 +90,9 @@ struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon,Tpretype,Towned}
     owned_indices::Towned
 end
 
+const local_ranges_index = 1 # index for local points
+const owned_ranges_index = 2 # index for points without duplicates
+
 """
 
 `coords` is a NamedTuple of coordinates corresponding to the dimensions of the variable
@@ -330,7 +333,7 @@ function _solver_owned_indices(coords, shared_comm::MPI.Comm; electron_p_pdf_sol
         local_block = _block_owned_ranges(dim_sizes,
             ntuple(_ -> false, length(dim_sizes)))
         local_ranges = _split_ranges_across_comm(local_block, shared_comm)
-        return ((local_ranges, owned_ranges),)
+        return ((local_ranges, owned_ranges),) # index with local_ranges_index, owned_ranges_index
     end
     z = coords.z
     pressure_owned_ranges = _split_ranges_across_comm(
@@ -748,7 +751,7 @@ end
     n = length(residuals) # number of unknowns
     buffer = zeros(2n)    # flat (sum, count) pair per unknown [TODO: allocate in solver setup]
     for k in 1:n
-        for r in owned_indices[k][2] # indices for this unknown (2 => no duplicate points)
+	    for r in owned_indices[k][owned_ranges_index] # indices for this unknown (no duplicate points)
             for i in r
                 buffer[2k - 1] += (residuals[k][i] / (rtol * abs(xs[k][i]) + atol))^2
             end
