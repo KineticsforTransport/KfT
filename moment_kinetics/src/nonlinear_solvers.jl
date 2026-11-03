@@ -33,6 +33,7 @@ using ..array_allocation: allocate_float, allocate_shared_float
 using ..communication
 using ..communication: _anyzv_subblock_synchronize
 using ..coordinates: coordinate
+using ..debugging: @debug_shared_array
 using ..input_structs
 using ..jacobian_matrices: create_jacobian_info
 using ..looping
@@ -768,6 +769,9 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
             break
         end
     end
+    if counter == 0
+        _publish_shared_write!(shared_comm)
+    end
     nl_solver_params.n_solves[] += 1
     nl_solver_params.nonlinear_iterations[] += counter
     nl_solver_params.linear_iterations[] += linear_counter
@@ -907,11 +911,25 @@ end
     end
 end
 
-# Rank 0 has written a shared scalar. Publish it before the other ranks read it.
+# Rank 0 has written a shared scalar, or ranks are crossing between local_ranges and @loop_*.
+# Publish writes before the next read or overwrite.
 function _publish_shared_write!(shared_comm::MPI.Comm)
-    if shared_comm != MPI.COMM_NULL
-        MPI.Barrier(shared_comm)
+    if shared_comm == MPI.COMM_NULL || shared_comm == MPI.COMM_SELF
+        return nothing
     end
+    @debug_shared_array begin
+        if shared_comm == comm_anyzv_subblock[]
+            @_anyzv_subblock_synchronize()
+            return nothing
+        elseif shared_comm == comm_anysv_subblock[]
+            @_anysv_subblock_synchronize()
+            return nothing
+        elseif shared_comm == comm_block[]
+            @_block_synchronize()
+            return nothing
+        end
+    end
+    MPI.Barrier(shared_comm)
     return nothing
 end
 
@@ -938,7 +956,9 @@ end
     results = result isa AbstractArray ? (result,) : result
     _foreach_unknown(owned_indices, results) do _, oi, field
         for r in oi[local_ranges_index]
-            fill!(@view(field[r]), value)
+            for idx in r
+                field[idx] = value
+            end
         end
     end
     return nothing
@@ -2023,6 +2043,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 
         # Store J.delta_x in the variable delta_x, to use it to calculate the new first
         # Krylov vector v/beta.
+        _publish_shared_write!(shared_comm)
         parallel_map((delta_x) -> delta_x, v, delta_x, owned_indices)
         approximate_Jacobian_vector_product!(v)
 
