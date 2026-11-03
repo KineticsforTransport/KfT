@@ -613,51 +613,34 @@ is not necessary to have a very tight `linear_rtol` for the GMRES solve.
                          nl_solver_params; left_preconditioner::LP=identity,
                          right_preconditioner::RP=identity,
                          recalculate_preconditioner::RECALC=nothing,
-                         coords) where {F,LP,RP,RECALC} = begin
-    # This wrapper function constructs the `solver_type` from coords, so that the body of
-    # the inner `newton_solve!()` can be fully type-stable
-    solver_type = Val(Symbol((c for c ∈ keys(coords))...))
-    return newton_solve!(x, residual_func!, residual, delta_x, rhs_delta, v, w,
-                         nl_solver_params, solver_type;
-                         left_preconditioner=left_preconditioner,
-                         right_preconditioner=right_preconditioner,
-                         recalculate_preconditioner=recalculate_preconditioner,
-                         coords=coords)
-end
-function newton_solve!(x, residual_func!::F, residual, delta_x, rhs_delta, v, w,
-                       nl_solver_params, solver_type::Val;
-                       left_preconditioner::LP=identity,
-                       right_preconditioner::RP=identity,
-                       recalculate_preconditioner::RECALC=nothing,
-                       coords) where {F,LP,RP,RECALC}
+                         coords=nothing) where {F,LP,RP,RECALC} = begin
     rtol = nl_solver_params.rtol
     atol = nl_solver_params.atol
     owned_indices = nl_solver_params.owned_indices
     shared_comm = nl_solver_params.shared_comm
 
-    norm_params = (coords, nl_solver_params.rtol, nl_solver_params.atol, x)
-    new_norm_params = (nl_solver_params.owned_indices,
-                       nl_solver_params.shared_comm,
-                       nl_solver_params.distributed_comm,
-                       nl_solver_params.reduction_buffer, rtol, atol, x,
-                       nl_solver_params.full_vector_norm)
+    norm_params = (nl_solver_params.owned_indices,
+                   nl_solver_params.shared_comm,
+                   nl_solver_params.distributed_comm,
+                   nl_solver_params.reduction_buffer, rtol, atol, x,
+                   nl_solver_params.full_vector_norm)
 
     residual_func!(residual, x)
     # The residual writes with @loop_*. Publish that before the owned-range read.
     _publish_shared_write!(shared_comm)
-    residual_norm = distributed_norm(residual, new_norm_params...)
+    residual_norm = distributed_norm(residual, norm_params...)
     counter = 0
     linear_counter = 0
 
     # Would need this if delta_x was not set to zero within the Newton iteration loop
     # below.
-    #parallel_map(solver_type, ()->0.0, delta_x)
+    #parallel_map(()->0.0, delta_x, owned_indices)
 
     close_counter = -1
     close_linear_counter = -1
     success = true
     previous_residual_norm = residual_norm
-old_precon_iterations = nl_solver_params.precon_iterations[]
+    old_precon_iterations = nl_solver_params.precon_iterations[]
     while (counter < 1 && residual_norm > 1.0e-8) || residual_norm > 1.0
         counter += 1
         #println("\nNewton ", counter)
@@ -666,7 +649,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
         #   J δx = -RHS(x)
         parallel_map(()->0.0, delta_x, owned_indices)
         linear_its = linear_solve!(x, residual_func!, residual, delta_x, v, w,
-                                   solver_type, norm_params, new_norm_params; coords=coords,
+                                   norm_params;
                                    rtol=nl_solver_params.linear_rtol,
                                    atol=nl_solver_params.linear_atol,
                                    restart=nl_solver_params.linear_restart,
@@ -682,7 +665,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
                                    anyzv_region=nl_solver_params.anyzv_region,
                                    initial_delta_x_is_zero=true)
         linear_counter += linear_its
-        # delta_x was written with @loop_* (and by the preconditioner). Publish it.
+        # delta_x was written on local_ranges (or by the preconditioner). Publish it.
         _publish_shared_write!(shared_comm)
 
         # If the residual does not decrease, we will do a line search to find an update
@@ -697,13 +680,13 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
         # w was written on local_ranges. The residual reads it with @loop_*.
         _publish_shared_write!(shared_comm)
         residual_func!(residual, w)
+        # The residual writes with @loop_*. Publish that before continuing.
+        _publish_shared_write!(shared_comm)
 
         # For the Newton iteration, we want the norm divided by the (sqrt of the) number
         # of grid points, so we can use a tolerance that is independent of the size of the
         # grid. This is unlike the norms needed in `linear_solve!()`.
-        # The residual writes with @loop_*. Publish that before the owned-range read.
-        _publish_shared_write!(shared_comm)
-        residual_norm = distributed_norm(residual, new_norm_params...)
+        residual_norm = distributed_norm(residual, norm_params...)
         if isnan(residual_norm)
             error("NaN in Newton iteration at iteration $counter")
         end
@@ -1004,755 +987,12 @@ end
 end
 
 
-@timeit_debug global_timer distributed_norm(
-                               ::Val{:z}, residual::AbstractArray{mk_float, 1}, coords,
-                               rtol, atol, x) = begin
-    z = coords.z
-
-    @begin_anyzv_z_region()
-
-    local_norm = 0.0
-    if z.irank < z.nrank - 1
-        zend = z.n
-        @loop_z iz begin
-            if iz == zend
-                continue
-            end
-            local_norm += (residual[iz] / (rtol * abs(x[iz]) + atol))^2
-        end
-    else
-        @loop_z iz begin
-            local_norm += (residual[iz] / (rtol * abs(x[iz]) + atol))^2
-        end
+@timeit_debug global_timer parallel_delta_x_calc(delta_x, V, y, owned_indices) = begin
+    for iy ∈ 1:length(y)
+        y_iy = y[iy]
+        parallel_map((dx, v) -> dx + y_iy * v, delta_x, delta_x, select_from_V(V, iy),
+                     owned_indices)
     end
-
-    @_anyzv_subblock_synchronize()
-    global_norm = Ref(local_norm)
-    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(global_norm, +, comm_anyzv_subblock[]) # global_norm is the norm_square for the block
-
-    if anyzv_subblock_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(global_norm, +, z.comm) # global_norm is the norm_square for the whole grid
-        global_norm[] = sqrt(global_norm[] / z.n_global)
-    end
-    @_anyzv_subblock_synchronize()
-    @timeit_debug global_timer "MPI.Bcast! comm_anyzv_subblock" MPI.Bcast!(global_norm, comm_anyzv_subblock[]; root=0)
-
-    return global_norm[]
-end
-
-@timeit_debug global_timer distributed_norm(
-                               ::Val{:vpa}, residual::AbstractArray{mk_float, 1}, coords,
-                               rtol, atol, x) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    residual_norm = 0.0
-    for i ∈ eachindex(residual, x)
-        residual_norm += (residual[i] / (rtol * abs(x[i]) + atol))^2
-    end
-
-    residual_norm = sqrt(residual_norm / length(residual))
-
-    return residual_norm
-end
-
-@timeit_debug global_timer distributed_norm(
-                               ::Val{:vperpvpa},
-                               residual::AbstractArray{mk_float, 2},
-                               coords, rtol, atol, x::AbstractArray{mk_float, 2}) = begin
-    # no distributed memory paralleism required when solving only in (vperp, vpa)
-    # assumed called inside @begin_r_z_anysv_region()
-    pdf_residual = residual
-    x_pdf = x
-    vperp = coords.vperp
-    vpa = coords.vpa
-
-    @begin_anysv_vperp_vpa_region()
-    pdf_norm_square = 0.0
-    @loop_vperp_vpa ivperp ivpa begin
-        pdf_norm_square += (pdf_residual[ivpa,ivperp] / (rtol * abs(x_pdf[ivpa,ivperp]) + atol))^2
-    end
-    @_anysv_subblock_synchronize()
-    global_norm = Ref(pdf_norm_square)
-    @timeit_debug global_timer "MPI.Reduce! comm_block" MPI.Reduce!(global_norm, +, comm_anysv_subblock[]) # global_norm is the norm_square for the block
-
-    if anysv_subblock_rank[] == 0
-        global_norm[] = sqrt(global_norm[] / (vperp.n_global * vpa.n_global))
-    end
-    @_anysv_subblock_synchronize()
-
-    @timeit_debug global_timer "MPI.Bcast! comm_block" MPI.Bcast!(global_norm, comm_anysv_subblock[]; root=0)
-    
-    return global_norm[]
-end
-
-@timeit_debug global_timer distributed_norm(
-                  ::Val{:srzvperpvpa}, residual::AbstractArray{mk_float, 5}, coords, rtol,
-                  atol, x) = begin
-    n_ion_species = coords.s
-    r = coords.r
-    z = coords.z
-    vperp = coords.vperp
-    vpa = coords.vpa
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    local_norm = 0.0
-    if r.irank < r.nrank - 1
-        rend = r.n
-    else
-        rend = r.n + 1
-    end
-    if z.irank < z.nrank - 1
-        zend = z.n
-    else
-        zend = z.n + 1
-    end
-    @loop_s_r_z is ir iz begin
-        if ir == rend || iz == zend
-            continue
-        end
-        @loop_vperp_vpa ivperp ivpa begin
-            local_norm += (residual[ivpa,ivperp,iz,ir,is] / (rtol * abs(x[ivpa,ivperp,iz,ir,is]) + atol))^2
-        end
-    end
-
-    @_block_synchronize()
-    global_norm = Ref(local_norm)
-    @timeit_debug global_timer "MPI.Reduce! comm_block" MPI.Reduce!(global_norm, +, comm_block[]) # global_norm is the norm_square for the block
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! comm_inter_block" MPI.Allreduce!(global_norm, +, comm_inter_block[]) # global_norm is the norm_square for the whole grid
-        global_norm[] = sqrt(global_norm[] / (n_ion_species * r.n_global * z.n_global * vperp.n_global * vpa.n_global))
-    end
-    @_block_synchronize()
-    @timeit_debug global_timer "MPI.Bcast! comm_block" MPI.Bcast!(global_norm, comm_block[]; root=0)
-
-    return global_norm[]
-end
-
-@timeit_debug global_timer distributed_dot(
-                  ::Val{:z}, v::AbstractArray{mk_float, 1}, w::AbstractArray{mk_float, 1},
-                  coords, rtol, atol, x) = begin
-
-    z = coords.z
-
-    @begin_anyzv_z_region()
-
-    z = coords.z
-
-    local_dot = 0.0
-    if z.irank < z.nrank - 1
-        zend = z.n
-        @loop_z iz begin
-            if iz == zend
-                continue
-            end
-            local_dot += v[iz] * w[iz] / (rtol * abs(x[iz]) + atol)^2
-        end
-    else
-        @loop_z iz begin
-            local_dot += v[iz] * w[iz] / (rtol * abs(x[iz]) + atol)^2
-        end
-    end
-
-    @_anyzv_subblock_synchronize()
-    global_dot = Ref(local_dot)
-    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(global_dot, +, comm_anyzv_subblock[]) # global_dot is the dot for the block
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(global_dot, +, z.comm) # global_dot is the dot for the whole grid
-        global_dot[] = global_dot[] / z.n_global
-    end
-
-    return global_dot[]
-end
-
-@timeit_debug global_timer distributed_dot(
-                  ::Val{:vpa}, v::AbstractArray{mk_float, 1}, w::AbstractArray{mk_float, 1}, coords,
-                  rtol, atol, x) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    local_dot = 0.0
-    for i ∈ eachindex(v,w)
-        local_dot += v[i] * w[i] / (rtol * abs(x[i]) + atol)^2
-    end
-    local_dot = local_dot / length(v)
-    return local_dot
-end
-
-@timeit_debug global_timer distributed_dot(
-                  ::Val{:vperpvpa}, v::AbstractArray{mk_float, 2},
-                  w::AbstractArray{mk_float, 2}, coords,
-                  rtol, atol, x::AbstractArray{mk_float, 2}) = begin
-    v_pdf = v
-    w_pdf = w
-    x_pdf = x
-
-    vperp = coords.vperp
-    vpa = coords.vpa
-
-    @begin_anysv_vperp_vpa_region()
-
-    pdf_dot = 0.0
-    @loop_vperp_vpa ivperp ivpa begin
-        pdf_dot += v_pdf[ivpa,ivperp] * w_pdf[ivpa,ivperp] / (rtol * abs(x_pdf[ivpa,ivperp]) + atol)^2
-    end
-    @_anysv_subblock_synchronize()
-    global_dot = Ref(pdf_dot)
-    @timeit_debug global_timer "MPI.Reduce! comm_anysv_subblock" MPI.Reduce!(global_dot, +, comm_anysv_subblock[]) # global_dot is the dot for the block
-    if anysv_subblock_rank[] == 0
-        global_dot[] = global_dot[] / (vperp.n_global * vpa.n_global)
-    end
-    return global_dot[]
-end
-
-@timeit_debug global_timer distributed_dot(
-                  ::Val{:zvperpvpa}, v::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}},
-                  w::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}}, coords,
-                  rtol, atol, x) = begin
-    v_ppar, v_pdf = v
-    w_ppar, w_pdf = w
-    x_ppar, x_pdf = x
-
-    z = coords.z
-    vperp = coords.vperp
-    vpa = coords.vpa
-
-    if z.irank < z.nrank - 1
-        zend = z.n
-    else
-        zend = z.n + 1
-    end
-
-    @begin_anyzv_z_region()
-
-    ppar_local_dot = 0.0
-    @loop_z iz begin
-        if iz == zend
-            continue
-        end
-        ppar_local_dot += v_ppar[iz] * w_ppar[iz] / (rtol * abs(x_ppar[iz]) + atol)^2
-    end
-
-    @_anyzv_subblock_synchronize()
-    ppar_global_dot = Ref(ppar_local_dot)
-    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(ppar_global_dot, +, comm_anyzv_subblock[]) # ppar_global_dot is now the ppar_dot for the subblock
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(ppar_global_dot, +, z.comm) # ppar_global_dot is now the ppar_dot for the whole {z,vperp,vpa} grid
-        ppar_global_dot[] = ppar_global_dot[] / z.n_global
-    end
-
-    @begin_anyzv_z_vperp_vpa_region()
-
-    pdf_local_dot = 0.0
-    @loop_z_vperp_vpa iz ivperp ivpa begin
-        if iz == zend
-            continue
-        end
-        pdf_local_dot += v_pdf[ivpa,ivperp,iz] * w_pdf[ivpa,ivperp,iz] / (rtol * abs(x_pdf[ivpa,ivperp,iz]) + atol)^2
-    end
-
-    @_anyzv_subblock_synchronize()
-    global_dot = Ref(pdf_local_dot)
-    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(global_dot, +, comm_anyzv_subblock[]) # global_dot is now the dot for the subblock
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(global_dot, +, z.comm) # global_dot is now the dot for the whole {z,vperp,vpa} grid
-        global_dot[] = global_dot[] / (z.n_global * vperp.n_global * vpa.n_global)
-
-        global_dot[] = mean((ppar_global_dot[], global_dot[]))
-    end
-
-    return global_dot[]
-end
-
-@timeit_debug global_timer distributed_dot(
-                  ::Val{:srzvperpvpa}, v::AbstractArray{mk_float, 5},
-                  w::AbstractArray{mk_float, 5}, coords, rtol, atol, x) = begin
-    n_ion_species = coords.s
-    r = coords.r
-    z = coords.z
-    vperp = coords.vperp
-    vpa = coords.vpa
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    local_dot = 0.0
-    if r.irank < r.nrank - 1
-        rend = r.n
-    else
-        rend = r.n + 1
-    end
-    if z.irank < z.nrank - 1
-        zend = z.n
-    else
-        zend = z.n + 1
-    end
-
-    @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-        if ir == rend || iz == zend
-            continue
-        end
-        local_dot += v[ivpa,ivperp,iz,ir,is] * w[ivpa,ivperp,iz,ir,is] / (rtol * abs(x[ivpa,ivperp,iz,ir,is]) + atol)^2
-    end
-
-    @_block_synchronize()
-    global_dot = Ref(local_dot)
-    @timeit_debug global_timer "MPI.Reduce! comm_block" MPI.Reduce!(global_dot, +, comm_block[]) # global_dot is now the dot for the subblock
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! comm_inter_block" MPI.Allreduce!(global_dot, +, comm_inter_block[]) # global_dot is now the dot for the whole {z,vperp,vpa} grid
-        global_dot[] = global_dot[] / (n_ion_species * r.n_global * z.n_global * vperp.n_global * vpa.n_global)
-    end
-
-    return global_dot[]
-end
-
-# Separate versions for different numbers of arguments as generator expressions result in
-# slow code
-
-@timeit_debug global_timer parallel_map(
-                  ::Val{:z}, func, result::AbstractArray{mk_float, 1}) = begin
-
-    @begin_anyzv_z_region()
-
-    @loop_z iz begin
-        result[iz] = func()
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:z}, func, result::AbstractArray{mk_float, 1}, x1) = begin
-
-    @begin_anyzv_z_region()
-
-    @loop_z iz begin
-        result[iz] = func(x1[iz])
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:z}, func, result::AbstractArray{mk_float, 1}, x1, x2) = begin
-
-    @begin_anyzv_z_region()
-
-    if isa(x2, AbstractArray)
-        @loop_z iz begin
-            result[iz] = func(x1[iz], x2[iz])
-        end
-    else
-        @loop_z iz begin
-            result[iz] = func(x1[iz], x2)
-        end
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:z}, func, result::AbstractArray{mk_float, 1}, x1, x2, x3) = begin
-
-    @begin_anyzv_z_region()
-
-    if isa(x3, AbstractArray)
-        @loop_z iz begin
-            result[iz] = func(x1[iz], x2[iz], x3[iz])
-        end
-    else
-        @loop_z iz begin
-            result[iz] = func(x1[iz], x2[iz], x3)
-        end
-    end
-
-    return nothing
-end
-
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vpa}, func, result::AbstractArray{mk_float, 1}) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    for i ∈ eachindex(result)
-        result[i] = func()
-    end
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vpa}, func, result::AbstractArray{mk_float, 1}, x1) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    for i ∈ eachindex(result)
-        result[i] = func(x1[i])
-    end
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vpa}, func, result::AbstractArray{mk_float, 1}, x1, x2) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    if isa(x2, AbstractArray)
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2[i])
-        end
-    else
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2)
-        end
-    end
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vpa}, func, result::AbstractArray{mk_float, 1}, x1, x2, x3) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    if isa(x3, AbstractArray)
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2[i], x3[i])
-        end
-    else
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2[i], x3)
-        end
-    end
-    return nothing
-end
-
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vperpvpa}, func, result::AbstractArray{mk_float, 2}) = begin
-
-    result_pdf = result
-
-    @begin_anysv_vperp_vpa_region()
-
-    @loop_vperp_vpa ivperp ivpa begin
-        result_pdf[ivpa,ivperp] = func()
-    end
-    @_anysv_subblock_synchronize()
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vperpvpa}, func, result::AbstractArray{mk_float, 2},
-                  x1) = begin
-
-    result_pdf = result
-    x1_pdf = x1
-
-    @begin_anysv_vperp_vpa_region()
-
-    @loop_vperp_vpa ivperp ivpa begin
-        result_pdf[ivpa,ivperp] = func(x1_pdf[ivpa,ivperp])
-    end
-    @_anysv_subblock_synchronize()
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vperpvpa}, func, result::AbstractArray{mk_float, 2},
-                  x1, x2) = begin
-
-    result_pdf = result
-    x1_pdf = x1
-
-    @begin_anysv_vperp_vpa_region()
-
-    if isa(x2, AbstractArray)
-        x2_pdf = x2
-    
-        @loop_vperp_vpa ivperp ivpa begin
-            result_pdf[ivpa,ivperp] = func(x1_pdf[ivpa,ivperp], x2_pdf[ivpa,ivperp])
-        end
-    else
-        @loop_vperp_vpa ivperp ivpa begin
-            result_pdf[ivpa,ivperp] = func(x1_pdf[ivpa,ivperp], x2)
-        end
-    end
-    @_anysv_subblock_synchronize()
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vperpvpa}, func, result::AbstractArray{mk_float, 2},
-                  x1, x2, x3) = begin
-
-    result_pdf = result
-    x1_pdf = x1
-    x2_pdf = x2
-    @begin_anysv_vperp_vpa_region()
-
-    if isa(x3, AbstractArray)
-        x3_pdf = x3
-    
-        @loop_vperp_vpa ivperp ivpa begin
-            result_pdf[ivpa,ivperp] = func(x1_pdf[ivpa,ivperp], x2_pdf[ivpa,ivperp], x3_pdf[ivpa,ivperp])
-        end
-    else
-        @loop_vperp_vpa ivperp ivpa begin
-            result_pdf[ivpa,ivperp] = func(x1_pdf[ivpa,ivperp], x2_pdf[ivpa,ivperp], x3)
-        end
-    end
-    @_anysv_subblock_synchronize()
-    return nothing
-end
-
-@timeit_debug global_timer parallel_map(
-                  ::Val{:zvperpvpa}, func, result::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}}) = begin
-
-    result_ppar, result_pdf = result
-
-    @begin_anyzv_z_region()
-
-    @loop_z iz begin
-        result_ppar[iz] = func()
-    end
-
-    @begin_anyzv_z_vperp_vpa_region()
-
-    @loop_z_vperp_vpa iz ivperp ivpa begin
-        result_pdf[ivpa,ivperp,iz] = func()
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:zvperpvpa}, func, result::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}},
-                  x1) = begin
-
-    result_ppar, result_pdf = result
-    x1_ppar, x1_pdf = x1
-
-    @begin_anyzv_z_region()
-
-    @loop_z iz begin
-        result_ppar[iz] = func(x1_ppar[iz])
-    end
-
-    @begin_anyzv_z_vperp_vpa_region()
-
-    @loop_z_vperp_vpa iz ivperp ivpa begin
-        result_pdf[ivpa,ivperp,iz] = func(x1_pdf[ivpa,ivperp,iz])
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:zvperpvpa}, func, result::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}},
-                  x1, x2) = begin
-
-    result_ppar, result_pdf = result
-    x1_ppar, x1_pdf = x1
-
-    if isa(x2, Tuple)
-        x2_ppar, x2_pdf = x2
-        @begin_anyzv_z_region()
-
-        @loop_z iz begin
-            result_ppar[iz] = func(x1_ppar[iz], x2_ppar[iz])
-        end
-
-        @begin_anyzv_z_vperp_vpa_region()
-
-        @loop_z_vperp_vpa iz ivperp ivpa begin
-            result_pdf[ivpa,ivperp,iz] = func(x1_pdf[ivpa,ivperp,iz], x2_pdf[ivpa,ivperp,iz])
-        end
-    else
-        @begin_anyzv_z_region()
-
-        @loop_z iz begin
-            result_ppar[iz] = func(x1_ppar[iz], x2)
-        end
-
-        @begin_anyzv_z_vperp_vpa_region()
-
-        @loop_z_vperp_vpa iz ivperp ivpa begin
-            result_pdf[ivpa,ivperp,iz] = func(x1_pdf[ivpa,ivperp,iz], x2)
-        end
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:zvperpvpa}, func, result::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}},
-                  x1, x2, x3) = begin
-
-    result_ppar, result_pdf = result
-    x1_ppar, x1_pdf = x1
-    x2_ppar, x2_pdf = x2
-
-    if isa(x3, Tuple)
-        x3_ppar, x3_pdf = x3
-        @begin_anyzv_z_region()
-
-        @loop_z iz begin
-            result_ppar[iz] = func(x1_ppar[iz], x2_ppar[iz], x3_ppar[iz])
-        end
-
-        @begin_anyzv_z_vperp_vpa_region()
-
-        @loop_z_vperp_vpa iz ivperp ivpa begin
-            result_pdf[ivpa,ivperp,iz] = func(x1_pdf[ivpa,ivperp,iz], x2_pdf[ivpa,ivperp,iz], x3_pdf[ivpa,ivperp,iz])
-        end
-    else
-        @begin_anyzv_z_region()
-
-        @loop_z iz begin
-            result_ppar[iz] = func(x1_ppar[iz], x2_ppar[iz], x3)
-        end
-
-        @begin_anyzv_z_vperp_vpa_region()
-
-        @loop_z_vperp_vpa iz ivperp ivpa begin
-            result_pdf[ivpa,ivperp,iz] = func(x1_pdf[ivpa,ivperp,iz], x2_pdf[ivpa,ivperp,iz], x3)
-        end
-    end
-
-    return nothing
-end
-
-@timeit_debug global_timer parallel_map(
-                  ::Val{:srzvperpvpa}, func, result::AbstractArray{mk_float, 5}) = begin
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-        result[ivpa,ivperp,iz,ir,is] = func()
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:srzvperpvpa}, func, result::AbstractArray{mk_float, 5}, x1) = begin
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-        result[ivpa,ivperp,iz,ir,is] = func(x1[ivpa,ivperp,iz,ir,is])
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:srzvperpvpa}, func, result::AbstractArray{mk_float, 5}, x1, x2) = begin
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    if isa(x2, AbstractArray)
-        @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-            result[ivpa,ivperp,iz,ir,is] = func(x1[ivpa,ivperp,iz,ir,is], x2[ivpa,ivperp,iz,ir,is])
-        end
-    else
-        @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-            result[ivpa,ivperp,iz,ir,is] = func(x1[ivpa,ivperp,iz,ir,is], x2)
-        end
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:srzvperpvpa}, func, result::AbstractArray{mk_float, 5}, x1, x2,
-                  x3) = begin
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    if isa(x3, AbstractArray)
-        @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-            result[ivpa,ivperp,iz,ir,is] = func(x1[ivpa,ivperp,iz,ir,is], x2[ivpa,ivperp,iz,ir,is], x3[ivpa,ivperp,iz,ir,is])
-        end
-    else
-        @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-            result[ivpa,ivperp,iz,ir,is] = func(x1[ivpa,ivperp,iz,ir,is], x2[ivpa,ivperp,iz,ir,is], x3)
-        end
-    end
-
-    return nothing
-end
-
-@timeit_debug global_timer parallel_delta_x_calc(
-                  ::Val{:z}, delta_x::AbstractArray{mk_float, 1}, V, y) = begin
-
-    @begin_anyzv_z_region()
-
-    ny = length(y)
-    @loop_z iz begin
-        for iy ∈ 1:ny
-            delta_x[iz] += y[iy] * V[iz,iy]
-        end
-    end
-
-    return nothing
-end
-
-@timeit_debug global_timer parallel_delta_x_calc(
-                  ::Val{:vpa}, delta_x::AbstractArray{mk_float, 1}, V, y) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    ny = length(y)
-    for ivpa ∈ eachindex(delta_x)
-        for iy ∈ 1:ny
-            delta_x[ivpa] += y[iy] * V[ivpa,iy]
-        end
-    end
-    return nothing
-end
-
-@timeit_debug global_timer parallel_delta_x_calc(
-                  ::Val{:vperpvpa}, delta_x::AbstractArray{mk_float, 2}, V,
-                  y) = begin
-
-    delta_x_pdf = delta_x
-    V_pdf = V
-
-    ny = length(y)
-
-    @begin_anysv_vperp_vpa_region()
-
-    @loop_vperp_vpa ivperp ivpa begin
-        for iy ∈ 1:ny
-            delta_x_pdf[ivpa,ivperp] += y[iy] * V_pdf[ivpa,ivperp,iy]
-        end
-    end
-
-    return nothing
-end
-
-@timeit_debug global_timer parallel_delta_x_calc(
-                  ::Val{:zvperpvpa}, delta_x::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}}, V,
-                  y) = begin
-
-    delta_x_ppar, delta_x_pdf = delta_x
-    V_ppar, V_pdf = V
-
-    ny = length(y)
-
-    @begin_anyzv_z_region()
-
-    @loop_z iz begin
-        for iy ∈ 1:ny
-            delta_x_ppar[iz] += y[iy] * V_ppar[iz,iy]
-        end
-    end
-
-    @begin_anyzv_z_vperp_vpa_region()
-
-    @loop_z_vperp_vpa iz ivperp ivpa begin
-        for iy ∈ 1:ny
-            delta_x_pdf[ivpa,ivperp,iz] += y[iy] * V_pdf[ivpa,ivperp,iz,iy]
-        end
-    end
-
-    return nothing
-end
-
-@timeit_debug global_timer parallel_delta_x_calc(
-                  ::Val{:srzvperpvpa}, delta_x::AbstractArray{mk_float, 5}, V, y) = begin
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    ny = length(y)
-    @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-        for iy ∈ 1:ny
-            delta_x[ivpa,ivperp,iz,ir,is] += y[iy] * V[ivpa,ivperp,iz,ir,is,iy]
-        end
-    end
-
     return nothing
 end
 
@@ -1815,8 +1055,8 @@ solution, without calculating a least-squares minimisation at each step. See 'al
 MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 """
 @timeit global_timer linear_solve!(
-                         x, residual_func!::F, residual0, delta_x, v, w, solver_type::Val,
-                         norm_params, new_norm_params; coords, rtol, atol, restart, max_restarts,
+                         x, residual_func!::F, residual0, delta_x, v, w,
+                         norm_params; rtol, atol, restart, max_restarts,
                          left_preconditioner::LP, right_preconditioner::RP, H, c, s, g, V,
                          rhs_delta, initial_guess, serial_solve, anysv_region,
                          anyzv_region, initial_delta_x_is_zero) where {F,LP,RP} = begin
@@ -1836,8 +1076,8 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
     # by a large number `Jv_scale_factor` (in constrast to the small `epsilon` in the
     # 'usual' case where the norm does not include either reative or absolute tolerance)
     # to ensure that we get a reasonable estimate of J.v.
-    owned_indices = new_norm_params[1]
-    shared_comm = new_norm_params[2]
+    owned_indices = norm_params[1]
+    shared_comm = norm_params[2]
     approximate_Jacobian_vector_product! =
         nonlinear_solvers_approximate_Jacobian_vector_product!(;
             residual_func!, left_preconditioner, right_preconditioner, x, residual0,
@@ -1862,7 +1102,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
     parallel_map((residual0, v) -> -residual0 - v, w, w, v, owned_indices)
-    beta = distributed_norm(w, new_norm_params...)
+    beta = distributed_norm(w, norm_params...)
     parallel_map((w,beta) -> w/beta, select_from_V(V, 1), w, beta, owned_indices)
     if serial_solve
         g[1] = beta
@@ -1904,7 +1144,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 
             # Gram-Schmidt orthogonalization
             for j ∈ 1:i
-                w_dot_Vj = distributed_dot(w, select_from_V(V, j), new_norm_params...)
+                w_dot_Vj = distributed_dot(w, select_from_V(V, j), norm_params...)
                 if serial_solve
                     H[j,i] = w_dot_Vj
                 elseif anysv_region
@@ -1927,7 +1167,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
                 _publish_shared_write!(shared_comm)
                 parallel_map((w, V) -> w - H[j,i] * V, w, w, select_from_V(V, j), owned_indices)
             end
-            norm_w = distributed_norm(w, new_norm_params...)
+            norm_w = distributed_norm(w, norm_params...)
             if serial_solve
                 H[i+1,i] = norm_w
             elseif anysv_region
@@ -2032,8 +1272,11 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 
         # The following calculates
         #    delta_x .= delta_x .+ sum(y[i] .* V[:,i] for i ∈ 1:length(y))
-        parallel_delta_x_calc(solver_type, delta_x, V, y)
-        right_preconditioner(delta_x)
+        parallel_delta_x_calc(delta_x, V, y, owned_indices)
+        if right_preconditioner !== identity
+            _publish_shared_write!(shared_comm)
+            right_preconditioner(delta_x)
+        end
 
         if residual < tol || restart_counter > max_restarts
             break
@@ -2049,7 +1292,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 
         # Note residual0 has already had the left_preconditioner() applied to it.
         parallel_map((residual0, v) -> -residual0 - v, v, residual0, v, owned_indices)
-        beta = distributed_norm(v, new_norm_params...)
+        beta = distributed_norm(v, norm_params...)
         for i ∈ 2:length(y)
             parallel_map(() -> 0.0, select_from_V(V, i), owned_indices)
         end
