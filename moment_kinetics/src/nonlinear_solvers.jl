@@ -79,17 +79,19 @@ struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon,Tpretype,Towned}
     preconditioner_type::Tpretype
     preconditioner_update_interval::mk_int
     preconditioners::Tprecon
-    # Ranks in `shared_comm` divide the block-owned entries of each unknown.
+    # Ranks in `shared_comm` divide the local entries of each unknown (`local_ranges`).
     # `distributed_comm` is `MPI.COMM_NULL` except on rank 0 of `shared_comm`.
     # `owned_indices` is one tuple entry per unknown array. Each entry is the
     # pair `(local_ranges, owned_ranges)`, fastest index first. `local_ranges`
     # is every slot this rank writes, including the duplicated boundary.
-    # `owned_ranges` omits that point on every block except the last.
+    # `owned_ranges` is the subset of `local_ranges` with that duplicated point
+    # omitted on every block except the last.
     shared_comm::MPI.Comm
     distributed_comm::MPI.Comm
     owned_indices::Towned
     # One (sum, count) pair per unknown. Reused by every norm call.
     reduction_buffer::Vector{mk_float}
+    full_vector_norm::Bool
 end
 
 const local_ranges_index = 1 # index for local points in owned_indices
@@ -98,8 +100,8 @@ const owned_ranges_index = 2 # index for points without duplicates in owned_indi
 """
 
 `coords` is a NamedTuple of coordinates corresponding to the dimensions of the variable
-that will be solved. The entries in `coords` should be ordered the same as the memory
-layout of the variable to be solved (i.e. fastest-varying first).
+that will be solved. Callers pass `coords` slowest-varying first (the reverse of the
+array memory layout, which is fastest-varying first).
 
 The nonlinear solver will be called inside a loop over `outer_coords`, so we might need
 for example a preconditioner object for each point in that outer loop.
@@ -109,7 +111,8 @@ function setup_nonlinear_solve(nl_solver_input, coords, outer_coords=();
                                anysv_region=false, anyzv_region=false,
                                electron_p_pdf_solve=false,
                                preconditioner_type=Val(:none),
-                               preconditioners=nothing)
+                               preconditioners=nothing,
+                               full_vector_norm=get(nl_solver_input, :full_vector_norm, false))
     coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ coords)
     total_size_coords = prod(coord_sizes)
     outer_coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ outer_coords)
@@ -257,7 +260,7 @@ function setup_nonlinear_solve(nl_solver_input, coords, outer_coords=();
                           nl_solver_input.total_its_soft_limit, preconditioner_type,
                           nl_solver_input.preconditioner_update_interval, preconditioners,
                           shared_comm, distributed_comm, owned_indices,
-                          reduction_buffer)
+                          reduction_buffer, full_vector_norm)
 end
 
 """
@@ -316,10 +319,14 @@ the `shared_comm` selected by `_solver_comms`. A rank with `MPI.COMM_NULL`, or a
 rank in the communicator that receives no entries, gets an empty list. Membership of
 `shared_comm` is unchanged.
 
-For each unknown the pair `(local_ranges, owned_ranges)` is returned. `local_ranges`
-is every slot this rank writes, including the duplicated block-boundary point.
-`owned_ranges` is like that but with the duplicated point omitted on every block except
-the last along a distributed coordinate. Consecutive indices are stored as one range.
+For each unknown the pair `(local_ranges, owned_ranges)` is returned. The full local
+array (`1:prod(dim_sizes)`) is partitioned once across `shared_comm` to form
+`local_ranges`, which is every slot this rank writes (including the duplicated upper
+block-boundary point). `owned_ranges` is formed by intersecting `local_ranges` with the
+non-duplicated block points (omitting the upper boundary point on every block except the
+last along each distributed coordinate), guaranteeing `owned_ranges ⊆ local_ranges` on
+every rank without shifting the inter-rank cut. Consecutive indices are stored as one
+range.
 
 A single unknown returns a one-element tuple whose element is that pair. Implicit `vpa`
 advection, Braginskii conduction, Fokker-Planck, and the implicit ion advance use this
@@ -332,27 +339,25 @@ separately, so each unknown keeps its own norm.
 function _solver_owned_indices(coords, shared_comm::MPI.Comm; electron_p_pdf_solve::Bool)
     if !electron_p_pdf_solve
         dim_sizes, exclude_last = _sizes_and_excluded(coords)
-        owned_ranges = _split_ranges_across_comm(
-            _block_owned_ranges(dim_sizes, exclude_last), shared_comm)
-        local_block = _block_owned_ranges(dim_sizes,
-            ntuple(_ -> false, length(dim_sizes)))
-        local_ranges = _split_ranges_across_comm(local_block, shared_comm)
-        return ((local_ranges, owned_ranges),) # index with local_ranges_index, owned_ranges_index
+        return (_local_and_owned_ranges(dim_sizes, exclude_last, shared_comm),)
     end
     z = coords.z
-    pressure_owned_ranges = _split_ranges_across_comm(
-        _block_owned_ranges((Int(z.n),), (_dimension_excludes_boundary(z),)),
-        shared_comm)
-    pressure_local_ranges = _split_ranges_across_comm(
-        _block_owned_ranges((Int(z.n),), (false,)), shared_comm)
+    pressure_ranges = _local_and_owned_ranges(
+        (Int(z.n),), (_dimension_excludes_boundary(z),), shared_comm)
     pdf_sizes, pdf_exclude = _sizes_and_excluded(coords)
-    pdf_owned_ranges = _split_ranges_across_comm(
-        _block_owned_ranges(pdf_sizes, pdf_exclude), shared_comm)
-    pdf_local_block = _block_owned_ranges(pdf_sizes,
-        ntuple(_ -> false, length(pdf_sizes)))
-    pdf_local_ranges = _split_ranges_across_comm(pdf_local_block, shared_comm)
-    return (pressure_local_ranges, pressure_owned_ranges),
-        (pdf_local_ranges, pdf_owned_ranges)
+    pdf_ranges = _local_and_owned_ranges(pdf_sizes, pdf_exclude, shared_comm)
+    return pressure_ranges, pdf_ranges
+end
+
+# Split the full local array first, then intersect with `owned_block` so every rank's
+# `owned_ranges` is a subset of its `local_ranges`.
+function _local_and_owned_ranges(dim_sizes::NTuple{N,Int}, exclude_last::NTuple{N,Bool},
+                                 shared_comm::MPI.Comm) where {N}
+    local_block = _block_owned_ranges(dim_sizes, ntuple(_ -> false, N))
+    local_ranges = _split_ranges_across_comm(local_block, shared_comm)
+    owned_block = _block_owned_ranges(dim_sizes, exclude_last)
+    owned_ranges = _intersect_ranges(local_ranges, owned_block)
+    return (local_ranges, owned_ranges) # index with local_ranges_index, owned_ranges_index
 end
 
 # `coords` is ordered slowest-varying first. Array memory is fastest-varying first.
@@ -471,6 +476,27 @@ function _slice_owned_ranges(block_ranges::Vector{UnitRange{Int}}, mine::UnitRan
         end
     end
     return sliced
+end
+
+function _intersect_ranges(a::Vector{UnitRange{Int}}, b::Vector{UnitRange{Int}})
+    result = UnitRange{Int}[]
+    ia = 1
+    ib = 1
+    while ia <= length(a) && ib <= length(b)
+        ra = a[ia]
+        rb = b[ib]
+        start_ind = max(first(ra), first(rb))
+        stop_ind = min(last(ra), last(rb))
+        if start_ind <= stop_ind
+            push!(result, start_ind:stop_ind)
+        end
+        if last(ra) < last(rb)
+            ia += 1
+        else
+            ib += 1
+        end
+    end
+    return result
 end
 
 """
@@ -605,14 +631,19 @@ function newton_solve!(x, residual_func!::F, residual, delta_x, rhs_delta, v, w,
                        coords) where {F,LP,RP,RECALC}
     rtol = nl_solver_params.rtol
     atol = nl_solver_params.atol
+    owned_indices = nl_solver_params.owned_indices
+    shared_comm = nl_solver_params.shared_comm
 
     norm_params = (coords, nl_solver_params.rtol, nl_solver_params.atol, x)
     new_norm_params = (nl_solver_params.owned_indices,
                        nl_solver_params.shared_comm,
                        nl_solver_params.distributed_comm,
-                       nl_solver_params.reduction_buffer, rtol, atol, x)
+                       nl_solver_params.reduction_buffer, rtol, atol, x,
+                       nl_solver_params.full_vector_norm)
 
     residual_func!(residual, x)
+    # The residual writes with @loop_*. Publish that before the owned-range read.
+    _publish_shared_write!(shared_comm)
     residual_norm = distributed_norm(residual, new_norm_params...)
     counter = 0
     linear_counter = 0
@@ -632,7 +663,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
 
         # Solve (approximately?):
         #   J δx = -RHS(x)
-        parallel_map(solver_type, ()->0.0, delta_x)
+        parallel_map(()->0.0, delta_x, owned_indices)
         linear_its = linear_solve!(x, residual_func!, residual, delta_x, v, w,
                                    solver_type, norm_params, new_norm_params; coords=coords,
                                    rtol=nl_solver_params.linear_rtol,
@@ -650,6 +681,8 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
                                    anyzv_region=nl_solver_params.anyzv_region,
                                    initial_delta_x_is_zero=true)
         linear_counter += linear_its
+        # delta_x was written with @loop_* (and by the preconditioner). Publish it.
+        _publish_shared_write!(shared_comm)
 
         # If the residual does not decrease, we will do a line search to find an update
         # that does decrease the residual. The value of `x` is used to define the
@@ -658,13 +691,17 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
         # during the line search, which might make it fail to converge). So calculate the
         # updated value in the buffer `w` until the line search is completed, and only
         # then copy it into `x`.
-        parallel_map(solver_type, (x) -> x, w, x)
-        parallel_map(solver_type, (x,delta_x) -> x + delta_x, w, x, delta_x)
+        parallel_map((x) -> x, w, x, owned_indices)
+        parallel_map((x,delta_x) -> x + delta_x, w, x, delta_x, owned_indices)
+        # w was written on local_ranges. The residual reads it with @loop_*.
+        _publish_shared_write!(shared_comm)
         residual_func!(residual, w)
 
         # For the Newton iteration, we want the norm divided by the (sqrt of the) number
         # of grid points, so we can use a tolerance that is independent of the size of the
         # grid. This is unlike the norms needed in `linear_solve!()`.
+        # The residual writes with @loop_*. Publish that before the owned-range read.
+        _publish_shared_write!(shared_comm)
         residual_norm = distributed_norm(residual, new_norm_params...)
         if isnan(residual_norm)
             error("NaN in Newton iteration at iteration $counter")
@@ -707,7 +744,9 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
 #                residual_norm = distributed_norm(solver_type, residual, norm_params...)
 #            end
 #        end
-        parallel_map(solver_type, (w) -> w, x, w)
+        parallel_map((w) -> w, x, w, owned_indices)
+        # x was written on local_ranges. Publish it for preconditioner updates and the caller.
+        _publish_shared_write!(shared_comm)
         previous_residual_norm = residual_norm
 
         if recalculate_preconditioner !== nothing && counter % nl_solver_params.preconditioner_update_interval == 0
@@ -755,55 +794,125 @@ end
 # Weighted RMS of the scaled entries. `residual` is the vector being measured
 # and `x` is the current Newton state, used as the scale `rtol*abs(x)+atol`.
 # Works with a tuple of arrays; a bare array is wrapped as a one-element list.
-# Each unknown is divided by its own point count, then those mean squares are
-# averaged so that multiple unknowns have equal weight.
+# When `full_vector_norm == false` (default), each unknown is divided by its own
+# point count, then those mean squares are averaged so that multiple unknowns
+# have equal weight. When `full_vector_norm == true`, all owned points across all
+# unknowns are summed together and divided by the total owned point count.
 @timeit_debug global_timer distributed_norm(residual, owned_indices,
-                          shared_comm, distributed_comm, buffer, rtol, atol, x) = begin
-    residuals = residual isa AbstractArray ? (residual,) : residual
-    mean = _weighted_mean(owned_indices, shared_comm, distributed_comm,
-                          buffer, rtol, atol, x) do k, i
-        residuals[k][i] * residuals[k][i]
+                          shared_comm, distributed_comm, buffer, rtol, atol, x,
+                          full_vector_norm::Bool=false) = begin
+    mean = _weighted_mean(residual, residual, owned_indices, shared_comm,
+                          distributed_comm, buffer, rtol, atol, x,
+                          full_vector_norm) do rk, _, i
+        rk[i] * rk[i]
     end
     return sqrt(mean)
 end
 
 # Same mean as `distributed_norm`, with the product of `v` and `w` as the weight.
 @timeit_debug global_timer distributed_dot(v, w, owned_indices,
-                          shared_comm, distributed_comm, buffer, rtol, atol, x) = begin
-    vs = v isa AbstractArray ? (v,) : v
-    ws = w isa AbstractArray ? (w,) : w
-    return _weighted_mean(owned_indices, shared_comm, distributed_comm,
-                          buffer, rtol, atol, x) do k, i
-        vs[k][i] * ws[k][i]
+                          shared_comm, distributed_comm, buffer, rtol, atol, x,
+                          full_vector_norm::Bool=false) = begin
+    return _weighted_mean(v, w, owned_indices, shared_comm,
+                          distributed_comm, buffer, rtol, atol, x,
+                          full_vector_norm) do vk, wk, i
+        vk[i] * wk[i]
     end
 end
 
-# Mean of `weight(k, i) / scale^2`, with `scale = rtol*abs(x)+atol`.
+"""
+    _foreach_unknown(f::F, owned_indices::NTuple{N,Any}, args::Tuple...) where {F,N}
+
+Unroll a loop over the `N` unknowns in a nonlinear solver state at compile time.
+
+# Arguments
+- `f`: Callable invoked as `f(k, owned_indices[k], args[1][k], args[2][k], ...)` for each
+  unknown `k in 1:N`.
+- `owned_indices`: `N`-tuple of `(local_ranges, owned_ranges)` index-range pairs, one per
+  unknown.
+- `args...`: Any number of `N`-tuples of array fields (e.g. `results`, `x1s`, `x2s`, `x3s`),
+  where `args[j][k]` is the array corresponding to the `k`-th unknown in the `j`-th tuple
+  argument.
+
+# Why `@generated` is used
+When a solver has multiple unknowns with different array types or dimensionalities—such as
+kinetic electrons, where the state is `Tuple{Vector{mk_float}, Array{mk_float, 3}}` for
+`(ppar, pdf)`—indexing `args[j][k]` with a runtime loop variable `for k in 1:N` has an
+inferred return type of `Union{Vector{mk_float}, Array{mk_float, 3}}`. Even when Julia
+union-splits that variable without heap allocations, the type-tag branch remains inside the
+inner grid loop and prevents SIMD vectorization.
+
+Because `@generated` constructs a straight-line block of calls with literal integer indices
+(`1`, `2`, ..., `N`):
+```julia
+begin
+    f(1, owned_indices[1], args[1][1], args[2][1], ...)
+    f(2, owned_indices[2], args[1][2], args[2][2], ...)
+    ...
+    nothing
+end
+```
+the compiler resolves the exact concrete array type of every `args[j][k]` at compile time
+and compiles a separate, fully SIMD-vectorized inner loop for each unknown.
+"""
+@inline @generated function _foreach_unknown(f::F, owned_indices::NTuple{N,Any},
+                                             args::Tuple...) where {F,N}
+    exprs = [:(f($k, owned_indices[$k], $([:(args[$j][$k]) for j in 1:length(args)]...)))
+             for k in 1:N]
+    return Expr(:block, exprs..., :nothing)
+end
+
+# Mean of `weight(vk, wk, i) / scale^2`, with `scale = rtol*abs(x)+atol`.
 # Slot 2k-1 is the sum of those weights and slot 2k is the point count.
-# `_reduce_sums!` runs before the division, then the per-unknown means are averaged.
-@inline function _weighted_mean(weight, owned_indices, shared_comm, distributed_comm,
-                                buffer, rtol, atol, x)
+# `_reduce_sums!` runs before the division. When `full_vector_norm` is false,
+# the per-unknown means are averaged; when true, total sum is divided by total count.
+@inline function _weighted_mean(weight::F, v, w, owned_indices, shared_comm,
+                                distributed_comm, buffer, rtol, atol, x,
+                                full_vector_norm::Bool=false) where {F}
+    vs = v isa AbstractArray ? (v,) : v
+    ws = w isa AbstractArray ? (w,) : w
     xs = x isa AbstractArray ? (x,) : x
     n = length(xs)
-    # The loop adds into the buffer, so clear it on every call.
-    fill!(buffer, zero(mk_float))
-    for k in 1:n
+    _foreach_unknown(owned_indices, vs, ws, xs) do k, oi, vk, wk, xk
+        s = zero(mk_float)
+        c = 0
         # Owned ranges omit the boundary point duplicated on the next block.
-        for r in owned_indices[k][owned_ranges_index]
+        for r in oi[owned_ranges_index]
             for i in r
-                scale = rtol * abs(xs[k][i]) + atol
-                buffer[2k - 1] += weight(k, i) / scale^2
+                scale = rtol * abs(xk[i]) + atol
+                s += weight(vk, wk, i) / scale^2
             end
-            buffer[2k] += length(r)
+            c += length(r)
         end
+        buffer[2k - 1] = s
+        buffer[2k] = c
     end
     _reduce_sums!(buffer, shared_comm, distributed_comm)
-    mean = 0.0
-    # Unknowns weighted equally.
-    for k in 1:n
-        mean += buffer[2k - 1] / buffer[2k]
+    if full_vector_norm
+        # Every grid point weighted equally across the whole solution vector.
+        total_sum = 0.0
+        total_count = 0.0
+        for k in 1:n
+            total_sum += buffer[2k - 1]
+            total_count += buffer[2k]
+        end
+        return total_sum / total_count
+    else
+        # Unknowns weighted equally.
+        mean = 0.0
+        for k in 1:n
+            mean += buffer[2k - 1] / buffer[2k]
+        end
+        return mean / n
     end
-    return mean / n
+end
+
+# Rank 0 has written a shared scalar. Publish it before the other ranks read it.
+function _publish_shared_write!(shared_comm::MPI.Comm)
+    if shared_comm != MPI.COMM_NULL
+        MPI.Barrier(shared_comm)
+    end
+    return nothing
 end
 
 # Sum-reduce the (sum, count) pairs to every rank.
@@ -823,90 +932,52 @@ function _reduce_sums!(buffer, shared_comm, distributed_comm)
     return buffer
 end
 
-# 0 input parallel_map (1 unknown)
-@inline function parallel_map(func, result::AbstractArray, owned_indices)
+# 0 input parallel_map
+@inline function parallel_map(func::F, result, owned_indices) where {F}
     value = func()
-    ranges = owned_indices[1][local_ranges_index]
-    for r in ranges
-        fill!(@view(result[r]), value) # Just replace values in result itself.
-    end
-    return nothing
-end
-# 0 input parallel_map (multiple unknowns)
-@inline function parallel_map(func, result::Tuple, owned_indices)
-    value = func()
-    n = length(owned_indices)
-    for k in 1:n
-        field = result[k]
-        for r in owned_indices[k][local_ranges_index]
+    results = result isa AbstractArray ? (result,) : result
+    _foreach_unknown(owned_indices, results) do _, oi, field
+        for r in oi[local_ranges_index]
             fill!(@view(field[r]), value)
         end
     end
     return nothing
 end
 
-# 1 input parallel_map (1 unknown)
-@inline function parallel_map(func, result::AbstractArray, x1, owned_indices)
-    ranges = owned_indices[1][local_ranges_index]
-    _map_ranges!(ranges) do idx
-        result[idx] = func(x1[idx])
-    end
-    return nothing
-end
-# 1 input parallel_map (multiple unknowns)
-@inline function parallel_map(func, result::Tuple, x1, owned_indices)
-
-    n = length(owned_indices)
-    for k in 1:n
-        field = result[k]
-        ranges = owned_indices[k][local_ranges_index]
-        _map_ranges!(ranges) do idx
-            result[idx] = func(x1[idx])
-	end
-    end
-    return nothing
-end
-
-# 2 input parallel_map (1 unknown)
-@inline function parallel_map(func, result::AbstractArray, x1, x2, owned_indices)
-    ranges = owned_indices[1][local_ranges_index]
-    if x2 isa AbstractArray
-        _map_ranges!(ranges) do idx
-            result[idx] = func(x1[idx], x2[idx])
-        end
-    else
-        _map_ranges!(ranges) do idx
-            result[idx] = func(x1[idx], x2)
+# 1 input parallel_map
+@inline function parallel_map(func::F, result, x1, owned_indices) where {F}
+    results = result isa AbstractArray ? (result,) : result
+    x1s = x1 isa AbstractArray ? (x1,) : x1
+    _foreach_unknown(owned_indices, results, x1s) do _, oi, field, in1
+        for r in oi[local_ranges_index]
+            for idx in r
+                field[idx] = func(in1[idx])
+            end
         end
     end
     return nothing
 end
 
-# 2 input parallel_map (multiple unknowns)
-@inline function parallel_map(func, result::Tuple, x1, x2, owned_indices)
-    n = length(owned_indices)
-    if x2 isa AbstractArray
-        for k=1:n
-            ranges = owned_indices[k][local_ranges_index]
-            _map_ranges!(ranges) do idx
-                result[idx] = func(x1[idx], x2[idx])
+# 2 input parallel_map
+@inline function parallel_map(func::F, result, x1, x2, owned_indices) where {F}
+    results = result isa AbstractArray ? (result,) : result
+    x1s = x1 isa AbstractArray ? (x1,) : x1
+    if x2 isa AbstractArray || x2 isa Tuple
+        x2s = x2 isa AbstractArray ? (x2,) : x2
+        _foreach_unknown(owned_indices, results, x1s, x2s) do _, oi, field, in1, in2
+            for r in oi[local_ranges_index]
+                for idx in r
+                    field[idx] = func(in1[idx], in2[idx])
+                end
             end
-	end
+        end
     else
-	for k=1:n
-            ranges = owned_indices[k][local_ranges_index]
-            _map_ranges!(ranges) do idx
-                result[idx] = func(x1[idx], x2)
+        _foreach_unknown(owned_indices, results, x1s) do _, oi, field, in1
+            for r in oi[local_ranges_index]
+                for idx in r
+                    field[idx] = func(in1[idx], x2)
+                end
             end
-	end
-    end
-    return nothing
-end
-
-@inline function _map_ranges!(f, ranges)
-    for r in ranges
-        for idx in r
-            f(idx)
         end
     end
     return nothing
@@ -1673,7 +1744,7 @@ function select_from_V(V, i)
     return selectdim(V,ndims(V),i)
 end
 
-@kwdef struct nonlinear_solvers_approximate_Jacobian_vector_product!{F,LP,RP,Tx,Tr0,Tdel,Tst}
+@kwdef struct nonlinear_solvers_approximate_Jacobian_vector_product!{F,LP,RP,Tx,Tr0,Tdel,Tidx}
     residual_func!::F
     left_preconditioner::LP
     right_preconditioner::RP
@@ -1682,24 +1753,35 @@ end
     rhs_delta::Tdel
     Jv_scale_factor::mk_float
     inv_Jv_scale_factor::mk_float
-    solver_type::Tst
+    owned_indices::Tidx
+    shared_comm::MPI.Comm
 end
 
 function (approx_Jv::nonlinear_solvers_approximate_Jacobian_vector_product!)(
              v, skip_first_precon::Bool=false)
-    if !skip_first_precon
+    if !skip_first_precon && approx_Jv.right_preconditioner !== identity
+        _publish_shared_write!(approx_Jv.shared_comm)
         approx_Jv.right_preconditioner(v)
+        _publish_shared_write!(approx_Jv.shared_comm)
     end
 
-    solver_type = approx_Jv.solver_type
+    owned_indices = approx_Jv.owned_indices
     rhs_delta = approx_Jv.rhs_delta
 
-    parallel_map(solver_type, (x,v) -> x + approx_Jv.Jv_scale_factor * v, v, approx_Jv.x, v)
+    parallel_map((x,v) -> x + approx_Jv.Jv_scale_factor * v, v, approx_Jv.x, v,
+                 owned_indices)
+    # The probe was written on local_ranges. The residual reads it with @loop_*.
+    _publish_shared_write!(approx_Jv.shared_comm)
     approx_Jv.residual_func!(rhs_delta, v; krylov=true)
-    parallel_map(solver_type,
-                 (rhs_delta, residual0) -> (rhs_delta - residual0) * approx_Jv.inv_Jv_scale_factor,
-                 v, rhs_delta, approx_Jv.residual0)
-    approx_Jv.left_preconditioner(v)
+    # The residual wrote with @loop_*. Publish that before the local_ranges read.
+    _publish_shared_write!(approx_Jv.shared_comm)
+    parallel_map((rhs_delta, residual0) -> (rhs_delta - residual0) * approx_Jv.inv_Jv_scale_factor,
+                 v, rhs_delta, approx_Jv.residual0, owned_indices)
+    if approx_Jv.left_preconditioner !== identity
+        _publish_shared_write!(approx_Jv.shared_comm)
+        approx_Jv.left_preconditioner(v)
+        _publish_shared_write!(approx_Jv.shared_comm)
+    end
     return v
 end
 
@@ -1734,12 +1816,15 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
     # by a large number `Jv_scale_factor` (in constrast to the small `epsilon` in the
     # 'usual' case where the norm does not include either reative or absolute tolerance)
     # to ensure that we get a reasonable estimate of J.v.
+    owned_indices = new_norm_params[1]
+    shared_comm = new_norm_params[2]
     approximate_Jacobian_vector_product! =
         nonlinear_solvers_approximate_Jacobian_vector_product!(;
             residual_func!, left_preconditioner, right_preconditioner, x, residual0,
-            rhs_delta, Jv_scale_factor, inv_Jv_scale_factor, solver_type)
+            rhs_delta, Jv_scale_factor, inv_Jv_scale_factor, owned_indices,
+            shared_comm)
 
-    parallel_map(solver_type, (delta_x) -> delta_x, v, delta_x)
+    parallel_map((delta_x) -> delta_x, v, delta_x, owned_indices)
 
     # This function transforms the data stored in 'v' from δx to ≈J.δx
     # If initial δx is all-zero, we can skip a right-preconditioner evaluation because it
@@ -1748,13 +1833,17 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 
     # To start with we use 'w' as a buffer to make a copy of residual0 to which we can
     # apply the left-preconditioner.
-    parallel_map(solver_type, (residual_0) -> residual_0, w, residual0)
-    left_preconditioner(w)
+    parallel_map((residual_0) -> residual_0, w, residual0, owned_indices)
+    if left_preconditioner !== identity
+        _publish_shared_write!(shared_comm)
+        left_preconditioner(w)
+        _publish_shared_write!(shared_comm)
+    end
 
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
-    parallel_map(solver_type, (residual0, v) -> -residual0 - v, w, w, v)
+    parallel_map((residual0, v) -> -residual0 - v, w, w, v, owned_indices)
     beta = distributed_norm(w, new_norm_params...)
-    parallel_map(solver_type, (w,beta) -> w/beta, select_from_V(V, 1), w, beta)
+    parallel_map((w,beta) -> w/beta, select_from_V(V, 1), w, beta, owned_indices)
     if serial_solve
         g[1] = beta
     elseif anysv_region
@@ -1790,13 +1879,12 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
             #println("Linear ", counter)
 
             # Compute next Krylov vector
-            parallel_map(solver_type, (V) -> V, w, select_from_V(V, i))
+            parallel_map((V) -> V, w, select_from_V(V, i), owned_indices)
             approximate_Jacobian_vector_product!(w)
 
             # Gram-Schmidt orthogonalization
             for j ∈ 1:i
-                parallel_map(solver_type, (V) -> V, v, select_from_V(V, j))
-                w_dot_Vj = distributed_dot(w, v, new_norm_params...)
+                w_dot_Vj = distributed_dot(w, select_from_V(V, j), new_norm_params...)
                 if serial_solve
                     H[j,i] = w_dot_Vj
                 elseif anysv_region
@@ -1815,7 +1903,9 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
                          H[j,i] = w_dot_Vj
                      end
                 end
-                parallel_map(solver_type, (w, V) -> w - H[j,i] * V, w, w, select_from_V(V, j))
+                # H[j,i] is written on rank 0 and read on every rank.
+                _publish_shared_write!(shared_comm)
+                parallel_map((w, V) -> w - H[j,i] * V, w, w, select_from_V(V, j), owned_indices)
             end
             norm_w = distributed_norm(w, new_norm_params...)
             if serial_solve
@@ -1836,7 +1926,11 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
                     H[i+1,i] = norm_w
                 end
             end
-            parallel_map(solver_type, (w) -> w / H[i+1,i], select_from_V(V, i+1), w)
+            # H[i+1,i] is written on rank 0 and read on every rank.
+            _publish_shared_write!(shared_comm)
+            parallel_map((w) -> w / H[i+1,i], select_from_V(V, i+1), w, owned_indices)
+            # Rank 0 is about to overwrite H[i+1,i] in the Givens rotation.
+            _publish_shared_write!(shared_comm)
 
             if serial_solve
                 for j ∈ 1:i-1
@@ -1929,16 +2023,16 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 
         # Store J.delta_x in the variable delta_x, to use it to calculate the new first
         # Krylov vector v/beta.
-        parallel_map(solver_type, (delta_x) -> delta_x, v, delta_x)
+        parallel_map((delta_x) -> delta_x, v, delta_x, owned_indices)
         approximate_Jacobian_vector_product!(v)
 
         # Note residual0 has already had the left_preconditioner() applied to it.
-        parallel_map(solver_type, (residual0, v) -> -residual0 - v, v, residual0, v)
+        parallel_map((residual0, v) -> -residual0 - v, v, residual0, v, owned_indices)
         beta = distributed_norm(v, new_norm_params...)
         for i ∈ 2:length(y)
-            parallel_map(solver_type, () -> 0.0, select_from_V(V, i))
+            parallel_map(() -> 0.0, select_from_V(V, i), owned_indices)
         end
-        parallel_map(solver_type, (v,beta) -> v/beta, select_from_V(V, 1), v, beta)
+        parallel_map((v,beta) -> v/beta, select_from_V(V, 1), v, beta, owned_indices)
     end
 
     return counter
