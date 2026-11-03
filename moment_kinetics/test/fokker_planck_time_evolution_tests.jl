@@ -360,6 +360,12 @@ function run_test(test_input, expected, atol, final_atol; interp_to_expected=tru
 
             # load particle distribution function (pdf) data
             f_ion_vpavperpzrst = load_pdf_data(fid)
+            close(fid)
+
+            if expected === nothing && interp_to_expected
+                # Do not generate expected data from this case.
+                return nothing
+            end
             
             if interp_to_expected
                 # In case expected data is from a 'full-f' run, but simulation is
@@ -386,7 +392,6 @@ function run_test(test_input, expected, atol, final_atol; interp_to_expected=tru
                 end
             end
 
-            close(fid)
             # select the single z, r, s point
             # keep the two time points in the arrays
             phi = phi_zrt[1,1,:]
@@ -408,11 +413,46 @@ function run_test(test_input, expected, atol, final_atol; interp_to_expected=tru
             for it in 1:ntime
                 @views output = diagnose_F_Maxwellian_serial(f_ion[:,:,it],
                                                              f_dummy_1, f_dummy_2, f_dummy_3,
-                                                             (grid=expected.vpa, n=length(expected.vpa), wgts=expected.vpa_wgts),
-                                                             (grid=expected.vperp, n=length(expected.vperp), wgts=expected.vperp_wgts), mass)
+                                                             vpa, vperp, mass)
                 maxnorm_ion[it] = output[1]
                 L2norm_ion[it] = output[2]
             end
+        end
+
+        if expected === nothing
+            println("    expected_data(")
+            println("        # Expected vpa")
+            println("        ", vpa.grid, ",")
+            println("        # Expected vpa wgts")
+            println("        ", vpa.wgts, ",")
+            println("        # Expected vperp")
+            println("        ", vperp.grid, ",")
+            println("        # Expected vperp wgts")
+            println("        ", vperp.wgts, ",")
+            println("        # Expected phi")
+            println("        ", phi, ",")
+            println("        # Expected n_ion")
+            println("        ", n_ion, ",")
+            println("        # Expected upar_ion")
+            println("        ", upar_ion, ",")
+            println("        # Expected ppar_ion")
+            println("        ", ppar_ion, ",")
+            println("        # Expected pperp_ion")
+            println("        ", pperp_ion, ",")
+            println("        # Expected qpar_ion")
+            println("        ", qpar_ion, ",")
+            println("        # Expected v_t_ion")
+            println("        ", v_t_ion, ",")
+            println("        # Expected dSdt")
+            println("        ", dSdt, ",")
+            println("        # Expected maxnorm_ion")
+            println("        ", maxnorm_ion, ",")
+            println("        # Expected L2norm_ion")
+            println("        ", L2norm_ion, ",")
+            println("        # Expected f_ion")
+            println("        ", f_ion, ",")
+            println("    ),")
+            return nothing
         end
         
         function test_values(tind)
