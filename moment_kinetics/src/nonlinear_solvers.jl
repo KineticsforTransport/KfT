@@ -688,52 +688,12 @@ end
     end
 end
 
-"""
-    _foreach_unknown(f::F, owned_indices::NTuple{N,Any}, args::Tuple...) where {F,N}
-
-Unroll a loop over the `N` unknowns in a nonlinear solver state at compile time.
-
-# Arguments
-- `f`: Callable invoked as `f(k, owned_indices[k], args[1][k], args[2][k], ...)` for each
-  unknown `k in 1:N`.
-- `owned_indices`: `N`-tuple of `(local_ranges, owned_ranges)` index-range pairs, one per
-  unknown.
-- `args...`: Any number of `N`-tuples of array fields (e.g. `results`, `x1s`, `x2s`, `x3s`),
-  where `args[j][k]` is the array corresponding to the `k`-th unknown in the `j`-th tuple
-  argument.
-
-# Why `@generated` is used
-When a solver has multiple unknowns with different array types or dimensionalities—such as
-kinetic electrons, where the state is `Tuple{Vector{mk_float}, Array{mk_float, 3}}` for
-`(ppar, pdf)`—indexing `args[j][k]` with a runtime loop variable `for k in 1:N` has an
-inferred return type of `Union{Vector{mk_float}, Array{mk_float, 3}}`. Even when Julia
-union-splits that variable without heap allocations, the type-tag branch remains inside the
-inner grid loop and prevents SIMD vectorization.
-
-Because `@generated` constructs a straight-line block of calls with literal integer indices
-(`1`, `2`, ..., `N`):
-```julia
-begin
-    f(1, owned_indices[1], args[1][1], args[2][1], ...)
-    f(2, owned_indices[2], args[1][2], args[2][2], ...)
-    ...
-    nothing
-end
-```
-the compiler resolves the exact concrete array type of every `args[j][k]` at compile time
-and compiles a separate, fully SIMD-vectorized inner loop for each unknown.
-"""
-@inline @generated function _foreach_unknown(f::F, owned_indices::NTuple{N,Any},
-                                             args::Tuple...) where {F,N}
-    exprs = [:(f($k, owned_indices[$k], $([:(args[$j][$k]) for j in 1:length(args)]...)))
-             for k in 1:N]
-    return Expr(:block, exprs..., :nothing)
-end
-
 # Mean of `weight(vk, wk, i) / scale^2`, with `scale = rtol*abs(x)+atol`.
 # Slot 2k-1 is the sum of those weights and slot 2k is the point count.
 # `_reduce_sums!` runs before the division. When `full_vector_norm` is false,
 # the per-unknown means are averaged; when true, total sum is divided by total count.
+# `map` over the tuples unrolls via tuple recursion so heterogeneous unknown tuples
+# (e.g. 1D pressure + 3D pdf) specialize and SIMD-vectorize per unknown.
 @inline function _weighted_mean(weight::F, v, w, owned_indices, shared_comm,
                                 distributed_comm, buffer, rtol, atol, x,
                                 full_vector_norm::Bool=false) where {F}
@@ -741,7 +701,7 @@ end
     ws = w isa AbstractArray ? (w,) : w
     xs = x isa AbstractArray ? (x,) : x
     n = length(xs)
-    _foreach_unknown(owned_indices, vs, ws, xs) do k, oi, vk, wk, xk
+    totals = map(owned_indices, vs, ws, xs) do oi, vk, wk, xk
         s = zero(mk_float)
         c = 0
         # Owned ranges omit the boundary point duplicated on the next block.
@@ -752,8 +712,10 @@ end
             end
             c += length(r)
         end
-        buffer[2k - 1] = s
-        buffer[2k] = c
+        return (s, c)
+    end
+    for k in 1:n
+        buffer[2k - 1], buffer[2k] = totals[k]
     end
     _reduce_sums!(buffer, shared_comm, distributed_comm)
     if full_vector_norm
@@ -818,12 +780,13 @@ end
 @inline function parallel_map!(func::F, result, owned_indices) where {F}
     value = func()
     results = result isa AbstractArray ? (result,) : result
-    _foreach_unknown(owned_indices, results) do _, oi, field
+    map(owned_indices, results) do oi, field
         for r in oi[local_ranges_index]
             for idx in r
                 field[idx] = value
             end
         end
+        return nothing
     end
     return nothing
 end
@@ -832,12 +795,13 @@ end
 @inline function parallel_map!(func::F, result, x1, owned_indices) where {F}
     results = result isa AbstractArray ? (result,) : result
     x1s = x1 isa AbstractArray ? (x1,) : x1
-    _foreach_unknown(owned_indices, results, x1s) do _, oi, field, in1
+    map(owned_indices, results, x1s) do oi, field, in1
         for r in oi[local_ranges_index]
             for idx in r
                 field[idx] = func(in1[idx])
             end
         end
+        return nothing
     end
     return nothing
 end
@@ -848,20 +812,22 @@ end
     x1s = x1 isa AbstractArray ? (x1,) : x1
     if x2 isa AbstractArray || x2 isa Tuple
         x2s = x2 isa AbstractArray ? (x2,) : x2
-        _foreach_unknown(owned_indices, results, x1s, x2s) do _, oi, field, in1, in2
+        map(owned_indices, results, x1s, x2s) do oi, field, in1, in2
             for r in oi[local_ranges_index]
                 for idx in r
                     field[idx] = func(in1[idx], in2[idx])
                 end
             end
+            return nothing
         end
     else
-        _foreach_unknown(owned_indices, results, x1s) do _, oi, field, in1
+        map(owned_indices, results, x1s) do oi, field, in1
             for r in oi[local_ranges_index]
                 for idx in r
                     field[idx] = func(in1[idx], x2)
                 end
             end
+            return nothing
         end
     end
     return nothing
@@ -879,7 +845,7 @@ end
 
 # Utility function for neatness handling that V may be an array or a Tuple of arrays
 function select_from_V(V::Tuple, i)
-    return Tuple(selectdim(Vpart,ndims(Vpart),i) for Vpart ∈ V)
+    return map(Vpart -> selectdim(Vpart, ndims(Vpart), i), V)
 end
 function select_from_V(V, i)
     return selectdim(V,ndims(V),i)
