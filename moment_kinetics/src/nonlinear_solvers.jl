@@ -149,9 +149,7 @@ function setup_nonlinear_solve(nl_solver_input, coords, outer_coords=();
     for i ∈ 1:linear_restart+1
         parallel_map!(() -> 0.0, select_from_V(V, i), owned_indices)
     end
-    if shared_comm != MPI.COMM_NULL && shared_comm != MPI.COMM_SELF
-        MPI.Barrier(shared_comm)
-    end
+    _sync_shared(shared_comm)
 
     linear_initial_guess = zeros(linear_restart)
 
