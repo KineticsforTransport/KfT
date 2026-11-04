@@ -604,6 +604,11 @@ function get_source_profile(profile_type, width, relative_minimum, coord; kwargs
         L = coord.L
         return @. (1.0 - relative_minimum) * exp(-((x+0.5*L) / width)^4) + relative_minimum +
                   (1.0 - relative_minimum) * exp(-((0.5*L-x) / width)^4) + relative_minimum
+    elseif profile_type == "gaussian_wall"
+            x = coord.grid
+            L = coord.L
+            return @. (1.0 - relative_minimum) * exp(-((x+0.5*L) / width)^2) + relative_minimum +
+                    (1.0 - relative_minimum) * exp(-((0.5*L-x) / width)^2) + relative_minimum
     elseif profile_type == "super_gaussian_4_coupled_PI"
         x = coord.grid
         fake_recycling_fraction = kwargs[:fake_recycling_fraction]
