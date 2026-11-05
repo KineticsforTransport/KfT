@@ -25,18 +25,22 @@ PLOTS_AVAILABLE=${JOBINFO[9]}
 # for examples of how to use Bash's getopts]
 POSTPROC=0
 SUBMIT=0
+ISRESTART=1
+RESTARTFROM=""
 FOLLOWFROM=""
 POSTPROC_FOLLOWFROM=""
 MAKIEPOSTPROCESS=1
 WARN_OLD_SYSIMAGE=0
 PERFORMANCE_RUN=1
-while getopts "haf:g:m:n:p:oq:st:u:wx" opt; do
+TASKSPERNODE=-1
+while getopts "hac:f:g:m:n:p:oq:Rr:st:u:wx" opt; do
   case $opt in
     h)
       echo "Submit jobs for a simulation (using INPUT_FILE for input) and post-processing to the queue
 Usage: submit-run.sh [option] INPUT_FILE
 -h             Print help and exit
 -a             Do not submit post-processing job after the run
+-c NCPU        Specify number of cpus per node to use (default is all physical cpus)
 -f JOBID       Make this job start after JOBID finishes successfully
 -g JOBID       Make the post processing job start after JOBID finishes successfully (as well as after the simulation run finishes)
 -m MEM         The requested memory for post-processing
@@ -44,6 +48,8 @@ Usage: submit-run.sh [option] INPUT_FILE
 -o             Use original post_processing, instead of makie_post_processing, for the post-processing job when both are available
 -p PARTITION   The 'partition' (passed to 'sbatch --partition')
 -q QOS         The 'quality of service' (passed to 'sbatch --qos')
+-R             Restart, either from last output in run directory, or argument to '-r'
+-r FILE        The output file to restart from (defaults to latest output in the run directory)
 -s             Only create submission scripts, do not actually submit jobs
 -t TIME        The run time, e.g. 24:00:00
 -u TIME        The run time for the post-processing, e.g. 1:00:00
@@ -53,6 +59,9 @@ Usage: submit-run.sh [option] INPUT_FILE
       ;;
     a)
       POSTPROC=1
+      ;;
+    c)
+      TASKSPERNODE=$OPTARG
       ;;
     f)
       FOLLOWFROM="-d afterok:$OPTARG"
@@ -74,6 +83,12 @@ Usage: submit-run.sh [option] INPUT_FILE
       ;;
     q)
       QOS=$OPTARG
+      ;;
+    R)
+      ISRESTART=0
+      ;;
+    r)
+      RESTARTFROM=$OPTARG
       ;;
     s)
       SUBMIT=1
@@ -106,17 +121,33 @@ if [ -z "$INPUTFILE" ]; then
   exit 1
 fi
 
-if [[ $POSTPROC -eq 0 ]]; then
-  if [[ $SUBMIT -eq 0 ]]; then
-    echo "Submitting $INPUTFILE for run and post-processing..."
+if [ $ISRESTART -eq 0 ]; then
+  if [[ $POSTPROC -eq 0 ]]; then
+    if [[ $SUBMIT -eq 0 ]]; then
+      echo "Submitting $INPUTFILE for restart from '$RESTARTFROM' and post-processing..."
+    else
+      echo "Creating submission script from $INPUTFILE for restart from '$RESTARTFROM' and post-processing..."
+    fi
   else
-    echo "Creating submission script from $INPUTFILE for run and post-processing..."
+    if [[ $SUBMIT -eq 0 ]]; then
+      echo "Submitting $INPUTFILE for restart from '$RESTARTFROM'..."
+    else
+      echo "Creating submission script from $INPUTFILE for restart from '$RESTARTFROM'..."
+    fi
   fi
 else
-  if [[ $SUBMIT -eq 0 ]]; then
-    echo "Submitting $INPUTFILE for run..."
+  if [[ $POSTPROC -eq 0 ]]; then
+    if [[ $SUBMIT -eq 0 ]]; then
+      echo "Submitting $INPUTFILE for run and post-processing..."
+    else
+      echo "Creating submission script from $INPUTFILE for run and post-processing..."
+    fi
   else
-    echo "Creating submission script from $INPUTFILE for run..."
+    if [[ $SUBMIT -eq 0 ]]; then
+      echo "Submitting $INPUTFILE for run..."
+    else
+      echo "Creating submission script from $INPUTFILE for run..."
+    fi
   fi
 fi
 
@@ -132,8 +163,17 @@ else
 fi
 
 # Create a submission script for the run
-RUNJOBSCRIPT=${RUNDIR}$RUNNAME.job
-sed -e "s|NODES|$NODES|" -e "s|RUNTIME|$RUNTIME|" -e "s|ACCOUNT|$ACCOUNT|" -e "s|PARTITION|$PARTITION|" -e "s|QOS|$QOS|" -e "s|RUNDIR|$RUNDIR|" -e "s|INPUTFILE|$INPUTFILE|" -e "s|RUNSCRIPT|$RUNSCRIPT|" machines/$MACHINE/jobscript-run.template > $RUNJOBSCRIPT
+if [ $ISRESTART -eq 0 ]; then
+  RUNJOBSCRIPT=${RUNDIR}$RUNNAME-restart.job
+  RUNTEMPLATE=machines/$MACHINE/jobscript-restart.template
+else
+  RUNJOBSCRIPT=${RUNDIR}$RUNNAME.job
+  RUNTEMPLATE=machines/$MACHINE/jobscript-run.template
+fi
+sed -e "s|NODES|$NODES|" -e "s|RUNTIME|$RUNTIME|" -e "s|ACCOUNT|$ACCOUNT|" -e "s|PARTITION|$PARTITION|" -e "s|QOS|$QOS|" -e "s|RUNDIR|$RUNDIR|" -e "s|INPUTFILE|$INPUTFILE|" -e "s|RESTARTFROM|$RESTARTFROM|" -e "s|RUNSCRIPT|$RUNSCRIPT|" $RUNTEMPLATE > $RUNJOBSCRIPT
+if [ ! $TASKSPERNODE -eq -1 ]; then
+  sed -i -e "/#SBATCH --ntasks-per-node=/c\#SBATCH --ntasks-per-node=$TASKSPERNODE" $RUNJOBSCRIPT
+fi
 
 if [[ "$WARN_OLD_SYSIMAGE" -eq 0 ]]; then
   # Check that source code has not been changed since moment_kinetics.so was created
@@ -142,7 +182,11 @@ fi
 
 if [[ $SUBMIT -eq 0 ]]; then
   JOBID=$(sbatch $FOLLOWFROM --parsable $RUNJOBSCRIPT)
-  echo "Run: $JOBID"
+  if [ $ISRESTART -eq 0 ]; then
+    echo "Restart: $JOBID"
+  else
+    echo "Run: $JOBID"
+  fi
   echo "In the queue" > ${RUNDIR}slurm-$JOBID.out
 fi
 
