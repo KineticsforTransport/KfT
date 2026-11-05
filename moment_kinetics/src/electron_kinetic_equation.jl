@@ -995,6 +995,14 @@ function electron_backward_euler_pseudotimestepping!(scratch, pdf, moments,
     return success
 end
 
+struct kinetic_electron_precon{Tpretype,Tprecon} <: preconditioner_info_type
+    preconditioner_type::Tpretype
+    preconditioners::Tprecon
+    precon_dt::Base.RefValue{mk_float}
+    precon_lowerz_vcut_inds::Vector{mk_int}
+    precon_upperz_vcut_inds::Vector{mk_int}
+end
+
 function get_electron_preconditioners(preconditioner_type, nl_solver_input, coords,
                                       outer_coords, spectral;
                                       boundary_skip_funcs::BSF=nothing) where {BSF}
@@ -1200,7 +1208,9 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input, coor
         error("Unrecognised preconditioner_type=$preconditioner_type")
     end
 
-    return preconditioners
+    n_vcut_inds = prod(outer_coord_sizes)
+    return kinetic_electron_precon(preconditioner_type, preconditioners, Ref(0.0),
+                                   zeros(mk_int, n_vcut_inds), zeros(mk_int, n_vcut_inds))
 end
 
 @kwdef @concrete struct kinetic_electron_recalculate_lu!
@@ -1257,10 +1267,10 @@ function (recalc::kinetic_electron_recalculate_lu!)()
 global_rank[] == 0 && println("recalculating precon")
 
     nl_solver_params.solves_since_precon_update[] = 0
-    nl_solver_params.precon_dt[] = t_params.dt[]
+    nl_solver_params.preconditioner_info.precon_dt[] = t_params.dt[]
 
     orig_lu, precon, input_buffer, output_buffer =
-        nl_solver_params.preconditioners[ir]
+        nl_solver_params.preconditioner_info.preconditioners[ir]
 
     fill_electron_kinetic_equation_Jacobian!(
         precon, f_electron_new, electron_p_new, moments, this_phi, collisions,
@@ -1273,7 +1283,7 @@ global_rank[] == 0 && println("recalculating precon")
         if size(orig_lu) == (1, 1)
             # Have not properly created the LU decomposition before, so
             # cannot reuse it.
-            @timeit_debug global_timer "lu" nl_solver_params.preconditioners[ir] =
+            @timeit_debug global_timer "lu" nl_solver_params.preconditioner_info.preconditioners[ir] =
                 (lu(get_sparse_joined_array(precon)), precon, input_buffer,
                  output_buffer)
         else
@@ -1290,11 +1300,11 @@ global_rank[] == 0 && println("recalculating precon")
                         * "LU from scratch")
                 @timeit_debug global_timer "lu" orig_lu = lu(get_sparse_joined_array(precon))
             end
-            nl_solver_params.preconditioners[ir] =
+            nl_solver_params.preconditioner_info.preconditioners[ir] =
                 (orig_lu, precon, input_buffer, output_buffer)
         end
     else
-        nl_solver_params.preconditioners[ir] =
+        nl_solver_params.preconditioner_info.preconditioners[ir] =
             (orig_lu, precon, input_buffer, output_buffer)
     end
 
@@ -1325,7 +1335,7 @@ end
     precon_p, precon_f = x
 
     precon_lu, _, this_input_buffer, this_output_buffer =
-        nl_solver_params.preconditioners[ir]
+        nl_solver_params.preconditioner_info.preconditioners[ir]
 
     @begin_anyzv_region()
     counter = 1
@@ -1487,9 +1497,9 @@ function (recalc_adi::kinetic_electron_recalculate_adi!)()
 global_rank[] == 0 && println("recalculating precon")
 
     nl_solver_params.solves_since_precon_update[] = 0
-    nl_solver_params.precon_dt[] = t_params.dt[]
+    nl_solver_params.preconditioner_info.precon_dt[] = t_params.dt[]
 
-    adi_info = nl_solver_params.preconditioners[ir]
+    adi_info = nl_solver_params.preconditioner_info.preconditioners[ir]
 
     vth = @view moments.electron.vth[:,ir]
     qpar = @view moments.electron.qpar[:,ir]
@@ -1742,7 +1752,7 @@ end
 
     precon_p, precon_f = x
 
-    adi_info = nl_solver_params.preconditioners[ir]
+    adi_info = nl_solver_params.preconditioner_info.preconditioners[ir]
     precon_iterations = nl_solver_params.precon_iterations
     this_input_buffer = adi_info.input_buffer
     this_intermediate_buffer = adi_info.intermediate_buffer
@@ -1941,10 +1951,11 @@ function get_electron_preconditioner(nl_solver_params, f_electron_new, electron_
                                      scratch_dummy, external_source_settings,
                                      num_diss_params, t_params, ion_dt, ir, evolve_p,
                                      add_identity=true)
-    if nl_solver_params.preconditioner_type ∈ (Val(:electron_lu_no_separate_moments),
-                                               Val(:electron_lu_separate_third_moment),
-                                               Val(:electron_lu),
-                                               Val(:electron_lu_separate_dp_dz_dq_dz))
+    preconditioner_type = nl_solver_params.preconditioner_info.preconditioner_type
+    if preconditioner_type ∈ (Val(:electron_lu_no_separate_moments),
+                              Val(:electron_lu_separate_third_moment),
+                              Val(:electron_lu),
+                              Val(:electron_lu_separate_dp_dz_dq_dz))
         return get_electron_lu_preconditioner(nl_solver_params, f_electron_new,
                                               electron_p_new, buffer_1, buffer_2,
                                               buffer_3, buffer_4, electron_density,
@@ -1955,7 +1966,7 @@ function get_electron_preconditioner(nl_solver_params, f_electron_new, electron_
                                               external_source_settings, num_diss_params,
                                               t_params, ion_dt, ir, evolve_p,
                                               add_identity)
-    elseif nl_solver_params.preconditioner_type === Val(:electron_adi)
+    elseif preconditioner_type === Val(:electron_adi)
         return get_electron_adi_preconditioner(nl_solver_params, f_electron_new,
                                                electron_p_new, buffer_1, buffer_2,
                                                buffer_3, buffer_4, electron_density,
@@ -1966,7 +1977,7 @@ function get_electron_preconditioner(nl_solver_params, f_electron_new, electron_
                                                external_source_settings, num_diss_params,
                                                t_params, ion_dt, ir, evolve_p,
                                                add_identity)
-    elseif nl_solver_params.preconditioner_type === Val(:none)
+    elseif preconditioner_type === Val(:none)
         left_preconditioner = identity
         right_preconditioner = identity
         # Nothing to recalculate.
@@ -1974,7 +1985,7 @@ function get_electron_preconditioner(nl_solver_params, f_electron_new, electron_
 
         return left_preconditioner, right_preconditioner, recalculate_none_preconditioner
     else
-        error("preconditioner_type=$(nl_solver_params.preconditioner_type) is not "
+        error("preconditioner_type=$preconditioner_type is not "
               * "supported.")
     end
 end
@@ -2225,8 +2236,8 @@ pressure \$p_{e∥}\$.
                                     num_diss_params, t_params, ion_dt, ir, evolve_p)
 
     # Does preconditioner need to be recalculated?
-    if t_params.dt[] > 1.5 * nl_solver_params.precon_dt[] ||
-            t_params.dt[] < 2.0/3.0 * nl_solver_params.precon_dt[]
+    if t_params.dt[] > 1.5 * nl_solver_params.preconditioner_info.precon_dt[] ||
+            t_params.dt[] < 2.0/3.0 * nl_solver_params.preconditioner_info.precon_dt[]
 
         # dt has changed significantly, so update the preconditioner
         nl_solver_params.solves_since_precon_update[] = nl_solver_params.preconditioner_update_interval
@@ -2260,8 +2271,7 @@ pressure \$p_{e∥}\$.
     newton_success = newton_solve!((electron_p_new, f_electron_new), residual_func!,
                                    residual, delta_x, rhs_delta, v, w, nl_solver_params;
                                    left_preconditioner=left_preconditioner,
-                                   right_preconditioner=right_preconditioner,
-                                   coords=(z=z, vperp=vperp, vpa=vpa))
+                                   right_preconditioner=right_preconditioner)
 
     return newton_success
 end
@@ -2345,8 +2355,8 @@ to allow the outer r-loop to be parallelised.
                                                true, false)
 
         # Does preconditioner need to be recalculated?
-        if ion_dt > 1.5 * nl_solver_params.precon_dt[] ||
-                ion_dt < 2.0/3.0 * nl_solver_params.precon_dt[]
+        if ion_dt > 1.5 * nl_solver_params.preconditioner_info.precon_dt[] ||
+                ion_dt < 2.0/3.0 * nl_solver_params.preconditioner_info.precon_dt[]
 
             # dt has changed significantly, so update the preconditioner
             nl_solver_params.solves_since_precon_update[] = nl_solver_params.preconditioner_update_interval
@@ -2381,8 +2391,7 @@ to allow the outer r-loop to be parallelised.
                                        rhs_delta, v, w, nl_solver_params;
                                        left_preconditioner=nothing,
                                        right_preconditioner=nothing,
-                                       recalculate_preconditioner=recalculate_preconditioner!,
-                                       coords=(z=z, vperp=vperp, vpa=vpa))
+                                       recalculate_preconditioner=recalculate_preconditioner!)
         if !newton_success
             break
         end
@@ -2464,7 +2473,7 @@ function apply_electron_bc_and_constraints_no_r!(
         upper_vcut_changed = @view scratch_dummy.int_buffer_rs_2[ir:ir,1]
         @anyzv_serial_region begin
             if z.irank == 0
-                precon_lowerz_vcut_inds = nl_solver_params.precon_lowerz_vcut_inds
+                precon_lowerz_vcut_inds = nl_solver_params.preconditioner_info.precon_lowerz_vcut_inds
                 if new_lowerz_vcut_ind[] == precon_lowerz_vcut_inds[ir]
                     lower_vcut_changed[] = 0
                 else
@@ -2476,7 +2485,7 @@ function apply_electron_bc_and_constraints_no_r!(
             #req1 = MPI.Ibcast!(lower_vcut_changed, comm_inter_block[]; root=0)
 
             if z.irank == z.nrank - 1
-                precon_upperz_vcut_inds = nl_solver_params.precon_upperz_vcut_inds
+                precon_upperz_vcut_inds = nl_solver_params.preconditioner_info.precon_upperz_vcut_inds
                 if new_upperz_vcut_ind[] == precon_upperz_vcut_inds[ir]
                     upper_vcut_changed[] = 0
                 else

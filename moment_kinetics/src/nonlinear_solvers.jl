@@ -11,7 +11,7 @@ linear system.
     should not be called inside any kind of parallelised loop. This restriction should be
     lifted somehow in future...
 
-`parallel_map()` is used to apply elementwise functions to arbitrary numbers of arguments
+`parallel_map!()` is used to apply elementwise functions to arbitrary numbers of arguments
 using shared-memory parallelism. We do this rather than writing the loops out explicitly
 so that `newton_solve!()` and `linear_solve!()` can work for arrays with any combination
 of dimensions.
@@ -27,24 +27,23 @@ Useful references:
 module nonlinear_solvers
 
 export setup_nonlinear_solve, gather_nonlinear_solver_counters!,
-       reset_nonlinear_per_stage_counters!, newton_solve!
+       reset_nonlinear_per_stage_counters!, newton_solve!,
+       preconditioner_info_type
 
 using ..array_allocation: allocate_float, allocate_shared_float
 using ..communication
-using ..communication: _anyzv_subblock_synchronize
 using ..coordinates: coordinate
-using ..input_structs
-using ..jacobian_matrices: create_jacobian_info
+using ..debugging: @debug_shared_array
 using ..looping
 using ..timer_utils
 using ..type_definitions: mk_float, mk_int
 
 using LinearAlgebra
 using MPI
-using SparseArrays
-using StatsBase: mean
 
-struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon,Tpretype}
+abstract type preconditioner_info_type end
+
+struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon<:Union{preconditioner_info_type,Nothing},Towned}
     rtol::mk_float
     atol::mk_float
     nonlinear_max_iterations::mk_int
@@ -67,158 +66,71 @@ struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon,Tpretype}
     global_linear_iterations::Base.RefValue{mk_int}
     global_precon_iterations::Base.RefValue{mk_int}
     solves_since_precon_update::Base.RefValue{mk_int}
-    precon_dt::Base.RefValue{mk_float}
-    precon_lowerz_vcut_inds::Vector{mk_int}
-    precon_upperz_vcut_inds::Vector{mk_int}
-    serial_solve::Bool
-    anysv_region::Bool
-    anyzv_region::Bool
     max_nonlinear_iterations_this_step::Base.RefValue{mk_int}
     max_linear_iterations_this_step::Base.RefValue{mk_int}
     total_its_soft_limit::mk_int
-    preconditioner_type::Tpretype
     preconditioner_update_interval::mk_int
-    preconditioners::Tprecon
+    preconditioner_info::Tprecon
+    # Ranks in `shared_comm` divide the local entries of each unknown (`local_ranges`).
+    # `distributed_comm` is `MPI.COMM_NULL` except on rank 0 of `shared_comm`.
+    # `owned_indices` is one tuple entry per unknown array. Each entry is the
+    # pair `(local_ranges, owned_ranges)`, fastest index first. `local_ranges`
+    # is every slot this rank writes, including the duplicated boundary.
+    # `owned_ranges` is the subset of `local_ranges` with that duplicated point
+    # omitted on every block except the last.
+    shared_comm::MPI.Comm
+    distributed_comm::MPI.Comm
+    owned_indices::Towned
+    # One (sum, count) pair per unknown. Reused by every norm call.
+    reduction_buffer::Vector{mk_float}
+    full_vector_norm::Bool
 end
 
-"""
+const local_ranges_index = 1 # index for local points in owned_indices
+const owned_ranges_index = 2 # index for points without duplicates in owned_indices
 
-`coords` is a NamedTuple of coordinates corresponding to the dimensions of the variable
-that will be solved. The entries in `coords` should be ordered the same as the memory
-layout of the variable to be solved (i.e. fastest-varying first).
-
-The nonlinear solver will be called inside a loop over `outer_coords`, so we might need
-for example a preconditioner object for each point in that outer loop.
 """
-function setup_nonlinear_solve(nl_solver_input, coords, outer_coords=();
-                               section_name="nonlinear_solver", serial_solve=false,
+`coords` is a `Tuple` of `NamedTuple`s of coordinates (one `NamedTuple` per unknown),
+or a single `NamedTuple` wrapped by the convenience method below. Callers pass `coords`
+slowest-varying first (the reverse of the array memory layout, which is fastest-varying
+first).
+"""
+function setup_nonlinear_solve(nl_solver_input, coords::Tuple;
+                               serial_solve=false,
                                anysv_region=false, anyzv_region=false,
-                               electron_p_pdf_solve=false,
-                               preconditioner_type=Val(:none),
-                               preconditioners=nothing)
-    coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ coords)
-    total_size_coords = prod(coord_sizes)
-    outer_coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ outer_coords)
+                               preconditioner_info=nothing,
+                               full_vector_norm=get(nl_solver_input, :full_vector_norm, false))
+    shared_comm, distributed_comm =
+        _solver_comms(coords[1], serial_solve, anysv_region, anyzv_region)
 
     linear_restart = nl_solver_input.linear_restart
 
-    n_vcut_inds = 0
-    if serial_solve
-        H = allocate_float(linear_restart + 1, linear_restart)
-        c = allocate_float(linear_restart + 1)
-        s = allocate_float(linear_restart + 1)
-        g = allocate_float(linear_restart + 1)
-        V = allocate_float(reverse(coord_sizes)..., linear_restart+1)
-        H .= 0.0
-        c .= 0.0
-        s .= 0.0
-        g .= 0.0
-        V .= 0.0
-    elseif electron_p_pdf_solve
-        H = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1, :linear_restart=>linear_restart, comm=comm_anyzv_subblock[])
-        c = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1, comm=comm_anyzv_subblock[])
-        s = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1, comm=comm_anyzv_subblock[])
-        g = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1, comm=comm_anyzv_subblock[])
-        V_ppar = allocate_shared_float(coords.z, :linear_restart_plus_one=>linear_restart+1; comm=comm_anyzv_subblock[])
-        V_pdf = allocate_shared_float(reverse(coords)...,
-                                      :linear_restart_plus_one=>linear_restart+1,
-                                      comm=comm_anyzv_subblock[])
+    owned_indices = _solver_owned_indices(coords, shared_comm)
+    reduction_buffer = zeros(mk_float, 2 * length(owned_indices))
 
-        @begin_r_anyzv_region()
-        @begin_anyzv_region()
-        @anyzv_serial_region begin
-            H .= 0.0
-            c .= 0.0
-            s .= 0.0
-            g .= 0.0
-            V_ppar .= 0.0
-            V_pdf .= 0.0
-        end
-
-        V = (V_ppar, V_pdf)
-
-        n_vcut_inds = prod(outer_coord_sizes)
-    elseif anysv_region
-        H = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1,
-                                  :linear_restart=>linear_restart;
-                                  comm=comm_anysv_subblock[])
-        c = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1;
-                                  comm=comm_anysv_subblock[])
-        s = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1;
-                                  comm=comm_anysv_subblock[])
-        g = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1;
-                                  comm=comm_anysv_subblock[])
-        V = allocate_shared_float(reverse(coords)...,
-                                  :linear_restart_plus_one=>linear_restart+1;
-                                  comm=comm_anysv_subblock[])
-        # Arrays below appear to need to be initialised to zero on setup.
-        # This is inconvenient for anysv communicators because we need to switch
-        # now into the special "anysv" region for this assignment,
-        # to make sure that all instances of memory are initialised to zero.
-        @begin_r_z_anysv_region()
-        @begin_anysv_region()
-        if anysv_subblock_rank[] ≥ 0
-            @anysv_serial_region begin
-                H .= 0.0
-                c .= 0.0
-                s .= 0.0
-                g .= 0.0
-                V .= 0.0
-            end
-        end
-        # switch out of anysv region to avoid errors on
-        # the next region call in initialisation, which
-        # will not be an "anysv" call.
-        @begin_serial_region()
-    elseif anyzv_region
-        H = allocate_shared_float(:linear_restart_plus_1=>linear_restart + 1,
-                                  :linear_restart=>linear_restart;
-                                  comm=comm_anyzv_subblock[])
-        c = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1;
-                                  comm=comm_anyzv_subblock[])
-        s = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1;
-                                  comm=comm_anyzv_subblock[])
-        g = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1;
-                                  comm=comm_anyzv_subblock[])
-        V = allocate_shared_float(reverse(coords)...,
-                                  :linear_restart_plus_one=>linear_restart+1;
-                                  comm=comm_anyzv_subblock[])
-        # Arrays below appear to need to be initialised to zero on setup.
-        # This is inconvenient for anyzv communicators because we need to switch
-        # now into the special "anyzv" region for this assignment,
-        # to make sure that all instances of memory are initialised to zero.
-        @begin_r_anyzv_region()
-        @begin_anyzv_region()
-        if anyzv_subblock_rank[] ≥ 0
-            @anyzv_serial_region begin
-                H .= 0.0
-                c .= 0.0
-                s .= 0.0
-                g .= 0.0
-                V .= 0.0
-            end
-        end
-        # switch out of anyzv region to avoid errors on
-        # the next region call in initialisation, which
-        # will not be an "anyzv" call.
-        @begin_serial_region()
-    else
-        H = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1, :linear_restart=>linear_restart)
-        c = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1)
-        s = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1)
-        g = allocate_shared_float(:linear_restart_plus_one=>linear_restart + 1)
-        V = allocate_shared_float(reverse(coords)...,
-                                  :linear_restart_plus_one=>linear_restart + 1)
-
-        @begin_serial_region()
-        @serial_region begin
-            H .= 0.0
-            c .= 0.0
-            s .= 0.0
-            g .= 0.0
-            V .= 0.0
+    # Rank local variables; only V is a shared allocate when distributed.
+    H = allocate_float(linear_restart + 1, linear_restart)
+    c = allocate_float(linear_restart + 1)
+    s = allocate_float(linear_restart + 1)
+    g = allocate_float(linear_restart + 1)
+    H .= 0.0
+    c .= 0.0
+    s .= 0.0
+    g .= 0.0
+    V = map(coords) do c_unk
+        if shared_comm == MPI.COMM_SELF
+            coord_sizes = Tuple(isa(coord, coordinate) ? coord.n : coord for coord ∈ c_unk)
+            return allocate_float(reverse(coord_sizes)..., linear_restart + 1)
+        else
+            return allocate_shared_float(reverse(c_unk)...,
+                                         :linear_restart_plus_one=>linear_restart + 1;
+                                         comm=shared_comm)
         end
     end
+    for i ∈ 1:linear_restart+1
+        parallel_map!(() -> 0.0, select_from_V(V, i), owned_indices)
+    end
+    _sync_shared(shared_comm)
 
     linear_initial_guess = zeros(linear_restart)
 
@@ -230,11 +142,227 @@ function setup_nonlinear_solve(nl_solver_input, coords, outer_coords=();
                           linear_initial_guess, Ref(0), Ref(0), Ref(0), Ref(0), Ref(0),
                           Ref(0), Ref(0), Ref(0),
                           Ref(nl_solver_input.preconditioner_update_interval),
-                          Ref(mk_float(0.0)), zeros(mk_int, n_vcut_inds),
-                          zeros(mk_int, n_vcut_inds), serial_solve, anysv_region,
-                          anyzv_region, Ref(0), Ref(0),
-                          nl_solver_input.total_its_soft_limit, preconditioner_type,
-                          nl_solver_input.preconditioner_update_interval, preconditioners)
+                          Ref(0), Ref(0),
+                          nl_solver_input.total_its_soft_limit,
+                          nl_solver_input.preconditioner_update_interval,
+                          preconditioner_info,
+                          shared_comm, distributed_comm, owned_indices,
+                          reduction_buffer, full_vector_norm)
+end
+
+function setup_nonlinear_solve(nl_solver_input, coords::NamedTuple;
+                               serial_solve=false,
+                               anysv_region=false, anyzv_region=false,
+                               electron_p_pdf_solve=false,
+                               preconditioner_info=nothing,
+                               full_vector_norm=get(nl_solver_input, :full_vector_norm, false))
+    coords_tuple = electron_p_pdf_solve ? ((z=coords.z,), coords) : (coords,)
+    return setup_nonlinear_solve(nl_solver_input, coords_tuple;
+                                 serial_solve=serial_solve,
+                                 anysv_region=anysv_region,
+                                 anyzv_region=anyzv_region,
+                                 preconditioner_info=preconditioner_info,
+                                 full_vector_norm=full_vector_norm)
+end
+
+# `shared_comm` is the communicator whose ranks share each unknown array.
+# `distributed_comm` connects the rank-0 leads of `shared_comm` across distributed
+# blocks (`MPI.COMM_NULL` on non-zero ranks of `shared_comm` and when not distributed).
+function _solver_comms(coords, serial_solve::Bool, anysv_region::Bool, anyzv_region::Bool)
+    if serial_solve
+        return MPI.COMM_SELF, MPI.COMM_NULL
+    elseif anysv_region
+        shared_comm = comm_anysv_subblock[]
+        return shared_comm, _distributed_comm_for_lead_rank(shared_comm, MPI.COMM_NULL)
+    elseif anyzv_region
+        shared_comm = comm_anyzv_subblock[]
+        return shared_comm, _distributed_comm_for_lead_rank(shared_comm, coords.z.comm)
+    else
+        shared_comm = comm_block[]
+        return shared_comm, _distributed_comm_for_lead_rank(shared_comm, comm_inter_block[])
+    end
+end
+
+function _distributed_comm_for_lead_rank(shared_comm::MPI.Comm, lead_comm::MPI.Comm)
+    if shared_comm == MPI.COMM_NULL || MPI.Comm_rank(shared_comm) != 0
+        return MPI.COMM_NULL
+    end
+    return lead_comm
+end
+
+"""
+    _solver_owned_indices(coords::Tuple, shared_comm::MPI.Comm)
+
+Flat index ranges for this rank. Callers pass `coords` as a `Tuple` of coordinate
+`NamedTuple`s (one per unknown, slowest-varying first). The ranges index array memory,
+which is fastest-varying first. The entries are divided across `shared_comm`. A rank with
+`MPI.COMM_NULL`, or a rank in the communicator that receives no entries, gets an empty
+list. Membership of `shared_comm` is unchanged.
+
+For each unknown the pair `(local_ranges, owned_ranges)` is returned. The full local
+array (`1:prod(dim_sizes)`) is partitioned once across `shared_comm` to form
+`local_ranges`, which is every slot this rank writes (including the duplicated upper
+block-boundary point). `owned_ranges` is formed by intersecting `local_ranges` with the
+non-duplicated block points (omitting the upper boundary point on every block except the
+last along each distributed coordinate), guaranteeing `owned_ranges ⊆ local_ranges` on
+every rank without shifting the inter-rank cut. Consecutive indices are stored as one
+range.
+"""
+function _solver_owned_indices(coords::Tuple, shared_comm::MPI.Comm)
+    return map(coords) do c
+        dim_sizes, exclude_last = _sizes_and_excluded(c)
+        return _local_and_owned_ranges(dim_sizes, exclude_last, shared_comm)
+    end
+end
+
+# Split the full local array first, then intersect with `owned_block` so every rank's
+# `owned_ranges` is a subset of its `local_ranges`.
+function _local_and_owned_ranges(dim_sizes::NTuple{N,Int}, exclude_last::NTuple{N,Bool},
+                                 shared_comm::MPI.Comm) where {N}
+    local_block = _block_owned_ranges(dim_sizes, ntuple(_ -> false, N))
+    local_ranges = _split_ranges_across_comm(local_block, shared_comm)
+    owned_block = _block_owned_ranges(dim_sizes, exclude_last)
+    owned_ranges = _intersect_ranges(local_ranges, owned_block)
+    return (local_ranges, owned_ranges) # index with local_ranges_index, owned_ranges_index
+end
+
+# `coords` is ordered slowest-varying first. Array memory is fastest-varying first.
+function _sizes_and_excluded(coords::NamedTuple{Names}) where {Names}
+    N = length(Names)
+    dim_sizes = ntuple(Val(N)) do i
+        c = coords[i]
+        Int(isa(c, coordinate) ? c.n : c)
+    end
+    exclude_last = ntuple(Val(N)) do i
+        _dimension_excludes_boundary(coords[i])
+    end
+    return reverse(dim_sizes), reverse(exclude_last)
+end
+
+function _dimension_excludes_boundary(c)
+    return c isa coordinate && c.nrank > 1 && c.irank < c.nrank - 1
+end
+
+# Contiguous flat-index ranges for the points owned by this distributed-memory
+# block. The last local index of a distributed dimension is the copy of the
+# next block's boundary point, so it is omitted.
+function _block_owned_ranges(dim_sizes::NTuple{N,Int}, exclude_last::NTuple{N,Bool}) where {N}
+    owned_sizes = ntuple(d -> exclude_last[d] ? dim_sizes[d] - 1 : dim_sizes[d], N)
+    if any(s -> s <= 0, owned_sizes)
+        return UnitRange{Int}[]
+    end
+    if N == 1
+        return UnitRange{Int}[1:owned_sizes[1]]
+    end
+    inner = owned_sizes[1]
+    ranges = UnitRange{Int}[]
+    outer_index = ones(Int, N - 1)
+    nouter = prod(owned_sizes[2:end])
+    sizehint!(ranges, nouter)
+    for _ in 1:nouter
+        offset = 0
+        stride = dim_sizes[1]
+        for j in 1:(N - 1)
+            offset += (outer_index[j] - 1) * stride
+            stride *= dim_sizes[j + 1]
+        end
+        push!(ranges, (offset + 1):(offset + inner))
+        for j in 1:(N - 1)
+            outer_index[j] += 1
+            if outer_index[j] <= owned_sizes[j + 1]
+                break
+            end
+            outer_index[j] = 1
+        end
+    end
+    return _coalesce_ranges(ranges)
+end
+
+function _coalesce_ranges(ranges::Vector{UnitRange{Int}})
+    isempty(ranges) && return ranges
+    coalesced = UnitRange{Int}[]
+    start_ind = first(first(ranges))
+    stop_ind = last(first(ranges))
+    for r in @view ranges[2:end]
+        if first(r) == stop_ind + 1
+            stop_ind = last(r)
+        else
+            push!(coalesced, start_ind:stop_ind)
+            start_ind = first(r)
+            stop_ind = last(r)
+        end
+    end
+    push!(coalesced, start_ind:stop_ind)
+    return coalesced
+end
+
+function _split_ranges_across_comm(block_ranges::Vector{UnitRange{Int}}, comm::MPI.Comm)
+    if comm == MPI.COMM_NULL
+        return UnitRange{Int}[]
+    end
+    n_owned = sum(length, block_ranges; init=0)
+    mine = _chunk_of_owned_count(n_owned, MPI.Comm_rank(comm), MPI.Comm_size(comm))
+    return _slice_owned_ranges(block_ranges, mine)
+end
+
+# Cut the same as `get_local_range`: extra points go to the higher ranks, so this
+# rank reads the entries it writes.
+function _chunk_of_owned_count(n_owned::Int, rank::Int, nrank::Int)
+    base, remainder = divrem(n_owned, nrank)
+    n_low = nrank - remainder
+    if rank < n_low
+        start_ind = rank * base + 1
+        return start_ind:(start_ind + base - 1)
+    else
+        start_ind = n_low * base + (rank - n_low) * (base + 1) + 1
+        return start_ind:(start_ind + base)
+    end
+end
+
+function _slice_owned_ranges(block_ranges::Vector{UnitRange{Int}}, mine::UnitRange{Int})
+    if isempty(mine)
+        return UnitRange{Int}[]
+    end
+    sliced = UnitRange{Int}[]
+    position = 1
+    for r in block_ranges
+        rlen = length(r)
+        range_end = position + rlen - 1
+        overlap_start = max(first(mine), position)
+        overlap_stop = min(last(mine), range_end)
+        if overlap_start <= overlap_stop
+            shift = overlap_start - position
+            len = overlap_stop - overlap_start + 1
+            start_ind = first(r) + shift
+            push!(sliced, start_ind:(start_ind + len - 1))
+        end
+        position = range_end + 1
+        if position > last(mine)
+            break
+        end
+    end
+    return sliced
+end
+
+function _intersect_ranges(a::Vector{UnitRange{Int}}, b::Vector{UnitRange{Int}})
+    result = UnitRange{Int}[]
+    ia = 1
+    ib = 1
+    while ia <= length(a) && ib <= length(b)
+        ra = a[ia]
+        rb = b[ib]
+        start_ind = max(first(ra), first(rb))
+        stop_ind = min(last(ra), last(rb))
+        if start_ind <= stop_ind
+            push!(result, start_ind:stop_ind)
+        end
+        if last(ra) < last(rb)
+            ia += 1
+        else
+            ib += 1
+        end
+    end
+    return result
 end
 
 """
@@ -286,11 +414,13 @@ total.
 end
 
 """
-    newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, w, nl_solver_params;
-                  left_preconditioner=identity, right_preconditioner=identity, coords)
+    newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params;
+                  left_preconditioner=identity, right_preconditioner=identity,
+                  recalculate_preconditioner=nothing)
 
-`x` is the initial guess at the solution, and is overwritten by the result of the Newton
-solve.
+`x` is the initial guess at the solution (`Tuple` of `AbstractArray`s, or a single
+`AbstractArray` wrapped by the convenience method below), and is overwritten by the result
+of the Newton solve.
 
 `rhs_func!(residual, x)` is the function we are trying to find a solution of. It calculates
 ```math
@@ -298,16 +428,13 @@ solve.
 ```
 where we are trying to solve \$F(x)=0\$.
 
-`residual`, `delta_x`, `rhs_delta` and `w` are buffer arrays, with the same size as `x`,
-used internally.
+`residual`, `delta_x`, `rhs_delta`, `v`, and `w` are buffer arrays (or `Tuple`s of buffer
+arrays), with the same size as `x`, used internally.
 
 `left_preconditioner` or `right_preconditioner` apply preconditioning. They should be
 passed a function that solves \$P.x = b\$ where \$P\$ is the preconditioner matrix, \$b\$
 is given by the values passed to the function as the argument, and the result \$x\$ is
 returned by overwriting the argument.
-
-`coords` is a NamedTuple containing the `coordinate` structs corresponding to each
-dimension in `x`.
 
 
 Tolerances
@@ -346,55 +473,47 @@ As the GMRES solve is only used to get the right `direction' for the next Newton
 is not necessary to have a very tight `linear_rtol` for the GMRES solve.
 """
 @timeit global_timer newton_solve!(
-                         x, residual_func!::F, residual, delta_x, rhs_delta, v, w,
+                         x::Tuple, residual_func!::F, residual::Tuple, delta_x::Tuple,
+                         rhs_delta::Tuple, v::Tuple, w::Tuple,
                          nl_solver_params; left_preconditioner::LP=identity,
                          right_preconditioner::RP=identity,
-                         recalculate_preconditioner::RECALC=nothing,
-                         coords) where {F,LP,RP,RECALC} = begin
-    # This wrapper function constructs the `solver_type` from coords, so that the body of
-    # the inner `newton_solve!()` can be fully type-stable
-    solver_type = Val(Symbol((c for c ∈ keys(coords))...))
-    return newton_solve!(x, residual_func!, residual, delta_x, rhs_delta, v, w,
-                         nl_solver_params, solver_type;
-                         left_preconditioner=left_preconditioner,
-                         right_preconditioner=right_preconditioner,
-                         recalculate_preconditioner=recalculate_preconditioner,
-                         coords=coords)
-end
-function newton_solve!(x, residual_func!::F, residual, delta_x, rhs_delta, v, w,
-                       nl_solver_params, solver_type::Val;
-                       left_preconditioner::LP=identity,
-                       right_preconditioner::RP=identity,
-                       recalculate_preconditioner::RECALC=nothing,
-                       coords) where {F,LP,RP,RECALC}
+                         recalculate_preconditioner::RECALC=nothing) where {F,LP,RP,RECALC} = begin
     rtol = nl_solver_params.rtol
     atol = nl_solver_params.atol
+    owned_indices = nl_solver_params.owned_indices
+    shared_comm = nl_solver_params.shared_comm
 
-    norm_params = (coords, nl_solver_params.rtol, nl_solver_params.atol, x)
+    norm_params = (nl_solver_params.owned_indices,
+                   nl_solver_params.shared_comm,
+                   nl_solver_params.distributed_comm,
+                   nl_solver_params.reduction_buffer, rtol, atol, x,
+                   nl_solver_params.full_vector_norm)
 
     residual_func!(residual, x)
-    residual_norm = distributed_norm(solver_type, residual, norm_params...)
+    # The residual writes with @loop_*. Synchronize before the owned-range read.
+    _sync_shared(shared_comm)
+    residual_norm = distributed_norm(residual, norm_params...)
     counter = 0
     linear_counter = 0
 
     # Would need this if delta_x was not set to zero within the Newton iteration loop
     # below.
-    #parallel_map(solver_type, ()->0.0, delta_x)
+    #parallel_map!(()->0.0, delta_x, owned_indices)
 
     close_counter = -1
     close_linear_counter = -1
     success = true
     previous_residual_norm = residual_norm
-old_precon_iterations = nl_solver_params.precon_iterations[]
+    old_precon_iterations = nl_solver_params.precon_iterations[]
     while (counter < 1 && residual_norm > 1.0e-8) || residual_norm > 1.0
         counter += 1
         #println("\nNewton ", counter)
 
         # Solve (approximately?):
         #   J δx = -RHS(x)
-        parallel_map(solver_type, ()->0.0, delta_x)
+        parallel_map!(()->0.0, delta_x, owned_indices)
         linear_its = linear_solve!(x, residual_func!, residual, delta_x, v, w,
-                                   solver_type, norm_params; coords=coords,
+                                   norm_params;
                                    rtol=nl_solver_params.linear_rtol,
                                    atol=nl_solver_params.linear_atol,
                                    restart=nl_solver_params.linear_restart,
@@ -405,11 +524,10 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
                                    s=nl_solver_params.s, g=nl_solver_params.g,
                                    V=nl_solver_params.V, rhs_delta=rhs_delta,
                                    initial_guess=nl_solver_params.linear_initial_guess,
-                                   serial_solve=nl_solver_params.serial_solve,
-                                   anysv_region=nl_solver_params.anysv_region,
-                                   anyzv_region=nl_solver_params.anyzv_region,
                                    initial_delta_x_is_zero=true)
         linear_counter += linear_its
+        # delta_x was written on local_ranges (or by the preconditioner). Synchronize.
+        _sync_shared(shared_comm)
 
         # If the residual does not decrease, we will do a line search to find an update
         # that does decrease the residual. The value of `x` is used to define the
@@ -418,14 +536,18 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
         # during the line search, which might make it fail to converge). So calculate the
         # updated value in the buffer `w` until the line search is completed, and only
         # then copy it into `x`.
-        parallel_map(solver_type, (x) -> x, w, x)
-        parallel_map(solver_type, (x,delta_x) -> x + delta_x, w, x, delta_x)
+        parallel_map!((x) -> x, w, x, owned_indices)
+        parallel_map!((x,delta_x) -> x + delta_x, w, x, delta_x, owned_indices)
+        # w was written on local_ranges. The residual reads it with @loop_*.
+        _sync_shared(shared_comm)
         residual_func!(residual, w)
+        # The residual writes with @loop_*. Synchronize before continuing.
+        _sync_shared(shared_comm)
 
         # For the Newton iteration, we want the norm divided by the (sqrt of the) number
         # of grid points, so we can use a tolerance that is independent of the size of the
         # grid. This is unlike the norms needed in `linear_solve!()`.
-        residual_norm = distributed_norm(solver_type, residual, norm_params...)
+        residual_norm = distributed_norm(residual, norm_params...)
         if isnan(residual_norm)
             error("NaN in Newton iteration at iteration $counter")
         end
@@ -434,7 +556,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
 #            # decrease residual_norm
 #            s = 0.5
 #            while s > 1.0e-2
-#                parallel_map(solver_type, (x,delta_x,s) -> x + s * delta_x, w, x, delta_x, s)
+#                parallel_map!(solver_type, (x,delta_x,s) -> x + s * delta_x, w, x, delta_x, s)
 #                residual_func!(residual, x)
 #                residual_norm = distributed_norm(solver_type, residual, norm_params...)
 #                if residual_norm ≤ previous_residual_norm
@@ -448,13 +570,13 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
 #            #    # Failed to find a point that decreases the residual, so try a negative
 #            #    # step
 #            #    s = -1.0e-5
-#            #    parallel_map(solver_type, (x,delta_x,s) -> x + s * delta_x, w, x, delta_x, s)
+#            #    parallel_map!(solver_type, (x,delta_x,s) -> x + s * delta_x, w, x, delta_x, s)
 #            #    residual_func!(residual, x)
 #            #    residual_norm = distributed_norm(solver_type, residual, norm_params...)
 #            #    if residual_norm > previous_residual_norm
 #            #        # That didn't work either, so just take the full step and hope for
 #            #        # convergence later
-#            #        parallel_map(solver_type, (x,delta_x,s) -> x + s * delta_x, w, x, delta_x, s)
+#            #        parallel_map!(solver_type, (x,delta_x,s) -> x + s * delta_x, w, x, delta_x, s)
 #            #        residual_func!(residual, x)
 #            #        residual_norm = distributed_norm(solver_type, residual, norm_params...)
 #            #    end
@@ -462,12 +584,14 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
 #            if residual_norm > previous_residual_norm
 #                # Line search didn't work, so just take the full step and hope for
 #                # convergence later
-#                parallel_map(solver_type, (x,delta_x,s) -> x + s * delta_x, w, x, delta_x, s)
+#                parallel_map!(solver_type, (x,delta_x,s) -> x + s * delta_x, w, x, delta_x, s)
 #                residual_func!(residual, x)
 #                residual_norm = distributed_norm(solver_type, residual, norm_params...)
 #            end
 #        end
-        parallel_map(solver_type, (w) -> w, x, w)
+        parallel_map!((w) -> w, x, w, owned_indices)
+        # x was written on local_ranges. Synchronize for preconditioner updates and the caller.
+        _sync_shared(shared_comm)
         previous_residual_norm = residual_norm
 
         if recalculate_preconditioner !== nothing && counter % nl_solver_params.preconditioner_update_interval == 0
@@ -488,6 +612,9 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
             success = false
             break
         end
+    end
+    if counter == 0
+        _sync_shared(shared_comm)
     end
     nl_solver_params.n_solves[] += 1
     nl_solver_params.nonlinear_iterations[] += counter
@@ -512,831 +639,199 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
     return success
 end
 
-@timeit_debug global_timer distributed_norm(
-                               ::Val{:z}, residual::AbstractArray{mk_float, 1}, coords,
-                               rtol, atol, x) = begin
-    z = coords.z
+function newton_solve!(x::AbstractArray, residual_func!::F, residual::AbstractArray,
+                       delta_x::AbstractArray, rhs_delta::AbstractArray,
+                       v::AbstractArray, w::AbstractArray, nl_solver_params;
+                       left_preconditioner::LP=identity,
+                       right_preconditioner::RP=identity,
+                       recalculate_preconditioner::RECALC=nothing) where {F,LP,RP,RECALC}
+    wrapped_residual_func!(res_tuple::Tuple, x_tuple::Tuple; kwargs...) =
+        residual_func!(res_tuple[1], x_tuple[1]; kwargs...)
+    wrapped_left_precon = left_preconditioner === identity ? identity :
+        (v_tuple::Tuple -> left_preconditioner(v_tuple[1]))
+    wrapped_right_precon = right_preconditioner === identity ? identity :
+        (v_tuple::Tuple -> right_preconditioner(v_tuple[1]))
+    return newton_solve!((x,), wrapped_residual_func!, (residual,), (delta_x,),
+                         (rhs_delta,), (v,), (w,), nl_solver_params;
+                         left_preconditioner=wrapped_left_precon,
+                         right_preconditioner=wrapped_right_precon,
+                         recalculate_preconditioner=recalculate_preconditioner)
+end
 
-    @begin_anyzv_z_region()
+# Weighted RMS of the scaled entries. `residual` is the vector being measured
+# and `x` is the current Newton state, used as the scale `rtol*abs(x)+atol`.
+# Works with a tuple of arrays.
+# When `full_vector_norm == false` (default), each unknown is divided by its own
+# point count, then those mean squares are averaged so that multiple unknowns
+# have equal weight. When `full_vector_norm == true`, all owned points across all
+# unknowns are summed together and divided by the total owned point count.
+@timeit_debug global_timer distributed_norm(residual::Tuple, owned_indices,
+                          shared_comm, distributed_comm, buffer, rtol, atol, x::Tuple,
+                          full_vector_norm::Bool=false) = begin
+    mean = _weighted_mean(residual, residual, owned_indices, shared_comm,
+                          distributed_comm, buffer, rtol, atol, x,
+                          full_vector_norm) do rk, _, i
+        rk[i] * rk[i]
+    end
+    return sqrt(mean)
+end
 
-    local_norm = 0.0
-    if z.irank < z.nrank - 1
-        zend = z.n
-        @loop_z iz begin
-            if iz == zend
-                continue
+# Same mean as `distributed_norm`, with the product of `v` and `w` as the weight.
+@timeit_debug global_timer distributed_dot(v::Tuple, w::Tuple, owned_indices,
+                          shared_comm, distributed_comm, buffer, rtol, atol, x::Tuple,
+                          full_vector_norm::Bool=false) = begin
+    return _weighted_mean(v, w, owned_indices, shared_comm,
+                          distributed_comm, buffer, rtol, atol, x,
+                          full_vector_norm) do vk, wk, i
+        vk[i] * wk[i]
+    end
+end
+
+# Mean of `weight(vk, wk, i) / scale^2`, with `scale = rtol*abs(x)+atol`.
+# Slot 2k-1 is the sum of those weights and slot 2k is the point count.
+# `_reduce_sums!` runs before the division. When `full_vector_norm` is false,
+# the per-unknown means are averaged; when true, total sum is divided by total count.
+# `map` over the tuples unrolls via tuple recursion so heterogeneous unknown tuples
+# (e.g. 1D pressure + 3D pdf) specialize and SIMD-vectorize per unknown.
+@inline function _weighted_mean(weight::F, v::Tuple, w::Tuple, owned_indices, shared_comm,
+                                distributed_comm, buffer, rtol, atol, x::Tuple,
+                                full_vector_norm::Bool=false) where {F}
+    n = length(x)
+    totals = map(owned_indices, v, w, x) do oi, vk, wk, xk
+        s = zero(mk_float)
+        c = 0
+        # Owned ranges omit the boundary point duplicated on the next block.
+        for r in oi[owned_ranges_index]
+            for i in r
+                scale = rtol * abs(xk[i]) + atol
+                s += weight(vk, wk, i) / scale^2
             end
-            local_norm += (residual[iz] / (rtol * abs(x[iz]) + atol))^2
+            c += length(r)
         end
+        return (s, c)
+    end
+    for k in 1:n
+        buffer[2k - 1], buffer[2k] = totals[k]
+    end
+    _reduce_sums!(buffer, shared_comm, distributed_comm)
+    if full_vector_norm
+        # Every grid point weighted equally across the whole solution vector.
+        total_sum = 0.0
+        total_count = 0.0
+        for k in 1:n
+            total_sum += buffer[2k - 1]
+            total_count += buffer[2k]
+        end
+        return total_sum / total_count
     else
-        @loop_z iz begin
-            local_norm += (residual[iz] / (rtol * abs(x[iz]) + atol))^2
+        # Unknowns weighted equally.
+        mean = 0.0
+        for k in 1:n
+            mean += buffer[2k - 1] / buffer[2k]
         end
+        return mean / n
     end
-
-    @_anyzv_subblock_synchronize()
-    global_norm = Ref(local_norm)
-    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(global_norm, +, comm_anyzv_subblock[]) # global_norm is the norm_square for the block
-
-    if anyzv_subblock_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(global_norm, +, z.comm) # global_norm is the norm_square for the whole grid
-        global_norm[] = sqrt(global_norm[] / z.n_global)
-    end
-    @_anyzv_subblock_synchronize()
-    @timeit_debug global_timer "MPI.Bcast! comm_anyzv_subblock" MPI.Bcast!(global_norm, comm_anyzv_subblock[]; root=0)
-
-    return global_norm[]
 end
 
-@timeit_debug global_timer distributed_norm(
-                               ::Val{:vpa}, residual::AbstractArray{mk_float, 1}, coords,
-                               rtol, atol, x) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    residual_norm = 0.0
-    for i ∈ eachindex(residual, x)
-        residual_norm += (residual[i] / (rtol * abs(x[i]) + atol))^2
+# Synchronize ranks in `shared_comm` when crossing between `local_ranges` and `@loop_*`
+# (or preconditioners) so shared-array writes are visible before the next read or overwrite.
+function _sync_shared(shared_comm::MPI.Comm)
+    if shared_comm == MPI.COMM_NULL || shared_comm == MPI.COMM_SELF
+        return nothing
     end
-
-    residual_norm = sqrt(residual_norm / length(residual))
-
-    return residual_norm
+    @debug_shared_array begin
+        if shared_comm == comm_anyzv_subblock[]
+            @_anyzv_subblock_synchronize()
+            return nothing
+        elseif shared_comm == comm_anysv_subblock[]
+            @_anysv_subblock_synchronize()
+            return nothing
+        elseif shared_comm == comm_block[]
+            @_block_synchronize()
+            return nothing
+        end
+    end
+    MPI.Barrier(shared_comm)
+    return nothing
 end
 
-@timeit_debug global_timer distributed_norm(
-                               ::Val{:vperpvpa},
-                               residual::AbstractArray{mk_float, 2},
-                               coords, rtol, atol, x::AbstractArray{mk_float, 2}) = begin
-    # no distributed memory paralleism required when solving only in (vperp, vpa)
-    # assumed called inside @begin_r_z_anysv_region()
-    pdf_residual = residual
-    x_pdf = x
-    vperp = coords.vperp
-    vpa = coords.vpa
-
-    @begin_anysv_vperp_vpa_region()
-    pdf_norm_square = 0.0
-    @loop_vperp_vpa ivperp ivpa begin
-        pdf_norm_square += (pdf_residual[ivpa,ivperp] / (rtol * abs(x_pdf[ivpa,ivperp]) + atol))^2
+# Sum-reduce the (sum, count) pairs to every rank.
+function _reduce_sums!(buffer, shared_comm, distributed_comm)
+    if shared_comm != MPI.COMM_NULL
+        # The total is present on rank 0 only until the broadcast below.
+        MPI.Reduce!(buffer, +, shared_comm)
     end
-    @_anysv_subblock_synchronize()
-    global_norm = Ref(pdf_norm_square)
-    @timeit_debug global_timer "MPI.Reduce! comm_block" MPI.Reduce!(global_norm, +, comm_anysv_subblock[]) # global_norm is the norm_square for the block
-
-    if anysv_subblock_rank[] == 0
-        global_norm[] = sqrt(global_norm[] / (vperp.n_global * vpa.n_global))
+    if distributed_comm != MPI.COMM_NULL
+        # Sum across blocks. Allreduce leaves the total on every rank in this comm.
+        MPI.Allreduce!(buffer, +, distributed_comm)
     end
-    @_anysv_subblock_synchronize()
-
-    @timeit_debug global_timer "MPI.Bcast! comm_block" MPI.Bcast!(global_norm, comm_anysv_subblock[]; root=0)
-    
-    return global_norm[]
+    if shared_comm != MPI.COMM_NULL
+        # Copy rank 0's buffer to the other ranks in the shared group.
+        MPI.Bcast!(buffer, shared_comm; root=0)
+    end
+    return buffer
 end
 
-@timeit_debug global_timer distributed_norm(
-                               ::Val{:zvperpvpa},
-                               residual::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}},
-                               coords, rtol, atol, x) = begin
-    ppar_residual, pdf_residual = residual
-    x_ppar, x_pdf = x
-    z = coords.z
-    vperp = coords.vperp
-    vpa = coords.vpa
-
-    if z.irank < z.nrank - 1
-        zend = z.n
-    else
-        zend = z.n + 1
-    end
-
-    @begin_anyzv_z_region()
-
-    ppar_local_norm_square = 0.0
-    @loop_z iz begin
-        if iz == zend
-            continue
-        end
-        ppar_local_norm_square += (ppar_residual[iz] / (rtol * abs(x_ppar[iz]) + atol))^2
-    end
-
-    @_anyzv_subblock_synchronize()
-    global_norm_ppar = Ref(ppar_local_norm_square) # global_norm_ppar is now the norm_square for ppar in the subblock
-    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(global_norm_ppar, +, comm_anyzv_subblock[])
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(global_norm_ppar, +, z.comm) # global_norm_ppar is now the norm_square for ppar in the whole {z,vperp,vpa} grid
-        global_norm_ppar[] = global_norm_ppar[] / z.n_global
-    end
-
-    @begin_anyzv_z_vperp_vpa_region()
-
-    pdf_local_norm_square = 0.0
-    @loop_z iz begin
-        if iz == zend
-            continue
-        end
-        @loop_vperp_vpa ivperp ivpa begin
-            pdf_local_norm_square += (pdf_residual[ivpa,ivperp,iz] / (rtol * abs(x_pdf[ivpa,ivperp,iz]) + atol))^2
-        end
-    end
-
-    @_anyzv_subblock_synchronize()
-    global_norm = Ref(pdf_local_norm_square)
-    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(global_norm, +, comm_anyzv_subblock[]) # global_norm is now the norm_square for the subblock
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(global_norm, +, z.comm) # global_norm is now the norm_square for the whole {z,vperp,vpa} grid
-        global_norm[] = global_norm[] / (z.n_global * vperp.n_global * vpa.n_global)
-
-        global_norm[] = sqrt(mean((global_norm_ppar[], global_norm[])))
-    end
-    @_anyzv_subblock_synchronize()
-
-    @timeit_debug global_timer "MPI.Bcast! comm_anyzv_subblock" MPI.Bcast!(global_norm, comm_anyzv_subblock[]; root=0)
-
-    return global_norm[]
-end
-
-@timeit_debug global_timer distributed_norm(
-                  ::Val{:srzvperpvpa}, residual::AbstractArray{mk_float, 5}, coords, rtol,
-                  atol, x) = begin
-    n_ion_species = coords.s
-    r = coords.r
-    z = coords.z
-    vperp = coords.vperp
-    vpa = coords.vpa
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    local_norm = 0.0
-    if r.irank < r.nrank - 1
-        rend = r.n
-    else
-        rend = r.n + 1
-    end
-    if z.irank < z.nrank - 1
-        zend = z.n
-    else
-        zend = z.n + 1
-    end
-    @loop_s_r_z is ir iz begin
-        if ir == rend || iz == zend
-            continue
-        end
-        @loop_vperp_vpa ivperp ivpa begin
-            local_norm += (residual[ivpa,ivperp,iz,ir,is] / (rtol * abs(x[ivpa,ivperp,iz,ir,is]) + atol))^2
-        end
-    end
-
-    @_block_synchronize()
-    global_norm = Ref(local_norm)
-    @timeit_debug global_timer "MPI.Reduce! comm_block" MPI.Reduce!(global_norm, +, comm_block[]) # global_norm is the norm_square for the block
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! comm_inter_block" MPI.Allreduce!(global_norm, +, comm_inter_block[]) # global_norm is the norm_square for the whole grid
-        global_norm[] = sqrt(global_norm[] / (n_ion_species * r.n_global * z.n_global * vperp.n_global * vpa.n_global))
-    end
-    @_block_synchronize()
-    @timeit_debug global_timer "MPI.Bcast! comm_block" MPI.Bcast!(global_norm, comm_block[]; root=0)
-
-    return global_norm[]
-end
-
-@timeit_debug global_timer distributed_dot(
-                  ::Val{:z}, v::AbstractArray{mk_float, 1}, w::AbstractArray{mk_float, 1},
-                  coords, rtol, atol, x) = begin
-
-    z = coords.z
-
-    @begin_anyzv_z_region()
-
-    z = coords.z
-
-    local_dot = 0.0
-    if z.irank < z.nrank - 1
-        zend = z.n
-        @loop_z iz begin
-            if iz == zend
-                continue
+# 0 input parallel_map!
+@inline function parallel_map!(func::F, result::Tuple, owned_indices) where {F}
+    value = func()
+    map(owned_indices, result) do oi, field
+        for r in oi[local_ranges_index]
+            for idx in r
+                field[idx] = value
             end
-            local_dot += v[iz] * w[iz] / (rtol * abs(x[iz]) + atol)^2
         end
-    else
-        @loop_z iz begin
-            local_dot += v[iz] * w[iz] / (rtol * abs(x[iz]) + atol)^2
-        end
-    end
-
-    @_anyzv_subblock_synchronize()
-    global_dot = Ref(local_dot)
-    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(global_dot, +, comm_anyzv_subblock[]) # global_dot is the dot for the block
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(global_dot, +, z.comm) # global_dot is the dot for the whole grid
-        global_dot[] = global_dot[] / z.n_global
-    end
-
-    return global_dot[]
-end
-
-@timeit_debug global_timer distributed_dot(
-                  ::Val{:vpa}, v::AbstractArray{mk_float, 1}, w::AbstractArray{mk_float, 1}, coords,
-                  rtol, atol, x) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    local_dot = 0.0
-    for i ∈ eachindex(v,w)
-        local_dot += v[i] * w[i] / (rtol * abs(x[i]) + atol)^2
-    end
-    local_dot = local_dot / length(v)
-    return local_dot
-end
-
-@timeit_debug global_timer distributed_dot(
-                  ::Val{:vperpvpa}, v::AbstractArray{mk_float, 2},
-                  w::AbstractArray{mk_float, 2}, coords,
-                  rtol, atol, x::AbstractArray{mk_float, 2}) = begin
-    v_pdf = v
-    w_pdf = w
-    x_pdf = x
-
-    vperp = coords.vperp
-    vpa = coords.vpa
-
-    @begin_anysv_vperp_vpa_region()
-
-    pdf_dot = 0.0
-    @loop_vperp_vpa ivperp ivpa begin
-        pdf_dot += v_pdf[ivpa,ivperp] * w_pdf[ivpa,ivperp] / (rtol * abs(x_pdf[ivpa,ivperp]) + atol)^2
-    end
-    @_anysv_subblock_synchronize()
-    global_dot = Ref(pdf_dot)
-    @timeit_debug global_timer "MPI.Reduce! comm_anysv_subblock" MPI.Reduce!(global_dot, +, comm_anysv_subblock[]) # global_dot is the dot for the block
-    if anysv_subblock_rank[] == 0
-        global_dot[] = global_dot[] / (vperp.n_global * vpa.n_global)
-    end
-    return global_dot[]
-end
-
-@timeit_debug global_timer distributed_dot(
-                  ::Val{:zvperpvpa}, v::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}},
-                  w::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}}, coords,
-                  rtol, atol, x) = begin
-    v_ppar, v_pdf = v
-    w_ppar, w_pdf = w
-    x_ppar, x_pdf = x
-
-    z = coords.z
-    vperp = coords.vperp
-    vpa = coords.vpa
-
-    if z.irank < z.nrank - 1
-        zend = z.n
-    else
-        zend = z.n + 1
-    end
-
-    @begin_anyzv_z_region()
-
-    ppar_local_dot = 0.0
-    @loop_z iz begin
-        if iz == zend
-            continue
-        end
-        ppar_local_dot += v_ppar[iz] * w_ppar[iz] / (rtol * abs(x_ppar[iz]) + atol)^2
-    end
-
-    @_anyzv_subblock_synchronize()
-    ppar_global_dot = Ref(ppar_local_dot)
-    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(ppar_global_dot, +, comm_anyzv_subblock[]) # ppar_global_dot is now the ppar_dot for the subblock
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(ppar_global_dot, +, z.comm) # ppar_global_dot is now the ppar_dot for the whole {z,vperp,vpa} grid
-        ppar_global_dot[] = ppar_global_dot[] / z.n_global
-    end
-
-    @begin_anyzv_z_vperp_vpa_region()
-
-    pdf_local_dot = 0.0
-    @loop_z_vperp_vpa iz ivperp ivpa begin
-        if iz == zend
-            continue
-        end
-        pdf_local_dot += v_pdf[ivpa,ivperp,iz] * w_pdf[ivpa,ivperp,iz] / (rtol * abs(x_pdf[ivpa,ivperp,iz]) + atol)^2
-    end
-
-    @_anyzv_subblock_synchronize()
-    global_dot = Ref(pdf_local_dot)
-    @timeit_debug global_timer "MPI.Reduce! comm_anyzv_subblock" MPI.Reduce!(global_dot, +, comm_anyzv_subblock[]) # global_dot is now the dot for the subblock
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! z.comm" MPI.Allreduce!(global_dot, +, z.comm) # global_dot is now the dot for the whole {z,vperp,vpa} grid
-        global_dot[] = global_dot[] / (z.n_global * vperp.n_global * vpa.n_global)
-
-        global_dot[] = mean((ppar_global_dot[], global_dot[]))
-    end
-
-    return global_dot[]
-end
-
-@timeit_debug global_timer distributed_dot(
-                  ::Val{:srzvperpvpa}, v::AbstractArray{mk_float, 5},
-                  w::AbstractArray{mk_float, 5}, coords, rtol, atol, x) = begin
-    n_ion_species = coords.s
-    r = coords.r
-    z = coords.z
-    vperp = coords.vperp
-    vpa = coords.vpa
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    local_dot = 0.0
-    if r.irank < r.nrank - 1
-        rend = r.n
-    else
-        rend = r.n + 1
-    end
-    if z.irank < z.nrank - 1
-        zend = z.n
-    else
-        zend = z.n + 1
-    end
-
-    @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-        if ir == rend || iz == zend
-            continue
-        end
-        local_dot += v[ivpa,ivperp,iz,ir,is] * w[ivpa,ivperp,iz,ir,is] / (rtol * abs(x[ivpa,ivperp,iz,ir,is]) + atol)^2
-    end
-
-    @_block_synchronize()
-    global_dot = Ref(local_dot)
-    @timeit_debug global_timer "MPI.Reduce! comm_block" MPI.Reduce!(global_dot, +, comm_block[]) # global_dot is now the dot for the subblock
-
-    if block_rank[] == 0
-        @timeit_debug global_timer "MPI.Allreduce! comm_inter_block" MPI.Allreduce!(global_dot, +, comm_inter_block[]) # global_dot is now the dot for the whole {z,vperp,vpa} grid
-        global_dot[] = global_dot[] / (n_ion_species * r.n_global * z.n_global * vperp.n_global * vpa.n_global)
-    end
-
-    return global_dot[]
-end
-
-# Separate versions for different numbers of arguments as generator expressions result in
-# slow code
-
-@timeit_debug global_timer parallel_map(
-                  ::Val{:z}, func, result::AbstractArray{mk_float, 1}) = begin
-
-    @begin_anyzv_z_region()
-
-    @loop_z iz begin
-        result[iz] = func()
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:z}, func, result::AbstractArray{mk_float, 1}, x1) = begin
-
-    @begin_anyzv_z_region()
-
-    @loop_z iz begin
-        result[iz] = func(x1[iz])
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:z}, func, result::AbstractArray{mk_float, 1}, x1, x2) = begin
-
-    @begin_anyzv_z_region()
-
-    if isa(x2, AbstractArray)
-        @loop_z iz begin
-            result[iz] = func(x1[iz], x2[iz])
-        end
-    else
-        @loop_z iz begin
-            result[iz] = func(x1[iz], x2)
-        end
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:z}, func, result::AbstractArray{mk_float, 1}, x1, x2, x3) = begin
-
-    @begin_anyzv_z_region()
-
-    if isa(x3, AbstractArray)
-        @loop_z iz begin
-            result[iz] = func(x1[iz], x2[iz], x3[iz])
-        end
-    else
-        @loop_z iz begin
-            result[iz] = func(x1[iz], x2[iz], x3)
-        end
-    end
-
-    return nothing
-end
-
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vpa}, func, result::AbstractArray{mk_float, 1}) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    for i ∈ eachindex(result)
-        result[i] = func()
-    end
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vpa}, func, result::AbstractArray{mk_float, 1}, x1) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    for i ∈ eachindex(result)
-        result[i] = func(x1[i])
-    end
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vpa}, func, result::AbstractArray{mk_float, 1}, x1, x2) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    if isa(x2, AbstractArray)
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2[i])
-        end
-    else
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2)
-        end
-    end
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vpa}, func, result::AbstractArray{mk_float, 1}, x1, x2, x3) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    if isa(x3, AbstractArray)
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2[i], x3[i])
-        end
-    else
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2[i], x3)
-        end
+        return nothing
     end
     return nothing
 end
 
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vperpvpa}, func, result::AbstractArray{mk_float, 2}) = begin
-
-    result_pdf = result
-
-    @begin_anysv_vperp_vpa_region()
-
-    @loop_vperp_vpa ivperp ivpa begin
-        result_pdf[ivpa,ivperp] = func()
-    end
-    @_anysv_subblock_synchronize()
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vperpvpa}, func, result::AbstractArray{mk_float, 2},
-                  x1) = begin
-
-    result_pdf = result
-    x1_pdf = x1
-
-    @begin_anysv_vperp_vpa_region()
-
-    @loop_vperp_vpa ivperp ivpa begin
-        result_pdf[ivpa,ivperp] = func(x1_pdf[ivpa,ivperp])
-    end
-    @_anysv_subblock_synchronize()
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vperpvpa}, func, result::AbstractArray{mk_float, 2},
-                  x1, x2) = begin
-
-    result_pdf = result
-    x1_pdf = x1
-
-    @begin_anysv_vperp_vpa_region()
-
-    if isa(x2, AbstractArray)
-        x2_pdf = x2
-    
-        @loop_vperp_vpa ivperp ivpa begin
-            result_pdf[ivpa,ivperp] = func(x1_pdf[ivpa,ivperp], x2_pdf[ivpa,ivperp])
+# 1 input parallel_map!
+@inline function parallel_map!(func::F, result::Tuple, x1::Tuple, owned_indices) where {F}
+    map(owned_indices, result, x1) do oi, field, in1
+        for r in oi[local_ranges_index]
+            for idx in r
+                field[idx] = func(in1[idx])
+            end
         end
-    else
-        @loop_vperp_vpa ivperp ivpa begin
-            result_pdf[ivpa,ivperp] = func(x1_pdf[ivpa,ivperp], x2)
-        end
-    end
-    @_anysv_subblock_synchronize()
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:vperpvpa}, func, result::AbstractArray{mk_float, 2},
-                  x1, x2, x3) = begin
-
-    result_pdf = result
-    x1_pdf = x1
-    x2_pdf = x2
-    @begin_anysv_vperp_vpa_region()
-
-    if isa(x3, AbstractArray)
-        x3_pdf = x3
-    
-        @loop_vperp_vpa ivperp ivpa begin
-            result_pdf[ivpa,ivperp] = func(x1_pdf[ivpa,ivperp], x2_pdf[ivpa,ivperp], x3_pdf[ivpa,ivperp])
-        end
-    else
-        @loop_vperp_vpa ivperp ivpa begin
-            result_pdf[ivpa,ivperp] = func(x1_pdf[ivpa,ivperp], x2_pdf[ivpa,ivperp], x3)
-        end
-    end
-    @_anysv_subblock_synchronize()
-    return nothing
-end
-
-@timeit_debug global_timer parallel_map(
-                  ::Val{:zvperpvpa}, func, result::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}}) = begin
-
-    result_ppar, result_pdf = result
-
-    @begin_anyzv_z_region()
-
-    @loop_z iz begin
-        result_ppar[iz] = func()
-    end
-
-    @begin_anyzv_z_vperp_vpa_region()
-
-    @loop_z_vperp_vpa iz ivperp ivpa begin
-        result_pdf[ivpa,ivperp,iz] = func()
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:zvperpvpa}, func, result::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}},
-                  x1) = begin
-
-    result_ppar, result_pdf = result
-    x1_ppar, x1_pdf = x1
-
-    @begin_anyzv_z_region()
-
-    @loop_z iz begin
-        result_ppar[iz] = func(x1_ppar[iz])
-    end
-
-    @begin_anyzv_z_vperp_vpa_region()
-
-    @loop_z_vperp_vpa iz ivperp ivpa begin
-        result_pdf[ivpa,ivperp,iz] = func(x1_pdf[ivpa,ivperp,iz])
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:zvperpvpa}, func, result::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}},
-                  x1, x2) = begin
-
-    result_ppar, result_pdf = result
-    x1_ppar, x1_pdf = x1
-
-    if isa(x2, Tuple)
-        x2_ppar, x2_pdf = x2
-        @begin_anyzv_z_region()
-
-        @loop_z iz begin
-            result_ppar[iz] = func(x1_ppar[iz], x2_ppar[iz])
-        end
-
-        @begin_anyzv_z_vperp_vpa_region()
-
-        @loop_z_vperp_vpa iz ivperp ivpa begin
-            result_pdf[ivpa,ivperp,iz] = func(x1_pdf[ivpa,ivperp,iz], x2_pdf[ivpa,ivperp,iz])
-        end
-    else
-        @begin_anyzv_z_region()
-
-        @loop_z iz begin
-            result_ppar[iz] = func(x1_ppar[iz], x2)
-        end
-
-        @begin_anyzv_z_vperp_vpa_region()
-
-        @loop_z_vperp_vpa iz ivperp ivpa begin
-            result_pdf[ivpa,ivperp,iz] = func(x1_pdf[ivpa,ivperp,iz], x2)
-        end
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:zvperpvpa}, func, result::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}},
-                  x1, x2, x3) = begin
-
-    result_ppar, result_pdf = result
-    x1_ppar, x1_pdf = x1
-    x2_ppar, x2_pdf = x2
-
-    if isa(x3, Tuple)
-        x3_ppar, x3_pdf = x3
-        @begin_anyzv_z_region()
-
-        @loop_z iz begin
-            result_ppar[iz] = func(x1_ppar[iz], x2_ppar[iz], x3_ppar[iz])
-        end
-
-        @begin_anyzv_z_vperp_vpa_region()
-
-        @loop_z_vperp_vpa iz ivperp ivpa begin
-            result_pdf[ivpa,ivperp,iz] = func(x1_pdf[ivpa,ivperp,iz], x2_pdf[ivpa,ivperp,iz], x3_pdf[ivpa,ivperp,iz])
-        end
-    else
-        @begin_anyzv_z_region()
-
-        @loop_z iz begin
-            result_ppar[iz] = func(x1_ppar[iz], x2_ppar[iz], x3)
-        end
-
-        @begin_anyzv_z_vperp_vpa_region()
-
-        @loop_z_vperp_vpa iz ivperp ivpa begin
-            result_pdf[ivpa,ivperp,iz] = func(x1_pdf[ivpa,ivperp,iz], x2_pdf[ivpa,ivperp,iz], x3)
-        end
-    end
-
-    return nothing
-end
-
-@timeit_debug global_timer parallel_map(
-                  ::Val{:srzvperpvpa}, func, result::AbstractArray{mk_float, 5}) = begin
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-        result[ivpa,ivperp,iz,ir,is] = func()
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:srzvperpvpa}, func, result::AbstractArray{mk_float, 5}, x1) = begin
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-        result[ivpa,ivperp,iz,ir,is] = func(x1[ivpa,ivperp,iz,ir,is])
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:srzvperpvpa}, func, result::AbstractArray{mk_float, 5}, x1, x2) = begin
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    if isa(x2, AbstractArray)
-        @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-            result[ivpa,ivperp,iz,ir,is] = func(x1[ivpa,ivperp,iz,ir,is], x2[ivpa,ivperp,iz,ir,is])
-        end
-    else
-        @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-            result[ivpa,ivperp,iz,ir,is] = func(x1[ivpa,ivperp,iz,ir,is], x2)
-        end
-    end
-
-    return nothing
-end
-@timeit_debug global_timer parallel_map(
-                  ::Val{:srzvperpvpa}, func, result::AbstractArray{mk_float, 5}, x1, x2,
-                  x3) = begin
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    if isa(x3, AbstractArray)
-        @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-            result[ivpa,ivperp,iz,ir,is] = func(x1[ivpa,ivperp,iz,ir,is], x2[ivpa,ivperp,iz,ir,is], x3[ivpa,ivperp,iz,ir,is])
-        end
-    else
-        @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-            result[ivpa,ivperp,iz,ir,is] = func(x1[ivpa,ivperp,iz,ir,is], x2[ivpa,ivperp,iz,ir,is], x3)
-        end
-    end
-
-    return nothing
-end
-
-@timeit_debug global_timer parallel_delta_x_calc(
-                  ::Val{:z}, delta_x::AbstractArray{mk_float, 1}, V, y) = begin
-
-    @begin_anyzv_z_region()
-
-    ny = length(y)
-    @loop_z iz begin
-        for iy ∈ 1:ny
-            delta_x[iz] += y[iy] * V[iz,iy]
-        end
-    end
-
-    return nothing
-end
-
-@timeit_debug global_timer parallel_delta_x_calc(
-                  ::Val{:vpa}, delta_x::AbstractArray{mk_float, 1}, V, y) = begin
-    # No parallelism needed when the implicit solve is over vpa - assume that this will be
-    # called inside a parallelised s_r_z_vperp loop.
-    ny = length(y)
-    for ivpa ∈ eachindex(delta_x)
-        for iy ∈ 1:ny
-            delta_x[ivpa] += y[iy] * V[ivpa,iy]
-        end
+        return nothing
     end
     return nothing
 end
 
-@timeit_debug global_timer parallel_delta_x_calc(
-                  ::Val{:vperpvpa}, delta_x::AbstractArray{mk_float, 2}, V,
-                  y) = begin
-
-    delta_x_pdf = delta_x
-    V_pdf = V
-
-    ny = length(y)
-
-    @begin_anysv_vperp_vpa_region()
-
-    @loop_vperp_vpa ivperp ivpa begin
-        for iy ∈ 1:ny
-            delta_x_pdf[ivpa,ivperp] += y[iy] * V_pdf[ivpa,ivperp,iy]
+# 2 input parallel_map!
+@inline function parallel_map!(func::F, result::Tuple, x1::Tuple, x2::Tuple, owned_indices) where {F}
+    map(owned_indices, result, x1, x2) do oi, field, in1, in2
+        for r in oi[local_ranges_index]
+            for idx in r
+                field[idx] = func(in1[idx], in2[idx])
+            end
         end
+        return nothing
     end
-
     return nothing
 end
 
-@timeit_debug global_timer parallel_delta_x_calc(
-                  ::Val{:zvperpvpa}, delta_x::Tuple{AbstractArray{mk_float, 1},AbstractArray{mk_float, 3}}, V,
-                  y) = begin
 
-    delta_x_ppar, delta_x_pdf = delta_x
-    V_ppar, V_pdf = V
-
-    ny = length(y)
-
-    @begin_anyzv_z_region()
-
-    @loop_z iz begin
-        for iy ∈ 1:ny
-            delta_x_ppar[iz] += y[iy] * V_ppar[iz,iy]
-        end
+@timeit_debug global_timer parallel_delta_x_calc!(delta_x::Tuple, V::Tuple, y, owned_indices) = begin
+    for iy ∈ 1:length(y)
+        y_iy = y[iy]
+        parallel_map!((dx, v) -> dx + y_iy * v, delta_x, delta_x, select_from_V(V, iy),
+                     owned_indices)
     end
-
-    @begin_anyzv_z_vperp_vpa_region()
-
-    @loop_z_vperp_vpa iz ivperp ivpa begin
-        for iy ∈ 1:ny
-            delta_x_pdf[ivpa,ivperp,iz] += y[iy] * V_pdf[ivpa,ivperp,iz,iy]
-        end
-    end
-
     return nothing
 end
 
-@timeit_debug global_timer parallel_delta_x_calc(
-                  ::Val{:srzvperpvpa}, delta_x::AbstractArray{mk_float, 5}, V, y) = begin
-
-    @begin_s_r_z_vperp_vpa_region()
-
-    ny = length(y)
-    @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-        for iy ∈ 1:ny
-            delta_x[ivpa,ivperp,iz,ir,is] += y[iy] * V[ivpa,ivperp,iz,ir,is,iy]
-        end
-    end
-
-    return nothing
+@inline function _select_last_dim(V::AbstractArray{T,N}, i::Integer) where {T,N}
+    return view(V, ntuple(_ -> (:), Val(N - 1))..., i)
 end
 
-# Utility function for neatness handling that V may be an array or a Tuple of arrays
-function select_from_V(V::Tuple, i)
-    return Tuple(selectdim(Vpart,ndims(Vpart),i) for Vpart ∈ V)
-end
-function select_from_V(V, i)
-    return selectdim(V,ndims(V),i)
+# Return a Tuple of views into the i-th Krylov basis vector for each unknown in V.
+@inline function select_from_V(V::Tuple, i::Integer)
+    return map(Vpart -> _select_last_dim(Vpart, i), V)
 end
 
-@kwdef struct nonlinear_solvers_approximate_Jacobian_vector_product!{F,LP,RP,Tx,Tr0,Tdel,Tst}
+@kwdef struct nonlinear_solvers_approximate_Jacobian_vector_product!{F,LP,RP,Tx,Tr0,Tdel,Tidx}
     residual_func!::F
     left_preconditioner::LP
     right_preconditioner::RP
@@ -1345,24 +840,35 @@ end
     rhs_delta::Tdel
     Jv_scale_factor::mk_float
     inv_Jv_scale_factor::mk_float
-    solver_type::Tst
+    owned_indices::Tidx
+    shared_comm::MPI.Comm
 end
 
 function (approx_Jv::nonlinear_solvers_approximate_Jacobian_vector_product!)(
-             v, skip_first_precon::Bool=false)
-    if !skip_first_precon
+             v::Tuple, skip_first_precon::Bool=false)
+    if !skip_first_precon && approx_Jv.right_preconditioner !== identity
+        _sync_shared(approx_Jv.shared_comm)
         approx_Jv.right_preconditioner(v)
+        _sync_shared(approx_Jv.shared_comm)
     end
 
-    solver_type = approx_Jv.solver_type
+    owned_indices = approx_Jv.owned_indices
     rhs_delta = approx_Jv.rhs_delta
 
-    parallel_map(solver_type, (x,v) -> x + approx_Jv.Jv_scale_factor * v, v, approx_Jv.x, v)
+    parallel_map!((x,v) -> x + approx_Jv.Jv_scale_factor * v, v, approx_Jv.x, v,
+                 owned_indices)
+    # The probe was written on local_ranges. The residual reads it with @loop_*.
+    _sync_shared(approx_Jv.shared_comm)
     approx_Jv.residual_func!(rhs_delta, v; krylov=true)
-    parallel_map(solver_type,
-                 (rhs_delta, residual0) -> (rhs_delta - residual0) * approx_Jv.inv_Jv_scale_factor,
-                 v, rhs_delta, approx_Jv.residual0)
-    approx_Jv.left_preconditioner(v)
+    # The residual wrote with @loop_*. Synchronize before the local_ranges read.
+    _sync_shared(approx_Jv.shared_comm)
+    parallel_map!((rhs_delta, residual0) -> (rhs_delta - residual0) * approx_Jv.inv_Jv_scale_factor,
+                 v, rhs_delta, approx_Jv.residual0, owned_indices)
+    if approx_Jv.left_preconditioner !== identity
+        _sync_shared(approx_Jv.shared_comm)
+        approx_Jv.left_preconditioner(v)
+        _sync_shared(approx_Jv.shared_comm)
+    end
     return v
 end
 
@@ -1376,11 +882,11 @@ solution, without calculating a least-squares minimisation at each step. See 'al
 MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 """
 @timeit global_timer linear_solve!(
-                         x, residual_func!::F, residual0, delta_x, v, w, solver_type::Val,
-                         norm_params; coords, rtol, atol, restart, max_restarts,
-                         left_preconditioner::LP, right_preconditioner::RP, H, c, s, g, V,
-                         rhs_delta, initial_guess, serial_solve, anysv_region,
-                         anyzv_region, initial_delta_x_is_zero) where {F,LP,RP} = begin
+                         x::Tuple, residual_func!::F, residual0::Tuple, delta_x::Tuple,
+                         v::Tuple, w::Tuple, norm_params; rtol, atol, restart, max_restarts,
+                         left_preconditioner::LP, right_preconditioner::RP, H, c, s, g,
+                         V::Tuple, rhs_delta::Tuple, initial_guess,
+                         initial_delta_x_is_zero) where {F,LP,RP} = begin
     # Solve (approximately?):
     #   J δx = residual0
 
@@ -1397,12 +903,15 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
     # by a large number `Jv_scale_factor` (in constrast to the small `epsilon` in the
     # 'usual' case where the norm does not include either reative or absolute tolerance)
     # to ensure that we get a reasonable estimate of J.v.
+    owned_indices = norm_params[1]
+    shared_comm = norm_params[2]
     approximate_Jacobian_vector_product! =
         nonlinear_solvers_approximate_Jacobian_vector_product!(;
             residual_func!, left_preconditioner, right_preconditioner, x, residual0,
-            rhs_delta, Jv_scale_factor, inv_Jv_scale_factor, solver_type)
+            rhs_delta, Jv_scale_factor, inv_Jv_scale_factor, owned_indices,
+            shared_comm)
 
-    parallel_map(solver_type, (delta_x) -> delta_x, v, delta_x)
+    parallel_map!((delta_x) -> delta_x, v, delta_x, owned_indices)
 
     # This function transforms the data stored in 'v' from δx to ≈J.δx
     # If initial δx is all-zero, we can skip a right-preconditioner evaluation because it
@@ -1411,31 +920,18 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 
     # To start with we use 'w' as a buffer to make a copy of residual0 to which we can
     # apply the left-preconditioner.
-    parallel_map(solver_type, (residual_0) -> residual_0, w, residual0)
-    left_preconditioner(w)
+    parallel_map!((residual_0) -> residual_0, w, residual0, owned_indices)
+    if left_preconditioner !== identity
+        _sync_shared(shared_comm)
+        left_preconditioner(w)
+        _sync_shared(shared_comm)
+    end
 
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
-    parallel_map(solver_type, (residual0, v) -> -residual0 - v, w, w, v)
-    beta = distributed_norm(solver_type, w, norm_params...)
-    parallel_map(solver_type, (w,beta) -> w/beta, select_from_V(V, 1), w, beta)
-    if serial_solve
-        g[1] = beta
-    elseif anysv_region
-        @begin_anysv_region()
-        @anysv_serial_region begin
-            g[1] = beta
-        end
-    elseif anyzv_region
-        @begin_anyzv_region()
-        @anyzv_serial_region begin
-            g[1] = beta
-        end
-    else
-        @begin_serial_region()
-        @serial_region begin
-            g[1] = beta
-        end
-    end
+    parallel_map!((residual0, v) -> -residual0 - v, w, w, v, owned_indices)
+    beta = distributed_norm(w, norm_params...)
+    parallel_map!(w -> w / beta, select_from_V(V, 1), w, owned_indices)
+    g[1] = beta
 
     # Set tolerance for GMRES iteration to rtol times the initial residual, unless this is
     # so small that it is smaller than atol, in which case use atol instead.
@@ -1453,119 +949,31 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
             #println("Linear ", counter)
 
             # Compute next Krylov vector
-            parallel_map(solver_type, (V) -> V, w, select_from_V(V, i))
+            parallel_map!((V) -> V, w, select_from_V(V, i), owned_indices)
             approximate_Jacobian_vector_product!(w)
 
             # Gram-Schmidt orthogonalization
             for j ∈ 1:i
-                parallel_map(solver_type, (V) -> V, v, select_from_V(V, j))
-                w_dot_Vj = distributed_dot(solver_type, w, v, norm_params...)
-                if serial_solve
-                    H[j,i] = w_dot_Vj
-                elseif anysv_region
-                    @begin_anysv_region()
-                    @anysv_serial_region begin
-                        H[j,i] = w_dot_Vj
-                    end
-                elseif anyzv_region
-                    @begin_anyzv_region()
-                    @anysv_serial_region begin
-                        H[j,i] = w_dot_Vj
-                    end
-                else
-                     @begin_serial_region()
-                     @serial_region begin
-                         H[j,i] = w_dot_Vj
-                     end
-                end
-                parallel_map(solver_type, (w, V) -> w - H[j,i] * V, w, w, select_from_V(V, j))
+                w_dot_Vj = distributed_dot(w, select_from_V(V, j), norm_params...)
+                H[j,i] = w_dot_Vj
+                parallel_map!((w, V) -> w - H[j,i] * V, w, w, select_from_V(V, j), owned_indices)
             end
-            norm_w = distributed_norm(solver_type, w, norm_params...)
-            if serial_solve
-                H[i+1,i] = norm_w
-            elseif anysv_region
-                @begin_anysv_region()
-                @anysv_serial_region begin
-                    H[i+1,i] = norm_w
-                end
-            elseif anyzv_region
-                @begin_anyzv_region()
-                @anysv_serial_region begin
-                    H[i+1,i] = norm_w
-                end
-            else
-                @begin_serial_region()
-                @serial_region begin
-                    H[i+1,i] = norm_w
-                end
-            end
-            parallel_map(solver_type, (w) -> w / H[i+1,i], select_from_V(V, i+1), w)
+            norm_w = distributed_norm(w, norm_params...)
+            H[i+1,i] = norm_w
+            parallel_map!((w) -> w / H[i+1,i], select_from_V(V, i+1), w, owned_indices)
 
-            if serial_solve
-                for j ∈ 1:i-1
-                    gamma = c[j] * H[j,i] + s[j] * H[j+1,i]
-                    H[j+1,i] = -s[j] * H[j,i] + c[j] * H[j+1,i]
-                    H[j,i] = gamma
-                end
-                delta = sqrt(H[i,i]^2 + H[i+1,i]^2)
-                s[i] = H[i+1,i] / delta
-                c[i] = H[i,i] / delta
-                H[i,i] = c[i] * H[i,i] + s[i] * H[i+1,i]
-                H[i+1,i] = 0
-                g[i+1] = -s[i] * g[i]
-                g[i] = c[i] * g[i]
-            elseif anysv_region
-                @begin_anysv_region()
-                @anysv_serial_region begin
-                    for j ∈ 1:i-1
-                        gamma = c[j] * H[j,i] + s[j] * H[j+1,i]
-                        H[j+1,i] = -s[j] * H[j,i] + c[j] * H[j+1,i]
-                        H[j,i] = gamma
-                    end
-                    delta = sqrt(H[i,i]^2 + H[i+1,i]^2)
-                    s[i] = H[i+1,i] / delta
-                    c[i] = H[i,i] / delta
-                    H[i,i] = c[i] * H[i,i] + s[i] * H[i+1,i]
-                    H[i+1,i] = 0
-                    g[i+1] = -s[i] * g[i]
-                    g[i] = c[i] * g[i]
-                end
-                @_anysv_subblock_synchronize()
-            elseif anyzv_region
-                @begin_anyzv_region()
-                @anyzv_serial_region begin
-                    for j ∈ 1:i-1
-                        gamma = c[j] * H[j,i] + s[j] * H[j+1,i]
-                        H[j+1,i] = -s[j] * H[j,i] + c[j] * H[j+1,i]
-                        H[j,i] = gamma
-                    end
-                    delta = sqrt(H[i,i]^2 + H[i+1,i]^2)
-                    s[i] = H[i+1,i] / delta
-                    c[i] = H[i,i] / delta
-                    H[i,i] = c[i] * H[i,i] + s[i] * H[i+1,i]
-                    H[i+1,i] = 0
-                    g[i+1] = -s[i] * g[i]
-                    g[i] = c[i] * g[i]
-                end
-                @_anyzv_subblock_synchronize()
-            else
-                @begin_serial_region()
-                @serial_region begin
-                    for j ∈ 1:i-1
-                        gamma = c[j] * H[j,i] + s[j] * H[j+1,i]
-                        H[j+1,i] = -s[j] * H[j,i] + c[j] * H[j+1,i]
-                        H[j,i] = gamma
-                    end
-                    delta = sqrt(H[i,i]^2 + H[i+1,i]^2)
-                    s[i] = H[i+1,i] / delta
-                    c[i] = H[i,i] / delta
-                    H[i,i] = c[i] * H[i,i] + s[i] * H[i+1,i]
-                    H[i+1,i] = 0
-                    g[i+1] = -s[i] * g[i]
-                    g[i] = c[i] * g[i]
-                end
-                @_block_synchronize()
+            for j ∈ 1:i-1
+                gamma = c[j] * H[j,i] + s[j] * H[j+1,i]
+                H[j+1,i] = -s[j] * H[j,i] + c[j] * H[j+1,i]
+                H[j,i] = gamma
             end
+            delta = sqrt(H[i,i]^2 + H[i+1,i]^2)
+            s[i] = H[i+1,i] / delta
+            c[i] = H[i,i] / delta
+            H[i,i] = c[i] * H[i,i] + s[i] * H[i+1,i]
+            H[i+1,i] = 0
+            g[i+1] = -s[i] * g[i]
+            g[i] = c[i] * g[i]
             residual = abs(g[i+1])
 
             if residual < tol
@@ -1581,8 +989,11 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 
         # The following calculates
         #    delta_x .= delta_x .+ sum(y[i] .* V[:,i] for i ∈ 1:length(y))
-        parallel_delta_x_calc(solver_type, delta_x, V, y)
-        right_preconditioner(delta_x)
+        parallel_delta_x_calc!(delta_x, V, y, owned_indices)
+        if right_preconditioner !== identity
+            _sync_shared(shared_comm)
+            right_preconditioner(delta_x)
+        end
 
         if residual < tol || restart_counter > max_restarts
             break
@@ -1592,16 +1003,17 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 
         # Store J.delta_x in the variable delta_x, to use it to calculate the new first
         # Krylov vector v/beta.
-        parallel_map(solver_type, (delta_x) -> delta_x, v, delta_x)
+        _sync_shared(shared_comm)
+        parallel_map!((delta_x) -> delta_x, v, delta_x, owned_indices)
         approximate_Jacobian_vector_product!(v)
 
         # Note residual0 has already had the left_preconditioner() applied to it.
-        parallel_map(solver_type, (residual0, v) -> -residual0 - v, v, residual0, v)
-        beta = distributed_norm(solver_type, v, norm_params...)
+        parallel_map!((residual0, v) -> -residual0 - v, v, residual0, v, owned_indices)
+        beta = distributed_norm(v, norm_params...)
         for i ∈ 2:length(y)
-            parallel_map(solver_type, () -> 0.0, select_from_V(V, i))
+            parallel_map!(() -> 0.0, select_from_V(V, i), owned_indices)
         end
-        parallel_map(solver_type, (v,beta) -> v/beta, select_from_V(V, 1), v, beta)
+        parallel_map!(v -> v / beta, select_from_V(V, 1), v, owned_indices)
     end
 
     return counter

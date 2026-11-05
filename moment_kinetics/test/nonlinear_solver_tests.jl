@@ -8,6 +8,7 @@ using moment_kinetics.coordinates: coordinate
 using moment_kinetics.looping
 using moment_kinetics.looping: setup_loop_ranges!
 using moment_kinetics.nonlinear_solvers
+using moment_kinetics.nonlinear_solvers: distributed_norm, distributed_dot
 using moment_kinetics.type_definitions: mk_float, mk_int
 
 using MPI
@@ -130,8 +131,7 @@ function linear_test()
         if !serial_solve
             @begin_r_anyzv_region()
         end
-        newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params;
-                      coords)
+        newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params)
 
         if serial_solve
             x_direct = A \ b
@@ -269,8 +269,7 @@ function nonlinear_test()
         if !serial_solve
             @begin_r_anyzv_region()
         end
-        newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params;
-                      coords)
+        newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params)
 
         rhs_func!(residual, x)
 
@@ -463,7 +462,7 @@ function nonlinear_preconditioning_test()
             @begin_r_anyzv_region()
         end
         newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params;
-                      coords, left_preconditioner=left_preconditioner,
+                      left_preconditioner=left_preconditioner,
                       right_preconditioner=right_preconditioner,
                       recalculate_preconditioner=recalculate_preconditioner)
 
@@ -480,12 +479,68 @@ function nonlinear_preconditioning_test()
     end
 end
 
+function full_vector_norm_test()
+    println("    - full_vector_norm test")
+    @testset "full_vector_norm test" begin
+        # Two unknowns with different sizes: n1 = 4, n2 = 16
+        v1 = fill(2.0, 4)
+        v2 = fill(1.0, 2, 2, 4)
+        w1 = fill(3.0, 4)
+        w2 = fill(0.5, 2, 2, 4)
+        x1 = zeros(mk_float, 4)
+        x2 = zeros(mk_float, 2, 2, 4)
+        v = (v1, v2)
+        w = (w1, w2)
+        x = (x1, x2)
+        owned_indices = ((([1:4], [1:4])), (([1:16], [1:16])))
+        buffer = zeros(mk_float, 4)
+        rtol = 0.0
+        atol = 1.0
+
+        # Default (full_vector_norm = false): unknowns weighted equally
+        # mean_sq = 0.5 * (4 * 4.0 / 4 + 16 * 1.0 / 16) = 0.5 * (4.0 + 1.0) = 2.5
+        norm_equal_unknowns = distributed_norm(
+            v, owned_indices, MPI.COMM_SELF, MPI.COMM_NULL, buffer, rtol, atol, x)
+        @test isapprox(norm_equal_unknowns, sqrt(2.5); rtol=1.0e-14)
+        @test isapprox(distributed_norm(
+            v, owned_indices, MPI.COMM_SELF, MPI.COMM_NULL, buffer, rtol, atol, x, false),
+            sqrt(2.5); rtol=1.0e-14)
+
+        # dot = 0.5 * (4 * 6.0 / 4 + 16 * 0.5 / 16) = 0.5 * (6.0 + 0.5) = 3.25
+        dot_equal_unknowns = distributed_dot(
+            v, w, owned_indices, MPI.COMM_SELF, MPI.COMM_NULL, buffer, rtol, atol, x)
+        @test isapprox(dot_equal_unknowns, 3.25; rtol=1.0e-14)
+
+        # Whole solution vector norm (full_vector_norm = true): all points weighted equally
+        # mean_sq = (4 * 4.0 + 16 * 1.0) / (4 + 16) = 32.0 / 20.0 = 1.6
+        norm_full_vec = distributed_norm(
+            v, owned_indices, MPI.COMM_SELF, MPI.COMM_NULL, buffer, rtol, atol, x, true)
+        @test isapprox(norm_full_vec, sqrt(1.6); rtol=1.0e-14)
+
+        # dot = (4 * 6.0 + 16 * 0.5) / (4 + 16) = 32.0 / 20.0 = 1.6
+        dot_full_vec = distributed_dot(
+            v, w, owned_indices, MPI.COMM_SELF, MPI.COMM_NULL, buffer, rtol, atol, x, true)
+        @test isapprox(dot_full_vec, 1.6; rtol=1.0e-14)
+
+        # Consistency: distributed_norm(v, ..., full_vector_norm) == sqrt(distributed_dot(v, v, ..., full_vector_norm))
+        for flag ∈ (false, true)
+            @test isapprox(
+                distributed_norm(v, owned_indices, MPI.COMM_SELF, MPI.COMM_NULL, buffer,
+                                 rtol, atol, x, flag),
+                sqrt(distributed_dot(v, v, owned_indices, MPI.COMM_SELF, MPI.COMM_NULL,
+                                     buffer, rtol, atol, x, flag));
+                rtol=1.0e-14)
+        end
+    end
+end
+
 function runtests()
     @testset "non-linear solvers" begin
         println("non-linear solver tests")
         linear_test()
         nonlinear_test()
         nonlinear_preconditioning_test()
+        full_vector_norm_test()
     end
 end
 

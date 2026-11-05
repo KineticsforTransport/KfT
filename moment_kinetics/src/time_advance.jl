@@ -595,6 +595,11 @@ function setup_time_info(t_input, n_variables, code_time, dt_reload,
                      use_stopnow, debug_io, electron_t_params)
 end
 
+struct ion_precon{Tpretype,Tprecon} <: preconditioner_info_type
+    preconditioner_type::Tpretype
+    preconditioners::Tprecon
+end
+
 function get_ion_preconditioners(preconditioner_type, coords, outer_coords;
                                  boundary_skip_funcs::BSF=nothing) where {BSF}
     coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ coords)
@@ -607,12 +612,12 @@ function get_ion_preconditioners(preconditioner_type, coords, outer_coords;
         preconditioners = [lu(sparse(1.0*I, total_size_coords, total_size_coords))
                            for _ ∈ CartesianIndices(reverse(outer_coord_sizes))]
     elseif preconditioner_type === Val(:none)
-        preconditioners = nothing
+        return nothing
     else
         error("Unrecognised preconditioner_type=$preconditioner_type")
     end
 
-    return preconditioners
+    return ion_precon(preconditioner_type, preconditioners)
 end
 
 function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vpa,
@@ -632,6 +637,7 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
         preconditioner_update_interval=300,
         total_its_soft_limit=50,
         adi_precon_iterations=1,
+        full_vector_norm=false,
        )
 
     nl_solver_input = Dict_to_NamedTuple(nl_solver_section)
@@ -667,10 +673,9 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
                                                                             z_solve=(electron_pdf=skip_f_electron_bc_points_in_Jacobian_z_solve,
                                                                                      electron_p=nothing)))
         nl_solver_electron_advance_params =
-            setup_nonlinear_solve(nl_solver_input, electron_coords, electron_outer_coords;
+            setup_nonlinear_solve(nl_solver_input, electron_coords;
                                   anyzv_region=true, electron_p_pdf_solve=true,
-                                  preconditioner_type=t_params.electron_preconditioner_type,
-                                  preconditioners=electron_precon)
+                                  preconditioner_info=electron_precon)
     else
         nl_solver_electron_advance_params = nothing
     end
@@ -680,11 +685,10 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
         ion_outer_coords = ()
         ion_precon_type = Val(:none)
         nl_solver_ion_advance_params =
-            setup_nonlinear_solve(nl_solver_input, ion_coords, ion_outer_coords;
-                                  preconditioner_type=ion_precon_type,
-                                  preconditioners=get_ion_preconditioners(ion_precon_type,
-                                                                          ion_coords,
-                                                                          ion_outer_coords))
+            setup_nonlinear_solve(nl_solver_input, ion_coords;
+                                  preconditioner_info=get_ion_preconditioners(ion_precon_type,
+                                                                              ion_coords,
+                                                                              ion_outer_coords))
     else
         nl_solver_ion_advance_params = nothing
     end
@@ -696,11 +700,11 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
         vpa_outer_coords = (composition.n_ion_species, r, z, vperp)
         vpa_precon_type = Val(:none)
         nl_solver_vpa_advection_params =
-            setup_nonlinear_solve(nl_solver_input, vpa_coords, vpa_outer_coords;
-                                  serial_solve=true, preconditioner_type=vpa_precon_type,
-                                  preconditioners=get_ion_preconditioners(vpa_precon_type,
-                                                                          vpa_coords,
-                                                                          vpa_outer_coords))
+            setup_nonlinear_solve(nl_solver_input, vpa_coords;
+                                  serial_solve=true,
+                                  preconditioner_info=get_ion_preconditioners(vpa_precon_type,
+                                                                              vpa_coords,
+                                                                              vpa_outer_coords))
     else
         nl_solver_vpa_advection_params = nothing
     end
