@@ -27,7 +27,8 @@ Useful references:
 module nonlinear_solvers
 
 export setup_nonlinear_solve, gather_nonlinear_solver_counters!,
-       reset_nonlinear_per_stage_counters!, newton_solve!
+       reset_nonlinear_per_stage_counters!, newton_solve!,
+       preconditioner_info_type
 
 using ..array_allocation: allocate_float, allocate_shared_float
 using ..communication
@@ -45,7 +46,9 @@ using MPI
 using SparseArrays
 using StatsBase: mean
 
-struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon,Tpretype,Towned}
+abstract type preconditioner_info_type end
+
+struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon<:Union{preconditioner_info_type,Nothing},Towned}
     rtol::mk_float
     atol::mk_float
     nonlinear_max_iterations::mk_int
@@ -68,15 +71,11 @@ struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon,Tpretype,Towned}
     global_linear_iterations::Base.RefValue{mk_int}
     global_precon_iterations::Base.RefValue{mk_int}
     solves_since_precon_update::Base.RefValue{mk_int}
-    precon_dt::Base.RefValue{mk_float}
-    precon_lowerz_vcut_inds::Vector{mk_int}
-    precon_upperz_vcut_inds::Vector{mk_int}
     max_nonlinear_iterations_this_step::Base.RefValue{mk_int}
     max_linear_iterations_this_step::Base.RefValue{mk_int}
     total_its_soft_limit::mk_int
-    preconditioner_type::Tpretype
     preconditioner_update_interval::mk_int
-    preconditioners::Tprecon
+    preconditioner_info::Tprecon
     # Ranks in `shared_comm` divide the local entries of each unknown (`local_ranges`).
     # `distributed_comm` is `MPI.COMM_NULL` except on rank 0 of `shared_comm`.
     # `owned_indices` is one tuple entry per unknown array. Each entry is the
@@ -104,17 +103,15 @@ array memory layout, which is fastest-varying first).
 The nonlinear solver will be called inside a loop over `outer_coords`, so we might need
 for example a preconditioner object for each point in that outer loop.
 """
-function setup_nonlinear_solve(nl_solver_input, coords, outer_coords=();
-                               section_name="nonlinear_solver", serial_solve=false,
+function setup_nonlinear_solve(nl_solver_input, coords; serial_solve=false,
                                anysv_region=false, anyzv_region=false,
-                               electron_p_pdf_solve=false, preconditioner_type=Val(:none),
-                               preconditioners=nothing,
+                               electron_p_pdf_solve=false,
+                               preconditioner_info=nothing,
                                full_vector_norm=get(nl_solver_input, :full_vector_norm, false))
     shared_comm, distributed_comm =
         _solver_comms(coords, serial_solve, anysv_region, anyzv_region)
 
     coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ coords)
-    outer_coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ outer_coords)
 
     linear_restart = nl_solver_input.linear_restart
 
@@ -122,7 +119,6 @@ function setup_nonlinear_solve(nl_solver_input, coords, outer_coords=();
                                           electron_p_pdf_solve=electron_p_pdf_solve)
     reduction_buffer = zeros(mk_float, 2 * length(owned_indices))
 
-    n_vcut_inds = 0
     # Rank local variables; only V is a shared allocate when distributed.
     H = allocate_float(linear_restart + 1, linear_restart)
     c = allocate_float(linear_restart + 1)
@@ -140,7 +136,6 @@ function setup_nonlinear_solve(nl_solver_input, coords, outer_coords=();
                                       :linear_restart_plus_one=>linear_restart+1,
                                       comm=shared_comm)
         V = (V_ppar, V_pdf)
-        n_vcut_inds = prod(outer_coord_sizes)
     else
         V = allocate_shared_float(reverse(coords)...,
                                   :linear_restart_plus_one=>linear_restart + 1;
@@ -161,10 +156,10 @@ function setup_nonlinear_solve(nl_solver_input, coords, outer_coords=();
                           linear_initial_guess, Ref(0), Ref(0), Ref(0), Ref(0), Ref(0),
                           Ref(0), Ref(0), Ref(0),
                           Ref(nl_solver_input.preconditioner_update_interval),
-                          Ref(mk_float(0.0)), zeros(mk_int, n_vcut_inds),
-                          zeros(mk_int, n_vcut_inds), Ref(0), Ref(0),
-                          nl_solver_input.total_its_soft_limit, preconditioner_type,
-                          nl_solver_input.preconditioner_update_interval, preconditioners,
+                          Ref(0), Ref(0),
+                          nl_solver_input.total_its_soft_limit,
+                          nl_solver_input.preconditioner_update_interval,
+                          preconditioner_info,
                           shared_comm, distributed_comm, owned_indices,
                           reduction_buffer, full_vector_norm)
 end
@@ -432,7 +427,7 @@ end
 
 """
     newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, w, nl_solver_params;
-                  left_preconditioner=identity, right_preconditioner=identity, coords)
+                  left_preconditioner=identity, right_preconditioner=identity)
 
 `x` is the initial guess at the solution, and is overwritten by the result of the Newton
 solve.
@@ -450,9 +445,6 @@ used internally.
 passed a function that solves \$P.x = b\$ where \$P\$ is the preconditioner matrix, \$b\$
 is given by the values passed to the function as the argument, and the result \$x\$ is
 returned by overwriting the argument.
-
-`coords` is a NamedTuple containing the `coordinate` structs corresponding to each
-dimension in `x`.
 
 
 Tolerances
@@ -494,8 +486,7 @@ is not necessary to have a very tight `linear_rtol` for the GMRES solve.
                          x, residual_func!::F, residual, delta_x, rhs_delta, v, w,
                          nl_solver_params; left_preconditioner::LP=identity,
                          right_preconditioner::RP=identity,
-                         recalculate_preconditioner::RECALC=nothing,
-                         coords=nothing) where {F,LP,RP,RECALC} = begin
+                         recalculate_preconditioner::RECALC=nothing) where {F,LP,RP,RECALC} = begin
     rtol = nl_solver_params.rtol
     atol = nl_solver_params.atol
     owned_indices = nl_solver_params.owned_indices

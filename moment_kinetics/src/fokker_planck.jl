@@ -1140,7 +1140,7 @@ function fokker_planck_self_collisions_backward_euler_step!(Fold, delta_t, ms, n
         Fv = fkpl_arrays.Fv
         Fw = fkpl_arrays.Fw
         success = newton_solve!(Fnew, residual_func!, Fresidual, F_delta_x, F_rhs_delta, Fv, Fw, nl_solver_params;
-                    coords, right_preconditioner=right_preconditioner)
+                    right_preconditioner=right_preconditioner)
         # apply BCs on result, if non-natural BCs are imposed
         # should only introduce error of order ~ atol
         enforce_vpavperp_BCs!(Fnew,vpa,vperp,vpa_spectral,vperp_spectral)

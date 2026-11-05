@@ -131,8 +131,7 @@ function linear_test()
         if !serial_solve
             @begin_r_anyzv_region()
         end
-        newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params;
-                      coords)
+        newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params)
 
         if serial_solve
             x_direct = A \ b
@@ -270,8 +269,7 @@ function nonlinear_test()
         if !serial_solve
             @begin_r_anyzv_region()
         end
-        newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params;
-                      coords)
+        newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params)
 
         rhs_func!(residual, x)
 
@@ -464,7 +462,7 @@ function nonlinear_preconditioning_test()
             @begin_r_anyzv_region()
         end
         newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params;
-                      coords, left_preconditioner=left_preconditioner,
+                      left_preconditioner=left_preconditioner,
                       right_preconditioner=right_preconditioner,
                       recalculate_preconditioner=recalculate_preconditioner)
 

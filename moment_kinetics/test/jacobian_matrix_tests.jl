@@ -486,7 +486,7 @@ function test_get_pdf_term(test_input::AbstractDict, label::String, get_term::Fu
                                                 vperp, vpa)
         end
 
-        jacobian = nl_solver_params.electron_advance.preconditioners[1][2]
+        jacobian = nl_solver_params.electron_advance.preconditioner_info.preconditioners[1][2]
         jacobian_initialize_identity!(jacobian)
 
         separate_zeroth_moment = (:zeroth_moment ∈ jacobian.state_vector_entries)
@@ -990,7 +990,7 @@ function test_get_p_term(test_input::AbstractDict, label::String, get_term::Func
                                       vpa_spectral)
         end
 
-        jacobian = nl_solver_params.electron_advance.preconditioners[1][2]
+        jacobian = nl_solver_params.electron_advance.preconditioner_info.preconditioners[1][2]
         jacobian_initialize_identity!(jacobian)
 
         separate_zeroth_moment = (:zeroth_moment ∈ jacobian.state_vector_entries)
@@ -1442,7 +1442,7 @@ function test_electron_kinetic_equation(test_input; rtol=(5.0e2*epsilon)^2)
                                                 vperp, vpa)
         end
 
-        jacobian = nl_solver_params.electron_advance.preconditioners[1][2]
+        jacobian = nl_solver_params.electron_advance.preconditioner_info.preconditioners[1][2]
         separate_zeroth_moment = (:zeroth_moment ∈ jacobian.state_vector_entries)
         separate_first_moment = (:first_moment ∈ jacobian.state_vector_entries)
         separate_second_moment = (:second_moment ∈ jacobian.state_vector_entries)
@@ -1931,7 +1931,7 @@ function test_electron_wall_bc(test_input; atol=(10.0*epsilon)^2)
                                vpa_advect[:,ivperp,iz,ir], vpa_spectral)
         end
 
-        jacobian = nl_solver_params.electron_advance.preconditioners[1][2]
+        jacobian = nl_solver_params.electron_advance.preconditioner_info.preconditioners[1][2]
         separate_zeroth_moment = (:zeroth_moment ∈ jacobian.state_vector_entries)
         separate_first_moment = (:first_moment ∈ jacobian.state_vector_entries)
         separate_second_moment = (:second_moment ∈ jacobian.state_vector_entries)

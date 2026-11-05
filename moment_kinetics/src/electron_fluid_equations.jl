@@ -559,7 +559,7 @@ end
         w = @view scratch_dummy.buffer_zrs_1[:,1,1]
 
         success = newton_solve!(p_out, residual_func!, residual, delta_x, rhs_delta, v, w,
-                                nl_solver_params; coords=(z=z,))
+                                nl_solver_params)
         if !success
             return success
         end
