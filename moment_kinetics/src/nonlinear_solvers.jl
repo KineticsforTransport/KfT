@@ -32,19 +32,14 @@ export setup_nonlinear_solve, gather_nonlinear_solver_counters!,
 
 using ..array_allocation: allocate_float, allocate_shared_float
 using ..communication
-using ..communication: _anyzv_subblock_synchronize
 using ..coordinates: coordinate
 using ..debugging: @debug_shared_array
-using ..input_structs
-using ..jacobian_matrices: create_jacobian_info
 using ..looping
 using ..timer_utils
 using ..type_definitions: mk_float, mk_int
 
 using LinearAlgebra
 using MPI
-using SparseArrays
-using StatsBase: mean
 
 abstract type preconditioner_info_type end
 
@@ -95,28 +90,22 @@ const local_ranges_index = 1 # index for local points in owned_indices
 const owned_ranges_index = 2 # index for points without duplicates in owned_indices
 
 """
-
-`coords` is a NamedTuple of coordinates corresponding to the dimensions of the variable
-that will be solved. Callers pass `coords` slowest-varying first (the reverse of the
-array memory layout, which is fastest-varying first).
-
-The nonlinear solver will be called inside a loop over `outer_coords`, so we might need
-for example a preconditioner object for each point in that outer loop.
+`coords` is a `Tuple` of `NamedTuple`s of coordinates (one `NamedTuple` per unknown),
+or a single `NamedTuple` wrapped by the convenience method below. Callers pass `coords`
+slowest-varying first (the reverse of the array memory layout, which is fastest-varying
+first).
 """
-function setup_nonlinear_solve(nl_solver_input, coords; serial_solve=false,
+function setup_nonlinear_solve(nl_solver_input, coords::Tuple;
+                               serial_solve=false,
                                anysv_region=false, anyzv_region=false,
-                               electron_p_pdf_solve=false,
                                preconditioner_info=nothing,
                                full_vector_norm=get(nl_solver_input, :full_vector_norm, false))
     shared_comm, distributed_comm =
-        _solver_comms(coords, serial_solve, anysv_region, anyzv_region)
-
-    coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ coords)
+        _solver_comms(coords[1], serial_solve, anysv_region, anyzv_region)
 
     linear_restart = nl_solver_input.linear_restart
 
-    owned_indices = _solver_owned_indices(coords, shared_comm;
-                                          electron_p_pdf_solve=electron_p_pdf_solve)
+    owned_indices = _solver_owned_indices(coords, shared_comm)
     reduction_buffer = zeros(mk_float, 2 * length(owned_indices))
 
     # Rank local variables; only V is a shared allocate when distributed.
@@ -128,18 +117,15 @@ function setup_nonlinear_solve(nl_solver_input, coords; serial_solve=false,
     c .= 0.0
     s .= 0.0
     g .= 0.0
-    if shared_comm == MPI.COMM_SELF
-        V = allocate_float(reverse(coord_sizes)..., linear_restart+1)
-    elseif electron_p_pdf_solve
-        V_ppar = allocate_shared_float(coords.z, :linear_restart_plus_one=>linear_restart+1; comm=shared_comm)
-        V_pdf = allocate_shared_float(reverse(coords)...,
-                                      :linear_restart_plus_one=>linear_restart+1,
-                                      comm=shared_comm)
-        V = (V_ppar, V_pdf)
-    else
-        V = allocate_shared_float(reverse(coords)...,
-                                  :linear_restart_plus_one=>linear_restart + 1;
-                                  comm=shared_comm)
+    V = map(coords) do c_unk
+        if shared_comm == MPI.COMM_SELF
+            coord_sizes = Tuple(isa(coord, coordinate) ? coord.n : coord for coord ∈ c_unk)
+            return allocate_float(reverse(coord_sizes)..., linear_restart + 1)
+        else
+            return allocate_shared_float(reverse(c_unk)...,
+                                         :linear_restart_plus_one=>linear_restart + 1;
+                                         comm=shared_comm)
+        end
     end
     for i ∈ 1:linear_restart+1
         parallel_map!(() -> 0.0, select_from_V(V, i), owned_indices)
@@ -162,6 +148,21 @@ function setup_nonlinear_solve(nl_solver_input, coords; serial_solve=false,
                           preconditioner_info,
                           shared_comm, distributed_comm, owned_indices,
                           reduction_buffer, full_vector_norm)
+end
+
+function setup_nonlinear_solve(nl_solver_input, coords::NamedTuple;
+                               serial_solve=false,
+                               anysv_region=false, anyzv_region=false,
+                               electron_p_pdf_solve=false,
+                               preconditioner_info=nothing,
+                               full_vector_norm=get(nl_solver_input, :full_vector_norm, false))
+    coords_tuple = electron_p_pdf_solve ? ((z=coords.z,), coords) : (coords,)
+    return setup_nonlinear_solve(nl_solver_input, coords_tuple;
+                                 serial_solve=serial_solve,
+                                 anysv_region=anysv_region,
+                                 anyzv_region=anyzv_region,
+                                 preconditioner_info=preconditioner_info,
+                                 full_vector_norm=full_vector_norm)
 end
 
 # `shared_comm` is the communicator whose ranks share each unknown array.
@@ -190,12 +191,13 @@ function _distributed_comm_for_lead_rank(shared_comm::MPI.Comm, lead_comm::MPI.C
 end
 
 """
-    _solver_owned_indices(coords, shared_comm; electron_p_pdf_solve)
+    _solver_owned_indices(coords::Tuple, shared_comm::MPI.Comm)
 
-Flat index ranges for this rank. Callers pass `coords` slowest-varying first. The
-ranges index array memory, which is fastest-varying first. The entries are divided across
-`shared_comm`. A rank with `MPI.COMM_NULL`, or a rank in the communicator that receives
-no entries, gets an empty list. Membership of `shared_comm` is unchanged.
+Flat index ranges for this rank. Callers pass `coords` as a `Tuple` of coordinate
+`NamedTuple`s (one per unknown, slowest-varying first). The ranges index array memory,
+which is fastest-varying first. The entries are divided across `shared_comm`. A rank with
+`MPI.COMM_NULL`, or a rank in the communicator that receives no entries, gets an empty
+list. Membership of `shared_comm` is unchanged.
 
 For each unknown the pair `(local_ranges, owned_ranges)` is returned. The full local
 array (`1:prod(dim_sizes)`) is partitioned once across `shared_comm` to form
@@ -205,26 +207,12 @@ non-duplicated block points (omitting the upper boundary point on every block ex
 last along each distributed coordinate), guaranteeing `owned_ranges ⊆ local_ranges` on
 every rank without shifting the inter-rank cut. Consecutive indices are stored as one
 range.
-
-A single unknown returns a one-element tuple whose element is that pair. Implicit `vpa`
-advection, Braginskii conduction, Fokker-Planck, and the implicit ion advance use this
-form.
-
-`electron_p_pdf_solve` returns two pairs, pressure then the distribution. Pressure uses
-`coords.z` only. The distribution uses every dimension in `coords`. The pairs are split
-separately, so each unknown keeps its own norm.
 """
-function _solver_owned_indices(coords, shared_comm::MPI.Comm; electron_p_pdf_solve::Bool)
-    if !electron_p_pdf_solve
-        dim_sizes, exclude_last = _sizes_and_excluded(coords)
-        return (_local_and_owned_ranges(dim_sizes, exclude_last, shared_comm),)
+function _solver_owned_indices(coords::Tuple, shared_comm::MPI.Comm)
+    return map(coords) do c
+        dim_sizes, exclude_last = _sizes_and_excluded(c)
+        return _local_and_owned_ranges(dim_sizes, exclude_last, shared_comm)
     end
-    z = coords.z
-    pressure_ranges = _local_and_owned_ranges(
-        (Int(z.n),), (_dimension_excludes_boundary(z),), shared_comm)
-    pdf_sizes, pdf_exclude = _sizes_and_excluded(coords)
-    pdf_ranges = _local_and_owned_ranges(pdf_sizes, pdf_exclude, shared_comm)
-    return pressure_ranges, pdf_ranges
 end
 
 # Split the full local array first, then intersect with `owned_block` so every rank's
@@ -426,11 +414,13 @@ total.
 end
 
 """
-    newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, w, nl_solver_params;
-                  left_preconditioner=identity, right_preconditioner=identity)
+    newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params;
+                  left_preconditioner=identity, right_preconditioner=identity,
+                  recalculate_preconditioner=nothing)
 
-`x` is the initial guess at the solution, and is overwritten by the result of the Newton
-solve.
+`x` is the initial guess at the solution (`Tuple` of `AbstractArray`s, or a single
+`AbstractArray` wrapped by the convenience method below), and is overwritten by the result
+of the Newton solve.
 
 `rhs_func!(residual, x)` is the function we are trying to find a solution of. It calculates
 ```math
@@ -438,8 +428,8 @@ solve.
 ```
 where we are trying to solve \$F(x)=0\$.
 
-`residual`, `delta_x`, `rhs_delta` and `w` are buffer arrays, with the same size as `x`,
-used internally.
+`residual`, `delta_x`, `rhs_delta`, `v`, and `w` are buffer arrays (or `Tuple`s of buffer
+arrays), with the same size as `x`, used internally.
 
 `left_preconditioner` or `right_preconditioner` apply preconditioning. They should be
 passed a function that solves \$P.x = b\$ where \$P\$ is the preconditioner matrix, \$b\$
@@ -483,7 +473,8 @@ As the GMRES solve is only used to get the right `direction' for the next Newton
 is not necessary to have a very tight `linear_rtol` for the GMRES solve.
 """
 @timeit global_timer newton_solve!(
-                         x, residual_func!::F, residual, delta_x, rhs_delta, v, w,
+                         x::Tuple, residual_func!::F, residual::Tuple, delta_x::Tuple,
+                         rhs_delta::Tuple, v::Tuple, w::Tuple,
                          nl_solver_params; left_preconditioner::LP=identity,
                          right_preconditioner::RP=identity,
                          recalculate_preconditioner::RECALC=nothing) where {F,LP,RP,RECALC} = begin
@@ -648,15 +639,34 @@ is not necessary to have a very tight `linear_rtol` for the GMRES solve.
     return success
 end
 
+function newton_solve!(x::AbstractArray, residual_func!::F, residual::AbstractArray,
+                       delta_x::AbstractArray, rhs_delta::AbstractArray,
+                       v::AbstractArray, w::AbstractArray, nl_solver_params;
+                       left_preconditioner::LP=identity,
+                       right_preconditioner::RP=identity,
+                       recalculate_preconditioner::RECALC=nothing) where {F,LP,RP,RECALC}
+    wrapped_residual_func!(res_tuple::Tuple, x_tuple::Tuple; kwargs...) =
+        residual_func!(res_tuple[1], x_tuple[1]; kwargs...)
+    wrapped_left_precon = left_preconditioner === identity ? identity :
+        (v_tuple::Tuple -> left_preconditioner(v_tuple[1]))
+    wrapped_right_precon = right_preconditioner === identity ? identity :
+        (v_tuple::Tuple -> right_preconditioner(v_tuple[1]))
+    return newton_solve!((x,), wrapped_residual_func!, (residual,), (delta_x,),
+                         (rhs_delta,), (v,), (w,), nl_solver_params;
+                         left_preconditioner=wrapped_left_precon,
+                         right_preconditioner=wrapped_right_precon,
+                         recalculate_preconditioner=recalculate_preconditioner)
+end
+
 # Weighted RMS of the scaled entries. `residual` is the vector being measured
 # and `x` is the current Newton state, used as the scale `rtol*abs(x)+atol`.
-# Works with a tuple of arrays; a bare array is wrapped as a one-element list.
+# Works with a tuple of arrays.
 # When `full_vector_norm == false` (default), each unknown is divided by its own
 # point count, then those mean squares are averaged so that multiple unknowns
 # have equal weight. When `full_vector_norm == true`, all owned points across all
 # unknowns are summed together and divided by the total owned point count.
-@timeit_debug global_timer distributed_norm(residual, owned_indices,
-                          shared_comm, distributed_comm, buffer, rtol, atol, x,
+@timeit_debug global_timer distributed_norm(residual::Tuple, owned_indices,
+                          shared_comm, distributed_comm, buffer, rtol, atol, x::Tuple,
                           full_vector_norm::Bool=false) = begin
     mean = _weighted_mean(residual, residual, owned_indices, shared_comm,
                           distributed_comm, buffer, rtol, atol, x,
@@ -667,8 +677,8 @@ end
 end
 
 # Same mean as `distributed_norm`, with the product of `v` and `w` as the weight.
-@timeit_debug global_timer distributed_dot(v, w, owned_indices,
-                          shared_comm, distributed_comm, buffer, rtol, atol, x,
+@timeit_debug global_timer distributed_dot(v::Tuple, w::Tuple, owned_indices,
+                          shared_comm, distributed_comm, buffer, rtol, atol, x::Tuple,
                           full_vector_norm::Bool=false) = begin
     return _weighted_mean(v, w, owned_indices, shared_comm,
                           distributed_comm, buffer, rtol, atol, x,
@@ -683,14 +693,11 @@ end
 # the per-unknown means are averaged; when true, total sum is divided by total count.
 # `map` over the tuples unrolls via tuple recursion so heterogeneous unknown tuples
 # (e.g. 1D pressure + 3D pdf) specialize and SIMD-vectorize per unknown.
-@inline function _weighted_mean(weight::F, v, w, owned_indices, shared_comm,
-                                distributed_comm, buffer, rtol, atol, x,
+@inline function _weighted_mean(weight::F, v::Tuple, w::Tuple, owned_indices, shared_comm,
+                                distributed_comm, buffer, rtol, atol, x::Tuple,
                                 full_vector_norm::Bool=false) where {F}
-    vs = v isa AbstractArray ? (v,) : v
-    ws = w isa AbstractArray ? (w,) : w
-    xs = x isa AbstractArray ? (x,) : x
-    n = length(xs)
-    totals = map(owned_indices, vs, ws, xs) do oi, vk, wk, xk
+    n = length(x)
+    totals = map(owned_indices, v, w, x) do oi, vk, wk, xk
         s = zero(mk_float)
         c = 0
         # Owned ranges omit the boundary point duplicated on the next block.
@@ -766,10 +773,9 @@ function _reduce_sums!(buffer, shared_comm, distributed_comm)
 end
 
 # 0 input parallel_map!
-@inline function parallel_map!(func::F, result, owned_indices) where {F}
+@inline function parallel_map!(func::F, result::Tuple, owned_indices) where {F}
     value = func()
-    results = result isa AbstractArray ? (result,) : result
-    map(owned_indices, results) do oi, field
+    map(owned_indices, result) do oi, field
         for r in oi[local_ranges_index]
             for idx in r
                 field[idx] = value
@@ -781,10 +787,8 @@ end
 end
 
 # 1 input parallel_map!
-@inline function parallel_map!(func::F, result, x1, owned_indices) where {F}
-    results = result isa AbstractArray ? (result,) : result
-    x1s = x1 isa AbstractArray ? (x1,) : x1
-    map(owned_indices, results, x1s) do oi, field, in1
+@inline function parallel_map!(func::F, result::Tuple, x1::Tuple, owned_indices) where {F}
+    map(owned_indices, result, x1) do oi, field, in1
         for r in oi[local_ranges_index]
             for idx in r
                 field[idx] = func(in1[idx])
@@ -796,34 +800,20 @@ end
 end
 
 # 2 input parallel_map!
-@inline function parallel_map!(func::F, result, x1, x2, owned_indices) where {F}
-    results = result isa AbstractArray ? (result,) : result
-    x1s = x1 isa AbstractArray ? (x1,) : x1
-    if x2 isa AbstractArray || x2 isa Tuple
-        x2s = x2 isa AbstractArray ? (x2,) : x2
-        map(owned_indices, results, x1s, x2s) do oi, field, in1, in2
-            for r in oi[local_ranges_index]
-                for idx in r
-                    field[idx] = func(in1[idx], in2[idx])
-                end
+@inline function parallel_map!(func::F, result::Tuple, x1::Tuple, x2::Tuple, owned_indices) where {F}
+    map(owned_indices, result, x1, x2) do oi, field, in1, in2
+        for r in oi[local_ranges_index]
+            for idx in r
+                field[idx] = func(in1[idx], in2[idx])
             end
-            return nothing
         end
-    else
-        map(owned_indices, results, x1s) do oi, field, in1
-            for r in oi[local_ranges_index]
-                for idx in r
-                    field[idx] = func(in1[idx], x2)
-                end
-            end
-            return nothing
-        end
+        return nothing
     end
     return nothing
 end
 
 
-@timeit_debug global_timer parallel_delta_x_calc!(delta_x, V, y, owned_indices) = begin
+@timeit_debug global_timer parallel_delta_x_calc!(delta_x::Tuple, V::Tuple, y, owned_indices) = begin
     for iy ∈ 1:length(y)
         y_iy = y[iy]
         parallel_map!((dx, v) -> dx + y_iy * v, delta_x, delta_x, select_from_V(V, iy),
@@ -832,12 +822,13 @@ end
     return nothing
 end
 
-# Utility function for neatness handling that V may be an array or a Tuple of arrays
-function select_from_V(V::Tuple, i)
-    return map(Vpart -> selectdim(Vpart, ndims(Vpart), i), V)
+@inline function _select_last_dim(V::AbstractArray{T,N}, i::Integer) where {T,N}
+    return view(V, ntuple(_ -> (:), Val(N - 1))..., i)
 end
-function select_from_V(V, i)
-    return selectdim(V,ndims(V),i)
+
+# Return a Tuple of views into the i-th Krylov basis vector for each unknown in V.
+@inline function select_from_V(V::Tuple, i::Integer)
+    return map(Vpart -> _select_last_dim(Vpart, i), V)
 end
 
 @kwdef struct nonlinear_solvers_approximate_Jacobian_vector_product!{F,LP,RP,Tx,Tr0,Tdel,Tidx}
@@ -854,7 +845,7 @@ end
 end
 
 function (approx_Jv::nonlinear_solvers_approximate_Jacobian_vector_product!)(
-             v, skip_first_precon::Bool=false)
+             v::Tuple, skip_first_precon::Bool=false)
     if !skip_first_precon && approx_Jv.right_preconditioner !== identity
         _sync_shared(approx_Jv.shared_comm)
         approx_Jv.right_preconditioner(v)
@@ -891,10 +882,11 @@ solution, without calculating a least-squares minimisation at each step. See 'al
 MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 """
 @timeit global_timer linear_solve!(
-                         x, residual_func!::F, residual0, delta_x, v, w,
-                         norm_params; rtol, atol, restart, max_restarts,
-                         left_preconditioner::LP, right_preconditioner::RP, H, c, s, g, V,
-                         rhs_delta, initial_guess, initial_delta_x_is_zero) where {F,LP,RP} = begin
+                         x::Tuple, residual_func!::F, residual0::Tuple, delta_x::Tuple,
+                         v::Tuple, w::Tuple, norm_params; rtol, atol, restart, max_restarts,
+                         left_preconditioner::LP, right_preconditioner::RP, H, c, s, g,
+                         V::Tuple, rhs_delta::Tuple, initial_guess,
+                         initial_delta_x_is_zero) where {F,LP,RP} = begin
     # Solve (approximately?):
     #   J δx = residual0
 
@@ -938,7 +930,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
     parallel_map!((residual0, v) -> -residual0 - v, w, w, v, owned_indices)
     beta = distributed_norm(w, norm_params...)
-    parallel_map!((w,beta) -> w/beta, select_from_V(V, 1), w, beta, owned_indices)
+    parallel_map!(w -> w / beta, select_from_V(V, 1), w, owned_indices)
     g[1] = beta
 
     # Set tolerance for GMRES iteration to rtol times the initial residual, unless this is
@@ -1021,7 +1013,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
         for i ∈ 2:length(y)
             parallel_map!(() -> 0.0, select_from_V(V, i), owned_indices)
         end
-        parallel_map!((v,beta) -> v/beta, select_from_V(V, 1), v, beta, owned_indices)
+        parallel_map!(v -> v / beta, select_from_V(V, 1), v, owned_indices)
     end
 
     return counter
