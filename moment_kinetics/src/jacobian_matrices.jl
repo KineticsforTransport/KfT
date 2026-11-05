@@ -81,7 +81,7 @@ function get_MPIStaticCondensations_Dimensions_from_coordinates(coordinates)
     return [create_dimension(; name=String(c.name), nelement=c.nelement_global,
                              ngrid=c.ngrid, nrank=c.nrank, irank=c.irank,
                              periodic=c.periodic, dense_boundaries=(c.bc=="wall"))
-            for c ∈ coordinates if c.n > 1]
+            for c ∈ coordinates]
 end
 
 """
@@ -182,7 +182,8 @@ Vector or Tuple of Symbols giving the dimensions of the variable; the third elem
 evolution equation (`false`).
 
 `coords` is a NamedTuple giving all the needed coordinates, `spectral` is a NamedTuple
-with all the needed 'spectral' objects.
+with all the needed 'spectral' objects. `coords` should be ordered from fastest to slowest
+varying.
 
 `comm` is the communicator to use to allocate shared memory arrays. `synchronize` is the
 function used to synchronize between shared-memory operations.
@@ -208,7 +209,7 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
                               synchronize::Union{Function,Nothing}=_block_synchronize,
                               boundary_skip_funcs::BSF=nothing, both_zero_flags=nothing,
                               handle_overlaps::Val=Val(true), sparse_storage::Bool=true,
-                              blockskyline_topleft::Bool=false, kwargs...) where {BSF}
+                              blockskyline_storage::Bool=false, kwargs...) where {BSF}
 
     @debug_consistency_checks all(all(d ∈ keys(coords) for d ∈ v[2]) for v ∈ values(kwargs)) || error("Some coordinate required by the state variables were not included in `coords`.")
 
@@ -236,7 +237,9 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
         # one would not have any zero blocks even if we were to handle this special case.
         sparse_storage = false
     end
-    if (state_vector_coords[1][end].periodic && state_vector_coords[1][end].irank == 0
+    if (sparse_storage && handle_overlaps === Val(false)
+            && state_vector_coords[1][end].periodic
+            && state_vector_coords[1][end].irank == 0
             && state_vector_coords[1][end].nrank == 1)
         # Periodic, but this cannot be handled by the structure of BlockSkylineMatrix at
         # the moment, so revert to dense matrices.
@@ -345,23 +348,15 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
         off_diagonals = mk_int[(i - 1) % 2 + 1 for i ∈ 1:2*outer_nelement-1]
         return row_block_sizes, column_block_sizes, off_diagonals
     end
+    if sparse_storage && !blockskyline_storage
+        mpisc_dims =
+            get_MPIStaticCondensations_Dimensions_from_coordinates(values(coords))
+    end
     if comm === nothing
         # No shared memory needed
         function get_sub_matrix(i, j)
             if sparse_storage
-                if i == 1 && j == 1 && !blockskyline_topleft
-                    # Create FixedSparseCSC buffer for the main distribution-function
-                    # block of the Jacobian matrix.
-                    mpisc_dims =
-                        get_MPIStaticCondensations_Dimensions_from_coordinates(state_vector_coords[i])
-                    jac_comm = comm
-                    jac_allocate_float = (args...; comm=nothing, kwargs...) -> allocate_float(args...; kwargs...)
-                    jac_allocate_int = (args...; comm=nothing, kwargs...) -> allocate_int(args...; kwargs...)
-                    return get_shared_sparse_matrix_csc_buffer(mpisc_dims, MPI.COMM_SELF,
-                                                               jac_allocate_float,
-                                                               jac_allocate_int;
-                                                               ind_type=mk_int)
-                else
+                if blockskyline_storage
                     if state_vector_coords[i][end].name != state_vector_coords[j][end].name
                         error("Cannot create block-banded matrix for Jacobian block for "
                               * "block ($i,$j) when outer coordinates "
@@ -377,6 +372,18 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
                                                                                   sum(column_block_sizes)),
                                                         row_block_sizes, column_block_sizes,
                                                         (off_diagonals,off_diagonals))
+                else
+                    # Create FixedSparseCSC buffer for the main distribution-function
+                    # block of the Jacobian matrix.
+                    jac_comm = comm
+                    jac_allocate_float = (args...; comm=nothing, kwargs...) -> allocate_float(args...; kwargs...)
+                    jac_allocate_int = (args...; comm=nothing, kwargs...) -> allocate_int(args...; kwargs...)
+                    return get_shared_sparse_matrix_csc_buffer(mpisc_dims, MPI.COMM_SELF,
+                                                               jac_allocate_float,
+                                                               jac_allocate_int;
+                                                               row_dimensions=[state_vector_dim_numbers[i]...],
+                                                               column_dimensions=[state_vector_dim_numbers[j]...],
+                                                               ind_type=mk_int)
                 end
             else
                 # Use dense matrices.
@@ -389,19 +396,7 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
     else
         function get_shared_sub_matrix(i, j)
             if sparse_storage
-                if i == 1 && j == 1 && !blockskyline_topleft
-                    # Create FixedSparseCSC buffer for the main distribution-function
-                    # block of the Jacobian matrix.
-                    mpisc_dims =
-                        get_MPIStaticCondensations_Dimensions_from_coordinates(state_vector_coords[i])
-                    jac_comm = comm
-                    jac_allocate_shared_float = (dim_sizes...; comm=nothing, kwargs...) -> allocate_shared_float(ntuple(i->Symbol("$i")=>dim_sizes[i], length(dim_sizes))...; kwargs..., comm=(comm===nothing ? jac_comm : comm))
-                    jac_allocate_shared_int = (dim_sizes...; comm=nothing, kwargs...) -> allocate_shared_int(ntuple(i->Symbol("$i")=>dim_sizes[i], length(dim_sizes))...; kwargs..., comm=(comm===nothing ? jac_comm : comm))
-                    return get_shared_sparse_matrix_csc_buffer(mpisc_dims, comm,
-                                                               jac_allocate_shared_float,
-                                                               jac_allocate_shared_int;
-                                                               ind_type=mk_int)
-                else
+                if blockskyline_storage
                     if state_vector_coords[i][end].name != state_vector_coords[j][end].name
                         error("Cannot create block-banded matrix for Jacobian block for "
                               * "block ($i,$j) when outer coordinates "
@@ -423,6 +418,18 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
                     data_length = BlockBandedMatrices.bb_numentries(skyline_sizes)
                     data = allocate_shared_float(:jacobian_data=>data_length, comm=comm)
                     return BlockBandedMatrices._BlockSkylineMatrix(data, skyline_sizes)
+                else
+                    # Create FixedSparseCSC buffer for the main distribution-function
+                    # block of the Jacobian matrix.
+                    jac_comm = comm
+                    jac_allocate_shared_float = (dim_sizes...; comm=nothing, kwargs...) -> allocate_shared_float(ntuple(i->Symbol("$i")=>dim_sizes[i], length(dim_sizes))...; kwargs..., comm=(comm===nothing ? jac_comm : comm))
+                    jac_allocate_shared_int = (dim_sizes...; comm=nothing, kwargs...) -> allocate_shared_int(ntuple(i->Symbol("$i")=>dim_sizes[i], length(dim_sizes))...; kwargs..., comm=(comm===nothing ? jac_comm : comm))
+                    return get_shared_sparse_matrix_csc_buffer(mpisc_dims, comm,
+                                                               jac_allocate_shared_float,
+                                                               jac_allocate_shared_int;
+                                                               row_dimensions=[state_vector_dim_numbers[i]...],
+                                                               column_dimensions=[state_vector_dim_numbers[j]...],
+                                                               ind_type=mk_int)
                 end
             else
                 return allocate_shared_float(Symbol(:jacobian_size, i)=>state_vector_sizes[i],

@@ -1019,6 +1019,16 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
     end
     both_zero_flags = [get_both_zero_flag(c) for c ∈ coords]
 
+    function get_has_diss(coord)
+        diss_name = Symbol(coord.name, "_dissipation_coefficient")
+        if diss_name ∈ fieldnames(typeof(electron_num_diss_params))
+            return getfield(electron_num_diss_params, diss_name) > 0.0
+        else
+            return false
+        end
+    end
+    has_diss = any(get_has_diss(c) for c ∈ coords)
+
     if preconditioner_type === Val(:electron_static_condensation)
         function get_static_condensation_precon()
             precon = create_jacobian_info(coords, spectral; comm=comm_anyzv_subblock[],
@@ -1113,7 +1123,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
         pdf_plus_p_plus_constraints_size = total_size_coords + coords.z.n + 6 * coords.z.n
         preconditioners = [(lu(sparse(1.0*I, 1, 1)),
                             create_jacobian_info(coords, spectral;
-                                                 blockskyline_topleft=true,
+                                                 blockskyline_storage=has_diss,
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  handle_overlaps=Val(false),
@@ -1146,7 +1156,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
         pdf_plus_p_plus_constraints_size = total_size_coords + coords.z.n + 4 * coords.z.n
         preconditioners = [(lu(sparse(1.0*I, 1, 1)),
                             create_jacobian_info(coords, spectral;
-                                                 blockskyline_topleft=true,
+                                                 blockskyline_storage=has_diss,
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  handle_overlaps=Val(false),
@@ -1176,7 +1186,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
         pdf_plus_p_plus_constraints_size = total_size_coords + coords.z.n + coords.z.n
         preconditioners = [(lu(sparse(1.0*I, 1, 1)),
                             create_jacobian_info(coords, spectral;
-                                                 blockskyline_topleft=true,
+                                                 blockskyline_storage=true,
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  handle_overlaps=Val(false),
@@ -1203,7 +1213,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input,
         pdf_plus_p_size = total_size_coords + coords.z.n
         preconditioners = [(lu(sparse(1.0*I, 1, 1)),
                             create_jacobian_info(coords, spectral;
-                                                 blockskyline_topleft=true,
+                                                 blockskyline_storage=true,
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  handle_overlaps=Val(false),
@@ -4258,7 +4268,7 @@ boundary condition on those entries of δg (when the right-hand-side is set to z
             # This term seems to have a very small contribution, and could probably be
             # skipped.
             A, B, C, D = correction_matrix \ [a2-a3, -b2-b3, c2-c3, -d2-d3]
-            @. jacobian_zbegin_p[output_range] *=
+            @views @. jacobian_zbegin_p[output_range] *=
                    1.0 +
                    (A
                     + B * v_over_vth
@@ -4759,7 +4769,7 @@ boundary condition on those entries of δg (when the right-hand-side is set to z
             # This term seems to have a very small contribution, and could probably be
             # skipped.
             A, B, C, D = correction_matrix \ [a2-a3, -b2-b3, c2-c3, -d2-d3]
-            @. jacobian_zend_p[output_range] *=
+            @views @. jacobian_zend_p[output_range] *=
                    1.0 +
                    (A
                     + B * v_over_vth
