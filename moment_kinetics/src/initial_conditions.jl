@@ -509,6 +509,7 @@ function initialize_electrons!(pdf, moments, fields, geometry, composition, r, z
     initialize_electron_pdf!(scratch, scratch_electron, pdf, moments, fields, r, z, vpa,
                              vperp, vzeta, vr, vz, r_spectral, z_spectral, vperp_spectral,
                              vpa_spectral, advection_structs.electron_z_advect,
+                             advection_structs.electron_vperp_advect,
                              advection_structs.electron_vpa_advect, scratch_dummy,
                              collisions, composition, geometry, external_source_settings,
                              num_diss_params, gyroavs, nl_solver_params, t_params,
@@ -584,11 +585,11 @@ end
 
 function initialize_electron_pdf!(scratch, scratch_electron, pdf, moments, fields, r, z,
                                   vpa, vperp, vzeta, vr, vz, r_spectral, z_spectral,
-                                  vperp_spectral, vpa_spectral, z_advect, vpa_advect,
-                                  scratch_dummy, collisions, composition, geometry,
-                                  external_source_settings, num_diss_params, gyroavs,
-                                  nl_solver_params, t_params, t_input_tuple, io_input,
-                                  input_dict; skip_electron_solve)
+                                  vperp_spectral, vpa_spectral, z_advect, vperp_advect,
+                                  vpa_advect, scratch_dummy, collisions, composition,
+                                  geometry, external_source_settings, num_diss_params,
+                                  gyroavs, nl_solver_params, t_params, t_input_tuple,
+                                  io_input, input_dict; skip_electron_solve)
 
     if t_input_tuple.skip_electron_initial_solve
         skip_electron_solve = true
@@ -723,10 +724,10 @@ function initialize_electron_pdf!(scratch, scratch_electron, pdf, moments, field
                     @views update_electron_pdf!(scratch_electron, pdf.electron.norm,
                                                 moments, fields.phi, r, z, vperp, vpa,
                                                 z_spectral, vperp_spectral, vpa_spectral,
-                                                z_advect, vpa_advect, scratch_dummy,
-                                                t_params.electron, collisions,
-                                                composition, external_source_settings,
-                                                num_diss_params,
+                                                z_advect, vperp_advect, vpa_advect,
+                                                scratch_dummy, t_params.electron,
+                                                collisions, composition,
+                                                external_source_settings, num_diss_params,
                                                 nl_solver_params.electron_advance,
                                                 max_electron_pdf_iterations,
                                                 max_electron_sim_time;
@@ -801,8 +802,8 @@ function initialize_electron_pdf!(scratch, scratch_electron, pdf, moments, field
                     update_electron_pdf!(scratch_electron, pdf.electron.norm, moments,
                                          fields.phi, r, z, vperp, vpa, z_spectral,
                                          vperp_spectral, vpa_spectral, z_advect,
-                                         vpa_advect, scratch_dummy, t_params.electron,
-                                         collisions, composition,
+                                         vperp_advect, vpa_advect, scratch_dummy,
+                                         t_params.electron, collisions, composition,
                                          external_source_settings, num_diss_params,
                                          nl_solver_params.electron_advance,
                                          max_electron_pdf_iterations,
