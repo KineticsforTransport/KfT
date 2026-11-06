@@ -1479,7 +1479,7 @@ end
 
     @begin_anyzv_z_region()
     @loop_z iz begin
-        precon_p[offset+iz] = state_buffer[iz]
+        precon_p[iz] = state_buffer[offset+iz]
     end
 
     # Don't think the following is necessary when using MPIStaticCondensations for the
