@@ -72,7 +72,9 @@ Note this function assumes the input is given at a single spatial position.
         A = (I5*I4 - I3^2 + 1.5*(I1*I3 - I2*I5)) / determinant
         B = (I3*I2 - I1*I4 + 1.5*(I1*I2 - I0*I3)) / determinant
         C = (I1*I3 - I2*I5 + 1.5*(I0*I5 - I1^2)) / determinant
-        @. f = (A + B*vpa.grid + C*vpa.grid*vpa.grid)*f
+        @loop_vperp_vpa ivperp ivpa begin
+            f[ivpa,ivperp] = f[ivpa,ivperp] * (A + B*vpa.grid[ivpa] + C*(vpa.grid[ivpa]^2 + vperp.grid[ivperp]^2))
+        end
     elseif moments.evolve_upar
         # fnew = (A + B*wpa)*f
         # Constraints:

@@ -497,7 +497,7 @@ end
 
 """
     parallel_scaling(run_info; plot_prefix, this_input_dict=nothing,
-                     weak=false)
+                     weak::Bool=false, per_step::Bool=false)
 
 Analyse the parallel scaling of a set of simulations. By default 'strong scaling' (run
 time compared to number of processes, for a fixed simulation grid size), if `weak=true` is
@@ -512,9 +512,12 @@ Note that there is no check that the grid size (or number of timesteps, etc.) st
 same (for strong scaling) or varies with the number of processes (for weak scaling). This
 function assumes that the runs input in `run_info` form a well-defined 'strong/weak
 scaling' scan - if not then the plots are meaningless.
+
+`per_step=true` can be passed to calculate the run time per timestep instead of for the
+whole run.
 """
 function parallel_scaling(run_info; plot_prefix=nothing, this_input_dict=nothing,
-                          weak=false)
+                          weak::Bool=false, per_step::Bool=false)
     if !isa(run_info, Vector) || length(run_info) == 1
         # Doesn't make sense to do a strong scaling plot with only one run.
         return nothing
@@ -565,9 +568,12 @@ function parallel_scaling(run_info; plot_prefix=nothing, this_input_dict=nothing
             # Use `it` to select the last time point of each simulation, which gives the total
             # cumulative time spent in `ssp_rk!()`.
             # Convert from nanoseconds to seconds.
-            push!(run_time,
-                  get_variable(ri, variable_name;
-                               group=timing_group, it=ri.nt)[1] / 1.0e9)
+            this_t = get_variable(ri, variable_name; group=timing_group, it=ri.nt)[1] / 1.0e9
+            if per_step
+                nstep = get_variable(ri, "step_counter"; it=ri.nt)[1]
+                this_t /= nstep
+            end
+            push!(run_time, this_t)
         end
 
         # All variables that this function is called for should have names starting with
@@ -618,7 +624,12 @@ function parallel_scaling(run_info; plot_prefix=nothing, this_input_dict=nothing
         end
     end
 
-    fig_time, ax_time = get_1d_ax(xlabel="nproc", ylabel="run time (s)")
+    if per_step
+        run_time_ylabel = "run time per timestep (s)"
+    else
+        run_time_ylabel = "run time (s)"
+    end
+    fig_time, ax_time = get_1d_ax(xlabel="nproc", ylabel=run_time_ylabel)
     fig_efficiency, ax_efficiency = get_1d_ax(xlabel="nproc", ylabel="efficiency vs. nproc=$reference_nproc")
 
     add_to_plots("time:moment_kinetics;time_advance! step;ssp_rk!", ax_time,
@@ -636,7 +647,7 @@ function parallel_scaling(run_info; plot_prefix=nothing, this_input_dict=nothing
 
     if input.plot_scaling_all_timers
         fig_time_all, ax_time_all, legend_place_time_all =
-            get_1d_ax(xlabel="nproc", ylabel="run time (s)", get_legend_place=:below)
+            get_1d_ax(xlabel="nproc", ylabel=run_time_ylabel, get_legend_place=:below)
         fig_efficiency_all, ax_efficiency_all, legend_place_efficiency_all =
             get_1d_ax(xlabel="nproc", ylabel="efficiency vs. nproc=$reference_nproc",
                       get_legend_place=:below)

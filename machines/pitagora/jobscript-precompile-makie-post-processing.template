@@ -31,7 +31,7 @@ fi
 
 export JULIA_DEPOT_PATH=$TMPDIR/$USER/compute-node-temp.julia
 
-bin/julia -t 128 --project=makie_post_processing/ precompile-makie-post-processing.jl
+srun bin/julia -t 128 --project=makie_post_processing/ precompile-makie-post-processing.jl
 
 # Don't re-save the tar file, because it might overwrite one being created by
 # machines/machine-setup.sh.

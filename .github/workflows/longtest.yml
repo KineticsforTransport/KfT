@@ -65,7 +65,9 @@ jobs:
           touch Project.toml
           julia --project -O3 -e 'import Pkg; Pkg.add(["MPI", "MPIPreferences"]); using MPIPreferences; MPIPreferences.use_jll_binary("OpenMPI_jll")'
           julia --project -O3 -e 'using MPI; MPI.install_mpiexecjl(; destdir=".")'
-          julia --project -O3 -e 'import Pkg; Pkg.add(["NCDatasets", "Random", "SpecialFunctions", "StatsBase", "Test"]); Pkg.develop(path="moment_kinetics/")'
+          # Temporarily (?) disable NetCDF (NCDatasets) in parallel CI test, because at the moment (24/10/2026) it breaks parallel I/O on the Github Actions runners.
+          #julia --project -O3 -e 'import Pkg; Pkg.add(["NCDatasets", "Random", "SpecialFunctions", "StatsBase", "Test"]); Pkg.develop(path="moment_kinetics/")'
+          julia --project -O3 -e 'import Pkg; Pkg.add(["Random", "SpecialFunctions", "StatsBase", "Test"]); Pkg.develop(path="moment_kinetics/")'
           julia --project -O3 -e 'import Pkg; Pkg.precompile()'
       - if: ${{ matrix.numprocs == 4 }}
         run: |

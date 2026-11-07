@@ -35,8 +35,17 @@ using ..boundary_conditions
 using ..boundary_conditions: get_ion_z_boundary_cutoff_indices, enforce_vperp_boundary_condition!
 using ..boundary_conditions: vpagrid_to_vpa, enforce_v_boundary_condition_local!,
                              skip_f_electron_bc_points_in_Jacobian,
+                             skip_f_electron_bc_points_in_Jacobian_z_periodic,
+                             skip_f_electron_bc_points_in_Jacobian_z_periodic_serial,
+                             skip_p_electron_bc_points_in_Jacobian_z_periodic_serial,
                              skip_f_electron_bc_points_in_Jacobian_v_solve,
-                             skip_f_electron_bc_points_in_Jacobian_z_solve
+                             skip_f_electron_bc_points_in_Jacobian_v_solve_z_periodic,
+                             skip_f_electron_bc_points_in_Jacobian_v_solve_z_periodic_serial,
+                             skip_p_electron_bc_points_in_Jacobian_v_solve_z_periodic_serial,
+                             skip_f_electron_bc_points_in_Jacobian_z_solve,
+                             skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic,
+                             skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial,
+                             skip_p_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial
 using ..input_structs
 using ..moment_constraints: hard_force_moment_constraints!,
                             hard_force_moment_constraints_neutral!,
@@ -239,6 +248,7 @@ struct advect_object_struct
     alpha_advect::MPISharedArray{mk_float,5}
     r_advect::MPISharedArray{mk_float,5}
     electron_z_advect::MPISharedArray{mk_float,4}
+    electron_vperp_advect::MPISharedArray{mk_float,4}
     electron_vpa_advect::MPISharedArray{mk_float,4}
     neutral_z_advect::MPISharedArray{mk_float,6}
     neutral_r_advect::MPISharedArray{mk_float,6}
@@ -293,6 +303,8 @@ function allocate_advection_structs(composition, z, r, vpa, vperp, vz, vr, vzeta
     # with advection in z
     @begin_serial_region()
     electron_z_advect = setup_advection(vpa, vperp, z, r)
+    @begin_serial_region()
+    electron_vperp_advect = setup_advection(vpa, vperp, z, r)
     # create structure vpa_advect whose members are the arrays needed to compute
     # the advection term(s) appearing in the part of the electron kinetic equation dealing
     # with advection in vpa
@@ -315,8 +327,9 @@ function allocate_advection_structs(composition, z, r, vpa, vperp, vz, vr, vzeta
     ##                                                                 ##
     advection_structs = advect_object_struct(vpa_advect, vperp_advect, z_advect,
                                              alpha_advect, r_advect, electron_z_advect,
-                                             electron_vpa_advect, neutral_z_advect,
-                                             neutral_r_advect, neutral_vz_advect)
+                                             electron_vperp_advect, electron_vpa_advect,
+                                             neutral_z_advect, neutral_r_advect,
+                                             neutral_vz_advect)
     return advection_structs
 end
 
@@ -517,7 +530,8 @@ function setup_time_info(t_input, n_variables, code_time, dt_reload,
         if kinetic_electron_solver ∈ (implicit_time_evolving,
                                       implicit_p_implicit_pseudotimestep,
                                       implicit_steady_state)
-            electron_precon_types = Dict("lu_no_separate_moments" => :electron_lu_no_separate_moments,
+            electron_precon_types = Dict("static_condensation" => :electron_static_condensation,
+                                         "lu_no_separate_moments" => :electron_lu_no_separate_moments,
                                          "lu_separate_third_moment" => :electron_lu_separate_third_moment,
                                          "lu" => :electron_lu,
                                          "lu_separate_dp_dz_dq_dz" => :electron_lu_separate_dp_dz_dq_dz,
@@ -618,8 +632,9 @@ function get_ion_preconditioners(preconditioner_type, coords, outer_coords;
     return preconditioners
 end
 
-function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vpa,
-                              r_spectral, z_spectral, vperp_spectral, vpa_spectral)
+function get_nl_solver_params(t_params, input_dict, composition, num_diss_params, r, z,
+                              vperp, vpa, r_spectral, z_spectral, vperp_spectral,
+                              vpa_spectral)
     # Set up parameters for Jacobian-free Newton-Krylov solver used for implicit part of
     # timesteps.
 
@@ -635,6 +650,10 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
         preconditioner_update_interval=300,
         total_its_soft_limit=50,
         adi_precon_iterations=1,
+        #MPIStaticCondensation_block_sizes_heuristic=, # Would need to do something to convert, e.g., String option to MPIStaticCondensations.BlockSizesHeuristic objects or Vector{Vector{mk_int}}...
+        MPIStaticCondensation_reduce_proc_count_with_blocks=false,
+        MPIStaticCondensation_sparse_C_blocks=true,
+        MPIStaticCondensation_reduce_dense_boundaries_memory=true,
        )
 
     nl_solver_input = Dict_to_NamedTuple(nl_solver_section)
@@ -650,28 +669,68 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
     if t_params.kinetic_electron_solver ∈ (implicit_time_evolving,
                                            implicit_p_implicit_pseudotimestep,
                                            implicit_steady_state)
-        electron_coords = (z=z, vperp=vperp, vpa=vpa)
+        electron_coords = (vpa=vpa, vperp=vperp, z=z)
         electron_outer_coords = (r,)
-        electron_spectral = (z=z_spectral, vperp=vperp_spectral, vpa=vpa_spectral)
+        electron_spectral = (vpa=vpa_spectral, vperp=vperp_spectral, z=z_spectral)
+        if z.periodic && z.nrank == 1 &&
+                t_params.electron_preconditioner_type ∈
+                    (Val(:electron_lu_separate_dp_dz_dq_dz), Val(:electron_lu),
+                     Val(:electron_lu_separate_third_moment),
+                     Val(:electron_lu_no_separate_moments), Val(:electron_adi))
+            # Note that periodicity can only be handled (for handle_overlaps=Val(false))
+            # when running without distributed-MPI parallelism. The points that are
+            # periodic must be in the same block so that the preconditioner matrix
+            # inversion can impose the constraint that they are equal.
+            boundary_skip_funcs = (full=(electron_pdf=skip_f_electron_bc_points_in_Jacobian_z_periodic_serial,
+                                         electron_p=skip_p_electron_bc_points_in_Jacobian_z_periodic_serial,
+                                         zeroth_moment=nothing,
+                                         first_moment=nothing,
+                                         second_moment=nothing,
+                                         third_moment=nothing,
+                                         electron_dp_dz=nothing,
+                                         electron_dq_dz=nothing),
+                                   v_solve=(electron_pdf=skip_f_electron_bc_points_in_Jacobian_v_solve_z_periodic_serial,
+                                            electron_p=skip_p_electron_bc_points_in_Jacobian_v_solve_z_periodic_serial),
+                                   z_solve=(electron_pdf=skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial,
+                                            electron_p=skip_p_electron_bc_points_in_Jacobian_z_solve_z_periodic_serial))
+        elseif z.periodic
+            boundary_skip_funcs = (full=(electron_pdf=skip_f_electron_bc_points_in_Jacobian_z_periodic,
+                                         electron_p=nothing,
+                                         zeroth_moment=nothing,
+                                         first_moment=nothing,
+                                         second_moment=nothing,
+                                         third_moment=nothing,
+                                         electron_dp_dz=nothing,
+                                         electron_dq_dz=nothing),
+                                   v_solve=(electron_pdf=skip_f_electron_bc_points_in_Jacobian_v_solve_z_periodic,
+                                            electron_p=nothing),
+                                   z_solve=(electron_pdf=skip_f_electron_bc_points_in_Jacobian_z_solve_z_periodic,
+                                            electron_p=nothing))
+        else
+            boundary_skip_funcs = (full=(electron_pdf=skip_f_electron_bc_points_in_Jacobian,
+                                         electron_p=nothing,
+                                         zeroth_moment=nothing,
+                                         first_moment=nothing,
+                                         second_moment=nothing,
+                                         third_moment=nothing,
+                                         electron_dp_dz=nothing,
+                                         electron_dq_dz=nothing),
+                                   v_solve=(electron_pdf=skip_f_electron_bc_points_in_Jacobian_v_solve,
+                                            electron_p=nothing),
+                                   z_solve=(electron_pdf=skip_f_electron_bc_points_in_Jacobian_z_solve,
+                                            electron_p=nothing))
+        end
         electron_precon = get_electron_preconditioners(t_params.electron_preconditioner_type,
-                                                       nl_solver_input, electron_coords,
+                                                       nl_solver_input,
+                                                       num_diss_params.electron,
+                                                       electron_coords,
                                                        electron_outer_coords,
                                                        electron_spectral;
-                                                       boundary_skip_funcs=(full=(electron_pdf=skip_f_electron_bc_points_in_Jacobian,
-                                                                                  electron_p=nothing,
-                                                                                  zeroth_moment=nothing,
-                                                                                  first_moment=nothing,
-                                                                                  second_moment=nothing,
-                                                                                  third_moment=nothing,
-                                                                                  electron_dp_dz=nothing,
-                                                                                  electron_dq_dz=nothing),
-                                                                            v_solve=(electron_pdf=skip_f_electron_bc_points_in_Jacobian_v_solve,
-                                                                                     electron_p=nothing),
-                                                                            z_solve=(electron_pdf=skip_f_electron_bc_points_in_Jacobian_z_solve,
-                                                                                     electron_p=nothing)))
+                                                       boundary_skip_funcs=boundary_skip_funcs)
         nl_solver_electron_advance_params =
-            setup_nonlinear_solve(nl_solver_input, electron_coords, electron_outer_coords;
-                                  anyzv_region=true, electron_p_pdf_solve=true,
+            setup_nonlinear_solve(nl_solver_input, reverse(electron_coords),
+                                  electron_outer_coords; anyzv_region=true,
+                                  electron_p_pdf_solve=true,
                                   preconditioner_type=t_params.electron_preconditioner_type,
                                   preconditioners=electron_precon)
     else
@@ -679,11 +738,11 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
     end
 
     if t_params.implicit_ion_advance
-        ion_coords = (s=composition.n_ion_species, r=r, z=z, vperp=vperp, vpa=vpa)
+        ion_coords = (vpa=vpa, vperp=vperp, z=z, r=r, s=composition.n_ion_species)
         ion_outer_coords = ()
         ion_precon_type = Val(:none)
         nl_solver_ion_advance_params =
-            setup_nonlinear_solve(nl_solver_input, ion_coords, ion_outer_coords;
+            setup_nonlinear_solve(nl_solver_input, reverse(ion_coords), ion_outer_coords;
                                   preconditioner_type=ion_precon_type,
                                   preconditioners=get_ion_preconditioners(ion_precon_type,
                                                                           ion_coords,
@@ -696,7 +755,7 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
         # Implicit solve for vpa_advection term should be done in serial, as it will be called
         # within a parallelised s_r_z_vperp loop.
         vpa_coords = (vpa=vpa,)
-        vpa_outer_coords = (composition.n_ion_species, r, z, vperp)
+        vpa_outer_coords = (vperp, z, r, composition.n_ion_species)
         vpa_precon_type = Val(:none)
         nl_solver_vpa_advection_params =
             setup_nonlinear_solve(nl_solver_input, vpa_coords, vpa_outer_coords;
@@ -969,9 +1028,9 @@ function setup_time_advance!(pdf, fields, vz, vr, vzeta, vpa, vperp, z, r, gyrop
         t_params.failure_caused_by["nonlinear_solver_convergence"] = 0
     end
 
-    nl_solver_params = get_nl_solver_params(t_params, input_dict, composition, r, z,
-                                            vperp, vpa, r_spectral, z_spectral,
-                                            vperp_spectral, vpa_spectral)
+    nl_solver_params = get_nl_solver_params(t_params, input_dict, composition,
+                                            num_diss_params, r, z, vperp, vpa, r_spectral,
+                                            z_spectral, vperp_spectral, vpa_spectral)
 
     return _setup_time_advance_internal!(pdf, fields, vz, vr, vzeta, vpa, vperp, z, r,
                                          gyrophase, vz_spectral, vr_spectral,
@@ -4267,7 +4326,7 @@ end
     vpa_spectral, vperp_spectral, r_spectral, z_spectral = spectral_objects.vpa_spectral, spectral_objects.vperp_spectral, spectral_objects.r_spectral, spectral_objects.z_spectral
     vz_spectral, vr_spectral, vzeta_spectral = spectral_objects.vz_spectral, spectral_objects.vr_spectral, spectral_objects.vzeta_spectral
     vpa_advect, vperp_advect, r_advect, z_advect = advect_objects.vpa_advect, advect_objects.vperp_advect, advect_objects.r_advect, advect_objects.z_advect
-    electron_z_advect, electron_vpa_advect = advect_objects.electron_z_advect, advect_objects.electron_vpa_advect
+    electron_z_advect, electron_vperp_advect, electron_vpa_advect = advect_objects.electron_z_advect, advect_objects.electron_vperp_advect, advect_objects.electron_vpa_advect
     neutral_z_advect, neutral_r_advect, neutral_vz_advect = advect_objects.neutral_z_advect, advect_objects.neutral_r_advect, advect_objects.neutral_vz_advect
 
     success = true
@@ -4280,6 +4339,7 @@ end
                                                       r_spectral, z_spectral,
                                                       vperp_spectral, vpa_spectral,
                                                       electron_z_advect,
+                                                      electron_vperp_advect,
                                                       electron_vpa_advect, gyroavs,
                                                       scratch_dummy, t_params.electron,
                                                       dt,
@@ -4292,10 +4352,11 @@ end
         @loop_r ir begin
             electron_success = electron_backward_euler!(
                           fvec_in, fvec_out, moments, fields.phi, collisions, composition, r,
-                          z, vperp, vpa, z_spectral, vperp_spectral, vpa_spectral, z_advect,
-                          vpa_advect, scratch_dummy, t_params.electron,
-                          external_source_settings, num_diss_params,
-                          nl_solver_params.electron_advance, ir; evolve_p=true)
+                          z, vperp, vpa, z_spectral, vperp_spectral, vpa_spectral,
+                          electron_z_advect, electron_vperp_advect, electron_vpa_advect,
+                          scratch_dummy, t_params.electron, external_source_settings,
+                          num_diss_params, nl_solver_params.electron_advance, ir;
+                          evolve_p=true)
             success = success && electron_success
         end
     elseif t_params.kinetic_electron_solver == implicit_p_implicit_pseudotimestep
@@ -4304,10 +4365,11 @@ end
         electron_success = update_electron_pdf!(scratch_electron, pdf.electron.norm,
                                                 moments, fields.phi, r, z, vperp, vpa,
                                                 z_spectral, vperp_spectral, vpa_spectral,
-                                                electron_z_advect, electron_vpa_advect,
-                                                scratch_dummy, t_params.electron,
-                                                collisions, composition,
-                                                external_source_settings, num_diss_params,
+                                                electron_z_advect, electron_vperp_advect,
+                                                electron_vpa_advect, scratch_dummy,
+                                                t_params.electron, collisions,
+                                                composition, external_source_settings,
+                                                num_diss_params,
                                                 nl_solver_params.electron_advance,
                                                 max_electron_pdf_iterations,
                                                 max_electron_sim_time; evolve_p=true,
@@ -4329,10 +4391,11 @@ end
         electron_success = update_electron_pdf!(scratch_electron, pdf.electron.norm,
                                                 moments, fields.phi, r, z, vperp, vpa,
                                                 z_spectral, vperp_spectral, vpa_spectral,
-                                                electron_z_advect, electron_vpa_advect,
-                                                scratch_dummy, t_params.electron,
-                                                collisions, composition,
-                                                external_source_settings, num_diss_params,
+                                                electron_z_advect, electron_vperp_advect,
+                                                electron_vpa_advect, scratch_dummy,
+                                                t_params.electron, collisions,
+                                                composition, external_source_settings,
+                                                num_diss_params,
                                                 nl_solver_params.electron_advance,
                                                 max_electron_pdf_iterations,
                                                 max_electron_sim_time;

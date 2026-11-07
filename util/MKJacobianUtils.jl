@@ -158,16 +158,21 @@ function get_electron_Jacobian_matrix(run_directory; restart_time_index=1,
     vpa_spectral = spectral_objects.vpa_spectral
     vperp_spectral = spectral_objects.vperp_spectral
 
+    both_zero_flags = [num_diss_params.electron.vpa_dissipation_coefficient > 0.0 || vpa.bc == "both_zero",
+                       num_diss_params.electron.vperp_dissipation_coefficient > 0.0 || vperp.bc == "both_zero",
+                       num_diss_params.electron.z_dissipation_coefficient > 0.0]
     # Allocate an array for the Jacobian matrix
     jacobian = create_jacobian_info((; vpa=vpa, vperp=vperp, z=z),
                                     (; vpa=vpa_spectral, vperp=vperp_spectral,
                                      z=z_spectral);
+                                    blockskyline_storage=true,
                                     comm=comm_anyzv_subblock[],
                                     synchronize=_anyzv_subblock_synchronize,
                                     electron_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
                                     electron_p=((:anyzv,:z), (:z,), false),
                                     boundary_skip_funcs=(electron_pdf=skip_f_electron_bc_points_in_Jacobian,
-                                                         electron_p=nothing))
+                                                         electron_p=nothing),
+                                    both_zero_flags=both_zero_flags)
 
     # Fill the Jacobian matrix with the chosen terms
     ################################################
@@ -200,6 +205,7 @@ function get_electron_Jacobian_matrix(run_directory; restart_time_index=1,
     phi = @view fields.phi[:,ir]
 
     z_advect = advect_objects.z_advect
+    vperp_advect = advect_objects.vperp_advect
     vpa_advect = advect_objects.vpa_advect
 
     zeroth_moment = @view scratch_dummy.buffer_zs_1[:,1]
@@ -230,9 +236,9 @@ function get_electron_Jacobian_matrix(run_directory; restart_time_index=1,
             include_constraint_forcing, include_energy_equation, include_ion_dt_forcing])
         fill_electron_kinetic_equation_Jacobian!(
             jacobian, f, p, moments, phi, collisions, composition, z, vperp, vpa,
-            z_spectral, vperp_spectral, vpa_spectral, z_advect, vpa_advect, scratch_dummy,
-            external_source_settings, num_diss_params, t_params.electron, ion_dt, ir,
-            true)
+            z_spectral, vperp_spectral, vpa_spectral, z_advect, vperp_advect, vpa_advect,
+            scratch_dummy, external_source_settings, num_diss_params, t_params.electron,
+            ion_dt, ir, true)
     else
         # Allow any combination of terms, selected by the include_* flags
 
@@ -249,6 +255,8 @@ function get_electron_Jacobian_matrix(run_directory; restart_time_index=1,
                                            scratch_dummy.buffer_vpavperpr_5[:,:,ir],
                                            scratch_dummy.buffer_vpavperpr_6[:,:,ir],
                                            z_spectral, z)
+
+        vperp_speed = @view vperp_advect[:,:,:,ir]
 
         dpdf_dvpa = @view scratch_dummy.buffer_vpavperpzr_2[:,:,:,ir]
         @begin_anyzv_z_vperp_region()
@@ -287,41 +295,59 @@ function get_electron_Jacobian_matrix(run_directory; restart_time_index=1,
                                            separate_second_moment, separate_third_moment,
                                            separate_dp_dz, separate_dq_dz)
 
-        terms = NullTerm()
+        pdf_terms = NullTerm()
+        p_terms = NullTerm()
 
         if include_z_advection
-            terms += get_electron_z_advection_term(sub_terms)
+            pdf_terms += get_electron_z_advection_term(sub_terms)
         end
         if include_vpa_advection
-            terms += get_electron_vpa_advection_term(sub_terms)
+            pdf_terms += get_electron_vpa_advection_term(sub_terms)
         end
         if include_electron_pdf_term
-            terms += get_contribution_from_electron_pdf_term(sub_terms)
+            pdf_terms += get_contribution_from_electron_pdf_term(sub_terms)
         end
         if include_dissipation
-            terms += get_electron_dissipation_term(sub_terms)
+            pdf_terms += get_electron_dissipation_term(sub_terms)
         end
         if include_krook
-            terms += get_electron_krook_collisions_term(sub_terms)
+            pdf_terms += get_electron_krook_collisions_term(sub_terms)
         end
         if include_external_source
-            terms += get_total_external_electron_source_term(sub_terms)
+            pdf_terms += get_total_external_electron_source_term(sub_terms)
         end
         if include_constraint_forcing
-            terms += get_electron_implicit_constraint_forcing_term(sub_terms)
+            pdf_terms += get_electron_implicit_constraint_forcing_term(sub_terms)
         end
-        if include_energy_equation
-            terms += get_electron_energy_equation_term(sub_terms)
-        end
-        if include_ion_dt_forcing && ion_dt !== nothing
-            terms += get_ion_dt_forcing_of_electron_p_term(sub_terms)
-        end
+        add_term_to_Jacobian!(jacobian, :electron_pdf, dt, pdf_terms,
+                              [vpa_speed, vperp_speed, z_speed])
         if include_wall_bc && t_params.electron.include_wall_bc_in_preconditioner
             add_wall_boundary_condition_to_Jacobian!(
                 jacobian, fields.phi, f, p, vth, upar, z, vperp, vpa, vperp_spectral,
                 vpa_spectral, vpa_advect, moments,
                 num_diss_params.electron.vpa_dissipation_coefficient, me, ir)
         end
+
+        if include_energy_equation
+            p_terms += get_electron_energy_equation_term(sub_terms)
+        end
+        if include_ion_dt_forcing && ion_dt !== nothing
+            p_terms += get_ion_dt_forcing_of_electron_p_term(sub_terms)
+        end
+        add_term_to_Jacobian!(jacobian, :electron_p, dt, p_terms)
+
+        zeroth_moment_terms = -sub_terms.zeroth_moment_constraint_rhs
+        first_moment_terms = -sub_terms.first_moment_constraint_rhs
+        second_moment_terms = -sub_terms.second_moment_constraint_rhs
+        third_moment_terms = -sub_terms.third_moment_constraint_rhs
+        dp_dz_terms = -sub_terms.dp_dz_constraint_rhs
+        dq_dz_terms = -sub_terms.dq_dz_constraint_rhs
+        add_term_to_Jacobian!(jacobian, :zeroth_moment, 1.0, zeroth_moment_terms)
+        add_term_to_Jacobian!(jacobian, :first_moment, 1.0, first_moment_terms)
+        add_term_to_Jacobian!(jacobian, :second_moment, 1.0, second_moment_terms)
+        add_term_to_Jacobian!(jacobian, :third_moment, 1.0, third_moment_terms)
+        add_term_to_Jacobian!(jacobian, :electron_dp_dz, 1.0, dp_dz_terms)
+        add_term_to_Jacobian!(jacobian, :electron_dq_dz, 1.0, dq_dz_terms)
     end
 
     return jacobian.matrix
