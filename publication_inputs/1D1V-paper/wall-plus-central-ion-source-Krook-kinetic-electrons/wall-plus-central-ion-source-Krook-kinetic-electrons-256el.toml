@@ -65,6 +65,7 @@ upar_phase = 0.0
 [timestepping]
 type = "KennedyCarpenterARK324"
 kinetic_electron_solver = "implicit_time_evolving"
+kinetic_electron_preconditioner = "static_condensation"
 kinetic_ion_solver = "full_explicit_ion_advance"
 nstep = 1000000000
 dt = 1.0e-6
