@@ -166,9 +166,8 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
 
                         varname = "ion_constraints_absAminus1_coefficient"
                         label = prefix * "mean(abs(A-1))" * suffix
-                        data = get_variable(ri, varname; it=it0, is=is, ir=ir0)
-                        plot_vs_z(ri, varname; label=label, data=data, ax=ax, input=input,
-                                  yscale, transform)
+                        plot_vs_z(ri, varname; label=label, ax=ax, it=it0, is=is, ir=ir0,
+                                  input=input, yscale, transform)
 
                         varname = "ion_constraints_absB_coefficient"
                         label = prefix * "mean(abs(B))" * suffix
@@ -310,7 +309,6 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         varname = "ion_constraints_absAminus1_coefficient"
                         label = prefix * "(A-1)" * suffix
                         data = get_variable(ri, varname; is=is, ir=ir0)
-                        data .-= 1.0
                         ymin = min(ymin, minimum(data[:,2:end]))
                         ymax = max(ymax, maximum(data[:,2:end]))
                         animate_vs_z(ri, varname; label=label, data=data,
@@ -379,7 +377,6 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                         varname = "neutral_constraints_absAminus1_coefficient"
                         label = prefix * "(A-1)" * suffix
                         data = get_variable(ri, varname; is=is, ir=ir0)
-                        data .-= 1.0
                         ymin = min(ymin, minimum(data[:,2:end]))
                         ymax = max(ymax, maximum(data[:,2:end]))
                         animate_vs_z(ri, varname; label=label, data=data,
@@ -438,7 +435,6 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                     varname = "electron_constraints_absAminus1_coefficient"
                     label = prefix * "(A-1)"
                     data = get_variable(ri, varname; ir=ir0)
-                    data .-= 1.0
                     ymin = min(ymin, minimum(data[:,2:end]))
                     ymax = max(ymax, maximum(data[:,2:end]))
                     animate_vs_z(ri, varname; label=label, data=data,
