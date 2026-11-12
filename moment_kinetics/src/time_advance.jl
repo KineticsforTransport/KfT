@@ -372,12 +372,13 @@ function setup_time_info(t_input, n_variables, code_time, dt_reload,
         input_dict["timestepping"]["write_error_diagnostics"] = false
     end
 
-    if adaptive && t_input["write_error_diagnostics"] && !t_input["write_after_fixed_step_count"]
-        println("WARNING: using adaptive timestepping, so short, random-length timesteps "
-                * "before output is written will make diagnostics from "
-                * "`write_error_diagnostics=true` hard to interpret. If these "
-                * "diagnostics are important, suggest using "
-                * "`write_after_fixed_step_count=true`.")
+    if adaptive && t_input["write_error_diagnostics"] &&
+            !t_input["write_after_fixed_step_count"] && t_input["exact_output_times"]
+        println("WARNING: using adaptive timestepping with exact_output_times=true, so "
+                * "short, random-length timesteps before output is written will make "
+                * "diagnostics from `write_error_diagnostics=true` hard to interpret. If "
+                * "these diagnostics are important, suggest using "
+                * "`exact_output_times=false` or `write_after_fixed_step_count=true`.")
     end
 
     if is_electron
