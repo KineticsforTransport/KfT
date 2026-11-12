@@ -628,7 +628,7 @@ function initialize_external_source_amplitude!(moments, external_source_settings
                 if moments.evolve_upar
                     @loop_r_z ir iz begin
                         moments.ion.external_source_momentum_amplitude[iz,ir,index]=
-                            - moments.ion.dens[iz,ir] * moments.ion.upar[iz,ir] *
+                            - moments.ion.upar[iz,ir] *
                             ion_source_settings[index].source_strength *
                             ion_source_settings[index].r_amplitude[ir] *
                             ion_source_settings[index].z_amplitude[iz]
@@ -1514,8 +1514,8 @@ source amplitude.
 
             @loop_r_z ir iz begin
                 external_source_momentum_amplitude[iz,ir,index] =
-                    - density[iz,ir,is] * upar[iz,ir,is] *
-                    source_strength * r_amplitude[ir] * z_amplitude[iz]
+                    - upar[iz,ir,is] * source_strength *
+                        r_amplitude[ir] * z_amplitude[iz]
             end
         end
         if moments.evolve_p
@@ -1641,8 +1641,7 @@ source amplitude.
         if moments.evolve_upar
             @loop_r_z ir iz begin
                 external_source_momentum_amplitude[iz,ir,index] =
-                    - density[iz,ir] * upar[iz,ir,is] * amplitude *
-                    controller_source_profile[iz,ir]
+                    - upar[iz,ir,is] * amplitude * controller_source_profile[iz,ir]
             end
         end
         if moments.evolve_p
