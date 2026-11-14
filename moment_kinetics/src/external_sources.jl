@@ -628,7 +628,7 @@ function initialize_external_source_amplitude!(moments, external_source_settings
                 if moments.evolve_upar
                     @loop_r_z ir iz begin
                         moments.ion.external_source_momentum_amplitude[iz,ir,index]=
-                            - moments.ion.dens[iz,ir] * moments.ion.upar[iz,ir] *
+                            - moments.ion.upar[iz,ir] *
                             ion_source_settings[index].source_strength *
                             ion_source_settings[index].r_amplitude[ir] *
                             ion_source_settings[index].z_amplitude[iz]
@@ -1052,7 +1052,7 @@ Add external source term to the ion kinetic equation.
                 @loop_vperp_vpa ivperp ivpa begin
                     # Factor of 1/sqrt(π) (for 1V) or 1/π^(3/2) (for 2V/3V) is absorbed by the
                     # normalisation of F
-                    # Splitting into Tperp and Tpar means, if α = Tpar/Tperp, that
+                    # Splitting into Tperp and Tpar means, if α = Tperp/Tpar, that
                     # Tpar = 3T/(1+2α) and Tperp = 3T/(2+1/α)
                     pdf[ivpa,ivperp,iz,ir,is] +=
                         this_prefactor * source_n *
@@ -1084,18 +1084,10 @@ Add external source term to the ion kinetic equation.
         end
 
         if source_type ∈ ("energy", "temperature_midpoint_control")
-            if moments.evolve_density
-                # Take particles out of pdf so source does not change density
-                @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-                    pdf[ivpa,ivperp,iz,ir,is] -= dt * source_amplitude[iz,ir] *
-                        fvec.pdf[ivpa,ivperp,iz,ir,is]
-                end
-            else
-                # Take particles out of pdf so source does not change density
-                @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
-                    pdf[ivpa,ivperp,iz,ir,is] -= dt * source_amplitude[iz,ir] *
-                        fvec.pdf[ivpa,ivperp,iz,ir,is] / fvec.density[iz,ir,is]
-                end
+            # Take particles out of pdf so source does not change density
+            @loop_s_r_z_vperp_vpa is ir iz ivperp ivpa begin
+                pdf[ivpa,ivperp,iz,ir,is] -= dt * source_amplitude[iz,ir] *
+                    fvec.pdf[ivpa,ivperp,iz,ir,is] / fvec.density[iz,ir,is]
             end
         end
     elseif source_type == "alphas" || source_type == "alphas-with-losses"
@@ -1522,8 +1514,8 @@ source amplitude.
 
             @loop_r_z ir iz begin
                 external_source_momentum_amplitude[iz,ir,index] =
-                    - density[iz,ir,is] * upar[iz,ir,is] *
-                    source_strength * r_amplitude[ir] * z_amplitude[iz]
+                    - upar[iz,ir,is] * source_strength *
+                        r_amplitude[ir] * z_amplitude[iz]
             end
         end
         if moments.evolve_p
@@ -1649,8 +1641,7 @@ source amplitude.
         if moments.evolve_upar
             @loop_r_z ir iz begin
                 external_source_momentum_amplitude[iz,ir,index] =
-                    - density[iz,ir] * upar[iz,ir,is] * amplitude *
-                    controller_source_profile[iz,ir]
+                    - upar[iz,ir,is] * amplitude * controller_source_profile[iz,ir]
             end
         end
         if moments.evolve_p
