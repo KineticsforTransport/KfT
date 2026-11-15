@@ -32,6 +32,7 @@ export setup_nonlinear_solve, reset_nonlinear_per_stage_counters!, newton_solve!
 using ..array_allocation: allocate_float, allocate_shared_float
 using ..communication
 using ..coordinates: coordinate
+using ..debugging: @debug_shared_array_ifelse
 using ..timer_utils
 using ..type_definitions: mk_float, mk_int
 
@@ -633,11 +634,26 @@ end
 
 # Synchronize ranks in `shared_comm` when crossing between `local_ranges` and `@loop_*`
 # (or preconditioners) so shared-array writes are visible before the next read or overwrite.
+# At `--debug 2` the region synchronize also clears `is_read`/`is_written`. A raw barrier
+# leaves those flags set, so the next `@begin_*_region` reports a flat-range write and a
+# `@loop_*` read on opposite sides of this call as a race.
 function _sync_shared(shared_comm::MPI.Comm)
     if shared_comm == MPI.COMM_NULL || shared_comm == MPI.COMM_SELF
         return nothing
     end
-    MPI.Barrier(shared_comm)
+    @debug_shared_array_ifelse begin
+        if shared_comm == comm_anyzv_subblock[]
+            @_anyzv_subblock_synchronize()
+        elseif shared_comm == comm_anysv_subblock[]
+            @_anysv_subblock_synchronize()
+        elseif shared_comm == comm_block[]
+            @_block_synchronize()
+        else
+            MPI.Barrier(shared_comm)
+        end
+    end begin
+        MPI.Barrier(shared_comm)
+    end
     return nothing
 end
 
