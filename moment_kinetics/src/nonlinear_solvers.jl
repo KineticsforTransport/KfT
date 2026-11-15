@@ -26,15 +26,12 @@ Useful references:
 """
 module nonlinear_solvers
 
-export setup_nonlinear_solve, gather_nonlinear_solver_counters!,
-       reset_nonlinear_per_stage_counters!, newton_solve!,
+export setup_nonlinear_solve, reset_nonlinear_per_stage_counters!, newton_solve!,
        preconditioner_info_type
 
 using ..array_allocation: allocate_float, allocate_shared_float
 using ..communication
 using ..coordinates: coordinate
-using ..debugging: @debug_shared_array
-using ..looping
 using ..timer_utils
 using ..type_definitions: mk_float, mk_int
 
@@ -43,7 +40,7 @@ using MPI
 
 abstract type preconditioner_info_type end
 
-struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon<:Union{preconditioner_info_type,Nothing},Towned}
+struct nl_solver_info{TH,TV,Tcsg,Tprecon<:Union{preconditioner_info_type,Nothing},Towned}
     rtol::mk_float
     atol::mk_float
     nonlinear_max_iterations::mk_int
@@ -56,15 +53,10 @@ struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon<:Union{preconditioner_info_type,No
     s::Tcsg
     g::Tcsg
     V::TV
-    linear_initial_guess::Tlig
     n_solves::Base.RefValue{mk_int}
     nonlinear_iterations::Base.RefValue{mk_int}
     linear_iterations::Base.RefValue{mk_int}
     precon_iterations::Base.RefValue{mk_int}
-    global_n_solves::Base.RefValue{mk_int}
-    global_nonlinear_iterations::Base.RefValue{mk_int}
-    global_linear_iterations::Base.RefValue{mk_int}
-    global_precon_iterations::Base.RefValue{mk_int}
     solves_since_precon_update::Base.RefValue{mk_int}
     max_nonlinear_iterations_this_step::Base.RefValue{mk_int}
     max_linear_iterations_this_step::Base.RefValue{mk_int}
@@ -75,7 +67,7 @@ struct nl_solver_info{TH,TV,Tcsg,Tlig,Tprecon<:Union{preconditioner_info_type,No
     # `distributed_comm` is `MPI.COMM_NULL` except on rank 0 of `shared_comm`.
     # `owned_indices` is one tuple entry per unknown array. Each entry is the
     # pair `(local_ranges, owned_ranges)`, fastest index first. `local_ranges`
-    # is every slot this rank writes, including the duplicated boundary.
+    # is every slot this process writes to, including the duplicated boundary.
     # `owned_ranges` is the subset of `local_ranges` with that duplicated point
     # omitted on every block except the last.
     shared_comm::MPI.Comm
@@ -89,17 +81,27 @@ end
 const local_ranges_index = 1 # index for local points in owned_indices
 const owned_ranges_index = 2 # index for points without duplicates in owned_indices
 
+# Map acceptable types to tuples, or complain.
+# `(z=z,) isa Tuple` is true, but a `NamedTuple` is not a subtype of `Tuple`,
+# so the single-unknown method is separate.
+_solver_coords(coords::NamedTuple) = (coords,)
+_solver_coords(coords::Tuple{NamedTuple,Vararg{NamedTuple}}) = coords
+_solver_coords(coords) = throw(ArgumentError(
+    "coords must be a NamedTuple of coordinates, or a Tuple of such NamedTuples; got $(typeof(coords))"))
+
 """
-`coords` is a `Tuple` of `NamedTuple`s of coordinates (one `NamedTuple` per unknown),
-or a single `NamedTuple` wrapped by the convenience method below. Callers pass `coords`
-slowest-varying first (the reverse of the array memory layout, which is fastest-varying
-first).
+`coords` is one `NamedTuple` of coordinates per unknown.
+Several unknowns are a `Tuple` of `NamedTuple`s. Anything else throws `ArgumentError`.
+Callers pass each `NamedTuple` slowest-varying first (the reverse of
+the array memory layout, which is fastest-varying first).
 """
-function setup_nonlinear_solve(nl_solver_input, coords::Tuple;
+function setup_nonlinear_solve(nl_solver_input, coords;
                                serial_solve=false,
                                anysv_region=false, anyzv_region=false,
                                preconditioner_info=nothing,
                                full_vector_norm=get(nl_solver_input, :full_vector_norm, false))
+    coords = _solver_coords(coords)
+
     shared_comm, distributed_comm =
         _solver_comms(coords[1], serial_solve, anysv_region, anyzv_region)
 
@@ -108,7 +110,7 @@ function setup_nonlinear_solve(nl_solver_input, coords::Tuple;
     owned_indices = _solver_owned_indices(coords, shared_comm)
     reduction_buffer = zeros(mk_float, 2 * length(owned_indices))
 
-    # Rank local variables; only V is a shared allocate when distributed.
+    #  Variables private to the local process; only V is a shared allocate when distributed.
     H = allocate_float(linear_restart + 1, linear_restart)
     c = allocate_float(linear_restart + 1)
     s = allocate_float(linear_restart + 1)
@@ -132,15 +134,12 @@ function setup_nonlinear_solve(nl_solver_input, coords::Tuple;
     end
     _sync_shared(shared_comm)
 
-    linear_initial_guess = zeros(linear_restart)
-
     return nl_solver_info(mk_float(nl_solver_input.rtol), mk_float(nl_solver_input.atol),
                           nl_solver_input.nonlinear_max_iterations,
                           mk_float(nl_solver_input.linear_rtol),
                           mk_float(nl_solver_input.linear_atol), linear_restart,
                           nl_solver_input.linear_max_restarts, H, c, s, g, V,
-                          linear_initial_guess, Ref(0), Ref(0), Ref(0), Ref(0), Ref(0),
-                          Ref(0), Ref(0), Ref(0),
+                          Ref(0), Ref(0), Ref(0), Ref(0),
                           Ref(nl_solver_input.preconditioner_update_interval),
                           Ref(0), Ref(0),
                           nl_solver_input.total_its_soft_limit,
@@ -148,21 +147,6 @@ function setup_nonlinear_solve(nl_solver_input, coords::Tuple;
                           preconditioner_info,
                           shared_comm, distributed_comm, owned_indices,
                           reduction_buffer, full_vector_norm)
-end
-
-function setup_nonlinear_solve(nl_solver_input, coords::NamedTuple;
-                               serial_solve=false,
-                               anysv_region=false, anyzv_region=false,
-                               electron_p_pdf_solve=false,
-                               preconditioner_info=nothing,
-                               full_vector_norm=get(nl_solver_input, :full_vector_norm, false))
-    coords_tuple = electron_p_pdf_solve ? ((z=coords.z,), coords) : (coords,)
-    return setup_nonlinear_solve(nl_solver_input, coords_tuple;
-                                 serial_solve=serial_solve,
-                                 anysv_region=anysv_region,
-                                 anyzv_region=anyzv_region,
-                                 preconditioner_info=preconditioner_info,
-                                 full_vector_norm=full_vector_norm)
 end
 
 # `shared_comm` is the communicator whose ranks share each unknown array.
@@ -387,40 +371,14 @@ function reset_nonlinear_per_stage_counters!(nl_solver_params::Union{nl_solver_i
 end
 
 """
-    gather_nonlinear_solver_counters!(nl_solver_params)
-
-Where necessary, gather the iteration counters for the nonlinear solvers.
-
-Where each solve runs in parallel using all processes, this is unnecessary as the count on
-each process already represents the global count. Where each solve uses only a subset of
-processes, the counters from different solves need to be added together to get the global
-total.
-"""
-@timeit_debug global_timer gather_nonlinear_solver_counters!(nl_solver_params) = begin
-    if nl_solver_params.ion_advance !== nothing
-        # Solve runs in parallel on all processes, so no need to collect here
-        nl_solver_params.ion_advance.global_n_solves[] = nl_solver_params.ion_advance.n_solves[]
-        nl_solver_params.ion_advance.global_nonlinear_iterations[] = nl_solver_params.ion_advance.nonlinear_iterations[]
-        nl_solver_params.ion_advance.global_linear_iterations[] = nl_solver_params.ion_advance.linear_iterations[]
-        nl_solver_params.ion_advance.global_precon_iterations[] = nl_solver_params.ion_advance.precon_iterations[]
-    end
-    if nl_solver_params.vpa_advection !== nothing
-        # Solves are run in serial on separate processes, so need a global Allreduce
-        @timeit_debug global_timer "MPI.Allreduce! comm_world" MPI.Allreduce!(nl_solver_params.vpa_advection.n_solves[], +, comm_world)
-        @timeit_debug global_timer "MPI.Allreduce! comm_world" MPI.Allreduce!(nl_solver_params.vpa_advection.nonlinear_iterations[], +, comm_world)
-        @timeit_debug global_timer "MPI.Allreduce! comm_world" MPI.Allreduce!(nl_solver_params.vpa_advection.linear_iterations[], +, comm_world)
-        @timeit_debug global_timer "MPI.Allreduce! comm_world" MPI.Allreduce!(nl_solver_params.vpa_advection.precon_iterations[], +, comm_world)
-    end
-end
-
-"""
     newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params;
                   left_preconditioner=identity, right_preconditioner=identity,
                   recalculate_preconditioner=nothing)
 
-`x` is the initial guess at the solution (`Tuple` of `AbstractArray`s, or a single
-`AbstractArray` wrapped by the convenience method below), and is overwritten by the result
-of the Newton solve.
+`x` is the initial guess at the solution, and is overwritten by the result of the
+Newton solve. Several unknowns are a `Tuple` of arrays. A single unknown may be
+passed as one `AbstractArray`; it is wrapped as a 1-tuple at the start of this
+method, and the residual and preconditioners are unwrapped to match.
 
 `rhs_func!(residual, x)` is the function we are trying to find a solution of. It calculates
 ```math
@@ -473,11 +431,36 @@ As the GMRES solve is only used to get the right `direction' for the next Newton
 is not necessary to have a very tight `linear_rtol` for the GMRES solve.
 """
 @timeit global_timer newton_solve!(
-                         x::Tuple, residual_func!::F, residual::Tuple, delta_x::Tuple,
-                         rhs_delta::Tuple, v::Tuple, w::Tuple,
+                         x, residual_func!::F, residual, delta_x,
+                         rhs_delta, v, w,
                          nl_solver_params; left_preconditioner::LP=identity,
                          right_preconditioner::RP=identity,
                          recalculate_preconditioner::RECALC=nothing) where {F,LP,RP,RECALC} = begin
+
+    # A concrete call site constant-folds the branch below, so an array and a tuple
+    # compile to the same Newton loop. The loop body beyond this only sees tuples.
+    if !(x isa Tuple)
+        x = (x,)
+        residual = (residual,)
+        delta_x = (delta_x,)
+        rhs_delta = (rhs_delta,)
+        v = (v,)
+        w = (w,)
+        residual_func! = let f! = residual_func!
+            (r, x; kwargs...) -> f!(r[1], x[1]; kwargs...)
+        end
+        if left_preconditioner !== identity
+            left_preconditioner = let p! = left_preconditioner
+                v -> p!(v[1])
+            end
+        end
+        if right_preconditioner !== identity
+            right_preconditioner = let p! = right_preconditioner
+                v -> p!(v[1])
+            end
+        end
+    end
+
     rtol = nl_solver_params.rtol
     atol = nl_solver_params.atol
     owned_indices = nl_solver_params.owned_indices
@@ -496,15 +479,7 @@ is not necessary to have a very tight `linear_rtol` for the GMRES solve.
     counter = 0
     linear_counter = 0
 
-    # Would need this if delta_x was not set to zero within the Newton iteration loop
-    # below.
-    #parallel_map!(()->0.0, delta_x, owned_indices)
-
-    close_counter = -1
-    close_linear_counter = -1
     success = true
-    previous_residual_norm = residual_norm
-    old_precon_iterations = nl_solver_params.precon_iterations[]
     while (counter < 1 && residual_norm > 1.0e-8) || residual_norm > 1.0
         counter += 1
         #println("\nNewton ", counter)
@@ -523,7 +498,6 @@ is not necessary to have a very tight `linear_rtol` for the GMRES solve.
                                    H=nl_solver_params.H, c=nl_solver_params.c,
                                    s=nl_solver_params.s, g=nl_solver_params.g,
                                    V=nl_solver_params.V, rhs_delta=rhs_delta,
-                                   initial_guess=nl_solver_params.linear_initial_guess,
                                    initial_delta_x_is_zero=true)
         linear_counter += linear_its
         # delta_x was written on local_ranges (or by the preconditioner). Synchronize.
@@ -536,7 +510,6 @@ is not necessary to have a very tight `linear_rtol` for the GMRES solve.
         # during the line search, which might make it fail to converge). So calculate the
         # updated value in the buffer `w` until the line search is completed, and only
         # then copy it into `x`.
-        parallel_map!((x) -> x, w, x, owned_indices)
         parallel_map!((x,delta_x) -> x + delta_x, w, x, delta_x, owned_indices)
         # w was written on local_ranges. The residual reads it with @loop_*.
         _sync_shared(shared_comm)
@@ -551,48 +524,9 @@ is not necessary to have a very tight `linear_rtol` for the GMRES solve.
         if isnan(residual_norm)
             error("NaN in Newton iteration at iteration $counter")
         end
-#        if residual_norm > previous_residual_norm
-#            # Do a line search between x and x+delta_x to try to find an update that does
-#            # decrease residual_norm
-#            s = 0.5
-#            while s > 1.0e-2
-#                parallel_map!(solver_type, (x,delta_x,s) -> x + s * delta_x, w, x, delta_x, s)
-#                residual_func!(residual, x)
-#                residual_norm = distributed_norm(solver_type, residual, norm_params...)
-#                if residual_norm ≤ previous_residual_norm
-#                    break
-#                end
-#                s *= 0.5
-#            end
-#            println("line search s ", s)
-#
-#            #if residual_norm > previous_residual_norm
-#            #    # Failed to find a point that decreases the residual, so try a negative
-#            #    # step
-#            #    s = -1.0e-5
-#            #    parallel_map!(solver_type, (x,delta_x,s) -> x + s * delta_x, w, x, delta_x, s)
-#            #    residual_func!(residual, x)
-#            #    residual_norm = distributed_norm(solver_type, residual, norm_params...)
-#            #    if residual_norm > previous_residual_norm
-#            #        # That didn't work either, so just take the full step and hope for
-#            #        # convergence later
-#            #        parallel_map!(solver_type, (x,delta_x,s) -> x + s * delta_x, w, x, delta_x, s)
-#            #        residual_func!(residual, x)
-#            #        residual_norm = distributed_norm(solver_type, residual, norm_params...)
-#            #    end
-#            #end
-#            if residual_norm > previous_residual_norm
-#                # Line search didn't work, so just take the full step and hope for
-#                # convergence later
-#                parallel_map!(solver_type, (x,delta_x,s) -> x + s * delta_x, w, x, delta_x, s)
-#                residual_func!(residual, x)
-#                residual_norm = distributed_norm(solver_type, residual, norm_params...)
-#            end
-#        end
         parallel_map!((w) -> w, x, w, owned_indices)
         # x was written on local_ranges. Synchronize for preconditioner updates and the caller.
         _sync_shared(shared_comm)
-        previous_residual_norm = residual_norm
 
         if recalculate_preconditioner !== nothing && counter % nl_solver_params.preconditioner_update_interval == 0
             # Have taken a large number of Newton iterations already - convergence must be
@@ -601,11 +535,6 @@ is not necessary to have a very tight `linear_rtol` for the GMRES solve.
         end
 
         #println("Newton residual ", residual_norm, " ", linear_its, " $rtol $atol")
-
-        if residual_norm < 0.1/rtol && close_counter < 0 && close_linear_counter < 0
-            close_counter = counter
-            close_linear_counter = linear_counter
-        end
 
         if counter > nl_solver_params.nonlinear_max_iterations
             println("maximum iteration limit reached")
@@ -623,39 +552,8 @@ is not necessary to have a very tight `linear_rtol` for the GMRES solve.
         max(counter, nl_solver_params.max_nonlinear_iterations_this_step[])
     nl_solver_params.max_linear_iterations_this_step[] =
         max(linear_counter, nl_solver_params.max_linear_iterations_this_step[])
-#    println("Newton iterations: ", counter)
-#    println("Final residual: ", residual_norm)
-#    println("Total linear iterations: ", linear_counter)
-#    println("Linear iterations per Newton: ", linear_counter / counter)
-#    precon_count = nl_solver_params.precon_iterations[] - old_precon_iterations
-#    println("Total precon iterations: ", precon_count)
-#    println("Precon iterations per linear: ", precon_count / linear_counter)
-#
-#    println("Newton iterations after close: ", counter - close_counter)
-#    println("Total linear iterations after close: ", linear_counter - close_linear_counter)
-#    println("Linear iterations per Newton after close: ", (linear_counter - close_linear_counter) / (counter - close_counter))
-#    println()
 
     return success
-end
-
-function newton_solve!(x::AbstractArray, residual_func!::F, residual::AbstractArray,
-                       delta_x::AbstractArray, rhs_delta::AbstractArray,
-                       v::AbstractArray, w::AbstractArray, nl_solver_params;
-                       left_preconditioner::LP=identity,
-                       right_preconditioner::RP=identity,
-                       recalculate_preconditioner::RECALC=nothing) where {F,LP,RP,RECALC}
-    wrapped_residual_func!(res_tuple::Tuple, x_tuple::Tuple; kwargs...) =
-        residual_func!(res_tuple[1], x_tuple[1]; kwargs...)
-    wrapped_left_precon = left_preconditioner === identity ? identity :
-        (v_tuple::Tuple -> left_preconditioner(v_tuple[1]))
-    wrapped_right_precon = right_preconditioner === identity ? identity :
-        (v_tuple::Tuple -> right_preconditioner(v_tuple[1]))
-    return newton_solve!((x,), wrapped_residual_func!, (residual,), (delta_x,),
-                         (rhs_delta,), (v,), (w,), nl_solver_params;
-                         left_preconditioner=wrapped_left_precon,
-                         right_preconditioner=wrapped_right_precon,
-                         recalculate_preconditioner=recalculate_preconditioner)
 end
 
 # Weighted RMS of the scaled entries. `residual` is the vector being measured
@@ -695,7 +593,7 @@ end
 # (e.g. 1D pressure + 3D pdf) specialize and SIMD-vectorize per unknown.
 @inline function _weighted_mean(weight::F, v::Tuple, w::Tuple, owned_indices, shared_comm,
                                 distributed_comm, buffer, rtol, atol, x::Tuple,
-                                full_vector_norm::Bool=false) where {F}
+                                full_vector_norm::Bool) where {F}
     n = length(x)
     totals = map(owned_indices, v, w, x) do oi, vk, wk, xk
         s = zero(mk_float)
@@ -738,18 +636,6 @@ end
 function _sync_shared(shared_comm::MPI.Comm)
     if shared_comm == MPI.COMM_NULL || shared_comm == MPI.COMM_SELF
         return nothing
-    end
-    @debug_shared_array begin
-        if shared_comm == comm_anyzv_subblock[]
-            @_anyzv_subblock_synchronize()
-            return nothing
-        elseif shared_comm == comm_anysv_subblock[]
-            @_anysv_subblock_synchronize()
-            return nothing
-        elseif shared_comm == comm_block[]
-            @_block_synchronize()
-            return nothing
-        end
     end
     MPI.Barrier(shared_comm)
     return nothing
@@ -885,7 +771,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
                          x::Tuple, residual_func!::F, residual0::Tuple, delta_x::Tuple,
                          v::Tuple, w::Tuple, norm_params; rtol, atol, restart, max_restarts,
                          left_preconditioner::LP, right_preconditioner::RP, H, c, s, g,
-                         V::Tuple, rhs_delta::Tuple, initial_guess,
+                         V::Tuple, rhs_delta::Tuple,
                          initial_delta_x_is_zero) where {F,LP,RP} = begin
     # Solve (approximately?):
     #   J δx = residual0
@@ -937,7 +823,6 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
     # so small that it is smaller than atol, in which case use atol instead.
     tol = max(rtol * beta, atol)
 
-    lsq_result = nothing
     residual = Inf
     counter = 0
     restart_counter = 1

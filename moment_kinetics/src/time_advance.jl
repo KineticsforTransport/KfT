@@ -653,11 +653,11 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
     if t_params.kinetic_electron_solver ∈ (implicit_time_evolving,
                                            implicit_p_implicit_pseudotimestep,
                                            implicit_steady_state)
-        electron_coords = (z=z, vperp=vperp, vpa=vpa)
+        electron_pdf_coords = (z=z, vperp=vperp, vpa=vpa)
         electron_outer_coords = (r,)
         electron_spectral = (z=z_spectral, vperp=vperp_spectral, vpa=vpa_spectral)
         electron_precon = get_electron_preconditioners(t_params.electron_preconditioner_type,
-                                                       nl_solver_input, electron_coords,
+                                                       nl_solver_input, electron_pdf_coords,
                                                        electron_outer_coords,
                                                        electron_spectral;
                                                        boundary_skip_funcs=(full=(electron_pdf=skip_f_electron_bc_points_in_Jacobian,
@@ -673,8 +673,8 @@ function get_nl_solver_params(t_params, input_dict, composition, r, z, vperp, vp
                                                                             z_solve=(electron_pdf=skip_f_electron_bc_points_in_Jacobian_z_solve,
                                                                                      electron_p=nothing)))
         nl_solver_electron_advance_params =
-            setup_nonlinear_solve(nl_solver_input, electron_coords;
-                                  anyzv_region=true, electron_p_pdf_solve=true,
+            setup_nonlinear_solve(nl_solver_input, ((z=z,), electron_pdf_coords);
+                                  anyzv_region=true,
                                   preconditioner_info=electron_precon)
     else
         nl_solver_electron_advance_params = nothing
@@ -2316,10 +2316,6 @@ function time_advance!(pdf, scratch, scratch_implicit, scratch_electron, t_param
                 if found_nan != 0
                     finish_now = true
                 end
-
-                # Do MPI communication to add up counters from different processes, where
-                # necessary.
-                gather_nonlinear_solver_counters!(nl_solver_params)
 
                 time_for_run = to_minutes(now() - start_time)
             end
@@ -4635,7 +4631,7 @@ Do a backward-Euler timestep for all terms in the ion kinetic equation.
     #this_f_out .+= residual
 
     success = newton_solve!(fvec_out.pdf, residual_func!, residual, delta_x,
-                            rhs_delta, v, w, nl_solver_params, coords=coords,
+                            rhs_delta, v, w, nl_solver_params;
                             left_preconditioner=left_preconditioner,
                             right_preconditioner=right_preconditioner)
 
