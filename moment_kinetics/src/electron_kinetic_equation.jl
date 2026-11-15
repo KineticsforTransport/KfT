@@ -11,7 +11,8 @@ using ..analysis: get_steady_state_global_maxabs_residual
 using ..derivatives: derivative_z_anyzv!, derivative_z_pdf_vpavperpz!
 using ..boundary_conditions: enforce_v_boundary_condition_local!,
                              enforce_vperp_boundary_condition!,
-                             get_ADI_boundary_v_solve_z_speed, vpagrid_to_vpa
+                             get_ADI_boundary_v_solve_speeds,
+                             get_ADI_boundary_z_solve_speeds, vpagrid_to_vpa
 using ..calculus: derivative!, second_derivative!, integral,
                   reconcile_element_boundaries_MPI_anyzv!,
                   reconcile_element_boundaries_MPI_z_pdf_vpavperpz!
@@ -84,6 +85,7 @@ The electron kinetic equation is:
     vperp_spectral = struct containing spectral information for the vperp-coordinate
     vpa_spectral = struct containing spectral information for the vpa-coordinate
     z_advect = struct containing information for z-advection
+    vperp_advect = struct containing information for vperp-advection
     vpa_advect = struct containing information for vpa-advection
     scratch_dummy = dummy arrays to be used for temporary storage
     t_params = parameters, etc. for time-stepping
@@ -105,8 +107,8 @@ OUTPUT:
 @timeit global_timer update_electron_pdf!(
                          scratch, pdf, moments, phi::AbstractArray{mk_float,ndim_field},
                          r::coordinate, z::coordinate, vperp::coordinate, vpa::coordinate,
-                         z_spectral, vperp_spectral, vpa_spectral, z_advect, vpa_advect,
-                         scratch_dummy, t_params, collisions, composition,
+                         z_spectral, vperp_spectral, vpa_spectral, z_advect, vperp_advect,
+                         vpa_advect, scratch_dummy, t_params, collisions, composition,
                          external_source_settings, num_diss_params, nl_solver_params,
                          max_electron_pdf_iterations, max_electron_sim_time;
                          initial_time=nothing, residual_tolerance=nothing, evolve_p=false,
@@ -123,7 +125,7 @@ OUTPUT:
     elseif solution_method == Val(:backward_euler)
         return electron_backward_euler_pseudotimestepping!(scratch, pdf, moments, phi,
             collisions, composition, r, z, vperp, vpa, z_spectral, vperp_spectral,
-            vpa_spectral, z_advect, vpa_advect, scratch_dummy, t_params,
+            vpa_spectral, z_advect, vperp_advect, vpa_advect, scratch_dummy, t_params,
             external_source_settings, num_diss_params, nl_solver_params,
             max_electron_pdf_iterations, max_electron_sim_time; initial_time=initial_time,
             residual_tolerance=residual_tolerance, evolve_p=evolve_p, ion_dt=ion_dt)
@@ -532,7 +534,7 @@ the iteration counts of the Newton solver.
 function electron_backward_euler_pseudotimestepping!(scratch, pdf, moments,
         phi::AbstractArray{mk_float,ndim_field}, collisions, composition, r::coordinate,
         z::coordinate, vperp::coordinate, vpa::coordinate, z_spectral, vperp_spectral,
-        vpa_spectral, z_advect, vpa_advect, scratch_dummy, t_params,
+        vpa_spectral, z_advect, vperp_advect, vpa_advect, scratch_dummy, t_params,
         external_source_settings, num_diss_params, nl_solver_params,
         max_electron_pdf_iterations, max_electron_sim_time; initial_time=nothing,
         residual_tolerance=nothing, evolve_p=false, ion_dt=nothing)
@@ -700,9 +702,9 @@ function electron_backward_euler_pseudotimestepping!(scratch, pdf, moments,
             step_success = electron_backward_euler!(
                                old_scratch, new_scratch, moments, phi, collisions,
                                composition, r, z, vperp, vpa, z_spectral, vperp_spectral,
-                               vpa_spectral, z_advect, vpa_advect, scratch_dummy,
-                               t_params, external_source_settings, num_diss_params,
-                               nl_solver_params, ir; evolve_p=evolve_p,
+                               vpa_spectral, z_advect, vperp_advect, vpa_advect,
+                               scratch_dummy, t_params, external_source_settings,
+                               num_diss_params, nl_solver_params, ir; evolve_p=evolve_p,
                                ion_dt=ion_dt)
 
             if step_success
@@ -1003,12 +1005,24 @@ struct kinetic_electron_precon{Tpretype,Tprecon} <: preconditioner_info_type
     precon_upperz_vcut_inds::Vector{mk_int}
 end
 
-function get_electron_preconditioners(preconditioner_type, nl_solver_input, coords,
-                                      outer_coords, spectral;
+function get_electron_preconditioners(preconditioner_type, nl_solver_input,
+                                      electron_num_diss_params, coords, outer_coords,
+                                      spectral;
                                       boundary_skip_funcs::BSF=nothing) where {BSF}
     coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ coords)
     total_size_coords = prod(coord_sizes)
     outer_coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ outer_coords)
+
+    function get_both_zero_flag(coord)
+        bc_flag = (coord.bc == "both_zero")
+        diss_name = Symbol(coord.name, "_dissipation_coefficient")
+        if diss_name ∈ fieldnames(typeof(electron_num_diss_params))
+            return getfield(electron_num_diss_params, diss_name) > 0.0 || bc_flag
+        else
+            return bc_flag
+        end
+    end
+    both_zero_flags = [get_both_zero_flag(c) for c ∈ coords]
 
     if preconditioner_type === Val(:electron_lu_separate_dp_dz_dq_dz)
         pdf_plus_p_plus_constraints_size = total_size_coords + coords.z.n + 6 * coords.z.n
@@ -1017,6 +1031,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input, coor
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  boundary_skip_funcs=boundary_skip_funcs.full,
+                                                 both_zero_flags=both_zero_flags,
                                                  electron_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
                                                  electron_p=((:anyzv,:z), (:z,), false),
                                                  zeroth_moment=((:anyzv,:z), (:z,), true),
@@ -1047,6 +1062,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input, coor
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  boundary_skip_funcs=boundary_skip_funcs.full,
+                                                 both_zero_flags=both_zero_flags,
                                                  electron_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
                                                  electron_p=((:anyzv,:z), (:z,), false),
                                                  zeroth_moment=((:anyzv,:z), (:z,), true),
@@ -1074,6 +1090,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input, coor
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  boundary_skip_funcs=boundary_skip_funcs.full,
+                                                 both_zero_flags=both_zero_flags,
                                                  electron_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
                                                  electron_p=((:anyzv,:z), (:z,), false),
                                                  third_moment=((:anyzv,:z), (:z,), true)),
@@ -1098,6 +1115,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input, coor
                                                  comm=comm_anyzv_subblock[],
                                                  synchronize=_anyzv_subblock_synchronize,
                                                  boundary_skip_funcs=boundary_skip_funcs.full,
+                                                 both_zero_flags=both_zero_flags,
                                                  electron_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
                                                  electron_p=((:anyzv,:z), (:z,), false)),
                             allocate_shared_float(:newton_size=>pdf_plus_p_size;
@@ -1128,6 +1146,7 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input, coor
                                                     comm=nothing,
                                                     synchronize=nothing,
                                                     boundary_skip_funcs=boundary_skip_funcs.v_solve,
+                                                    both_zero_flags=both_zero_flags,
                                                     electron_pdf=(nothing, (:vpa, :vperp), false),
                                                     electron_p=(nothing, (), false))
 
@@ -1151,15 +1170,18 @@ function get_electron_preconditioners(preconditioner_type, nl_solver_input, coor
             z_solve_jacobian = create_jacobian_info(coords, spectral; comm=nothing,
                                                     synchronize=nothing,
                                                     boundary_skip_funcs=boundary_skip_funcs.z_solve,
+                                                    both_zero_flags=both_zero_flags,
                                                     electron_pdf=(nothing,(:z,), false))
             z_solve_jacobian_p = create_jacobian_info(coords, spectral; comm=nothing,
                                                       synchronize=nothing,
                                                       boundary_skip_funcs=boundary_skip_funcs.z_solve,
+                                                      both_zero_flags=both_zero_flags,
                                                       electron_p=(nothing,(:z,), false))
 
             explicit_jacobian = create_jacobian_info(coords, spectral; comm=comm_anyzv_subblock[],
                                                      synchronize=_anyzv_subblock_synchronize,
                                                      boundary_skip_funcs=boundary_skip_funcs.full,
+                                                     both_zero_flags=both_zero_flags,
                                                      electron_pdf=((:anyzv,:z,:vperp,:vpa), (:vpa, :vperp, :z), false),
                                                      electron_p=((:anyzv,:z), (:z,), false))
             input_buffer = allocate_shared_float(:newton_size=>pdf_plus_p_size;
@@ -1228,6 +1250,7 @@ end
     vperp_spectral
     vpa_spectral
     z_advect
+    vperp_advect
     vpa_advect
     scratch_dummy
     external_source_settings
@@ -1254,6 +1277,7 @@ function (recalc::kinetic_electron_recalculate_lu!)()
     vperp_spectral = recalc.vperp_spectral
     vpa_spectral = recalc.vpa_spectral
     z_advect = recalc.z_advect
+    vperp_advect = recalc.vperp_advect
     vpa_advect = recalc.vpa_advect
     scratch_dummy = recalc.scratch_dummy
     external_source_settings = recalc.external_source_settings
@@ -1275,7 +1299,7 @@ global_rank[] == 0 && println("recalculating precon")
     fill_electron_kinetic_equation_Jacobian!(
         precon, f_electron_new, electron_p_new, moments, this_phi, collisions,
         composition, z, vperp, vpa, z_spectral, vperp_spectral, vpa_spectral,
-        z_advect, vpa_advect, scratch_dummy, external_source_settings,
+        z_advect, vperp_advect, vpa_advect, scratch_dummy, external_source_settings,
         num_diss_params, t_params, ion_dt, ir, evolve_p, :all, true, add_identity)
 
     @begin_anyzv_region()
@@ -1339,13 +1363,33 @@ end
 
     @begin_anyzv_region()
     counter = 1
-    @loop_z_vperp_vpa iz ivperp ivpa begin
-        this_input_buffer[counter] = precon_f[ivpa,ivperp,iz]
-        counter += 1
-    end
-    @loop_z iz begin
-        this_input_buffer[counter] = precon_p[iz]
-        counter += 1
+    if z.periodic && z.nrank == 1
+        # Set RHS entries corresponding to periodicity constraint to zero.
+        @loop_z_vperp_vpa iz ivperp ivpa begin
+            if iz == z.n
+                this_input_buffer[counter] = 0.0
+            else
+                this_input_buffer[counter] = precon_f[ivpa,ivperp,iz]
+            end
+            counter += 1
+        end
+        @loop_z iz begin
+            if iz == z.n
+                this_input_buffer[counter] = 0.0
+            else
+                this_input_buffer[counter] = precon_p[iz]
+            end
+            counter += 1
+        end
+    else
+        @loop_z_vperp_vpa iz ivperp ivpa begin
+            this_input_buffer[counter] = precon_f[ivpa,ivperp,iz]
+            counter += 1
+        end
+        @loop_z iz begin
+            this_input_buffer[counter] = precon_p[iz]
+            counter += 1
+        end
     end
 
     @begin_anyzv_region()
@@ -1408,7 +1452,7 @@ function get_electron_lu_preconditioner(nl_solver_params, f_electron_new, electr
                                         electron_density, electron_upar, this_phi,
                                         moments, collisions, composition, z, vperp, vpa,
                                         z_spectral, vperp_spectral, vpa_spectral,
-                                        z_advect, vpa_advect, scratch_dummy,
+                                        z_advect, vperp_advect, vpa_advect, scratch_dummy,
                                         external_source_settings, num_diss_params,
                                         t_params, ion_dt, ir, evolve_p, add_identity=true)
 
@@ -1416,7 +1460,7 @@ function get_electron_lu_preconditioner(nl_solver_params, f_electron_new, electr
                                          nl_solver_params, f_electron_new, electron_p_new,
                                          moments, this_phi, collisions, composition, z,
                                          vperp, vpa, z_spectral, vperp_spectral,
-                                         vpa_spectral, z_advect, vpa_advect,
+                                         vpa_spectral, z_advect, vperp_advect, vpa_advect,
                                          scratch_dummy, external_source_settings,
                                          num_diss_params, t_params, ion_dt, evolve_p,
                                          add_identity, ir)
@@ -1451,6 +1495,7 @@ end
     vperp_spectral
     vpa_spectral
     z_advect
+    vperp_advect
     vpa_advect
     scratch_dummy
     external_source_settings
@@ -1484,6 +1529,7 @@ function (recalc_adi::kinetic_electron_recalculate_adi!)()
     vperp_spectral = recalc_adi.vperp_spectral
     vpa_spectral = recalc_adi.vpa_spectral
     z_advect = recalc_adi.z_advect
+    vperp_advect = recalc_adi.vperp_advect
     vpa_advect = recalc_adi.vpa_advect
     scratch_dummy = recalc_adi.scratch_dummy
     external_source_settings = recalc_adi.external_source_settings
@@ -1515,6 +1561,8 @@ global_rank[] == 0 && println("recalculating precon")
                         buffer_3, buffer_4, z_spectral, z)
 
     z_speed = @view z_advect[:,:,:,ir]
+
+    vperp_speed = @view vperp_advect[:,:,:,ir]
 
     dpdf_dz = @view scratch_dummy.buffer_vpavperpzr_1[:,:,:,ir]
     update_electron_speed_z!(z_speed, electron_upar, vth, vpa.grid)
@@ -1568,7 +1616,7 @@ global_rank[] == 0 && println("recalculating precon")
         fill_electron_kinetic_equation_Jacobian!(
             explicit_J, f_electron_new, electron_p_new, moments, this_phi,
             collisions, composition, z, vperp, vpa, z_spectral, vperp_spectral,
-            vpa_spectral, z_advect, vpa_advect, scratch_dummy,
+            vpa_spectral, vperp_advect, z_advect, vpa_advect, scratch_dummy,
             external_source_settings, num_diss_params, t_params, ion_dt, ir,
             evolve_p, :explicit_z, false, add_identity)
 
@@ -1595,13 +1643,12 @@ global_rank[] == 0 && println("recalculating precon")
             A, @view(f_electron_new[:,:,iz]), @view(electron_p_new[iz]),
             @view(dpdf_dz[:,:,iz]), @view(dpdf_dvpa[:,:,iz]),
             @view(d2pdf_dvpa2[:,:,iz]), @view(z_speed[:,:,iz]),
-            @view(vpa_speed[:,:,iz]), moments, @view(zeroth_moment[iz]),
-            @view(first_moment[iz]), @view(second_moment[iz]),
-            @view(third_moment[iz]), dthird_moment_dz[iz], this_phi[iz],
-            collisions, composition, z, vperp, vpa, z_spectral, vperp_spectral,
-            vpa_spectral, z_advect, vpa_advect, scratch_dummy,
-            external_source_settings, num_diss_params, t_params, ion_dt, ir, iz,
-            evolve_p, add_identity)
+            @view(vperp_speed[:,:,iz]), @view(vpa_speed[:,:,iz]), moments,
+            @view(zeroth_moment[iz]), @view(first_moment[iz]), @view(second_moment[iz]),
+            @view(third_moment[iz]), dthird_moment_dz[iz], this_phi[iz], collisions,
+            composition, z, vperp, vpa, z_spectral, vperp_spectral, vpa_spectral,
+            vpa_advect, scratch_dummy, external_source_settings, num_diss_params,
+            t_params, ion_dt, ir, iz, evolve_p, add_identity)
         A_sparse = get_sparse_joined_array(A)
         if !isassigned(adi_info.v_solve_implicit_lus, v_solve_counter)
             @timeit_debug global_timer "lu" adi_info.v_solve_implicit_lus[v_solve_counter] = lu(A_sparse)
@@ -1639,9 +1686,8 @@ global_rank[] == 0 && println("recalculating precon")
     fill_electron_kinetic_equation_Jacobian!(
         explicit_J, f_electron_new, electron_p_new, moments, this_phi, collisions,
         composition, z, vperp, vpa, z_spectral, vperp_spectral, vpa_spectral,
-        z_advect, vpa_advect, scratch_dummy, external_source_settings,
-        num_diss_params, t_params, ion_dt, ir, evolve_p, :explicit_v, false,
-        add_identity)
+        z_advect, vperp_advect, vpa_advect, scratch_dummy, external_source_settings,
+        num_diss_params, t_params, ion_dt, ir, evolve_p, :explicit_v, false, add_identity)
     @begin_anyzv_vperp_vpa_region()
     @loop_vperp_vpa ivperp ivpa begin
         z_solve_counter += 1
@@ -1650,12 +1696,12 @@ global_rank[] == 0 && println("recalculating precon")
         @views fill_electron_kinetic_equation_z_only_Jacobian_f!(
             A, f_electron_new[ivpa,ivperp,:], electron_p_new,
             dpdf_dz[ivpa,ivperp,:], dpdf_dvpa[ivpa,ivperp,:],
-            d2pdf_dvpa2[ivpa,ivperp,:], z_speed[ivpa,ivperp,:], moments,
-            zeroth_moment, first_moment, second_moment, third_moment,
-            dthird_moment_dz, collisions, composition, z, vperp, vpa, z_spectral,
-            vperp_spectral, vpa_spectral, z_advect, vpa_advect, scratch_dummy,
-            external_source_settings, num_diss_params, t_params, ion_dt, ir,
-            ivperp, ivpa, add_identity)
+            d2pdf_dvpa2[ivpa,ivperp,:], z_speed[ivpa,ivperp,:],
+            vperp_speed[ivpa,ivperp,:], vpa_speed[ivpa,ivperp,:], moments, zeroth_moment,
+            first_moment, second_moment, third_moment, dthird_moment_dz, collisions,
+            composition, z, vperp, vpa, z_spectral, vperp_spectral, vpa_spectral,
+            scratch_dummy, external_source_settings, num_diss_params, t_params, ion_dt,
+            ir, ivperp, ivpa, add_identity)
 
         A_sparse = get_sparse_joined_array(A)
         if !isassigned(adi_info.z_solve_implicit_lus, z_solve_counter)
@@ -1691,12 +1737,12 @@ global_rank[] == 0 && println("recalculating precon")
         # Get LU-factorized matrix for implicit part of the solve
         @views fill_electron_kinetic_equation_z_only_Jacobian_p!(
             A_p, electron_p_new, f_electron_new[1,1,:], dpdf_dz[1,1,:],
-            dpdf_dvpa[1,1,:], d2pdf_dvpa2[1,1,:], z_speed[1,1,:], moments,
-            zeroth_moment, first_moment, second_moment, third_moment,
-            dthird_moment_dz, collisions, composition, z, vperp, vpa, z_spectral,
-            vperp_spectral, vpa_spectral, z_advect, vpa_advect, scratch_dummy,
-            external_source_settings, num_diss_params, t_params, ion_dt, ir,
-            evolve_p, add_identity)
+            dpdf_dvpa[1,1,:], d2pdf_dvpa2[1,1,:], z_speed[1,1,:], vperp_speed[1,1,:],
+            vpa_speed[1,1,:], moments, zeroth_moment, first_moment, second_moment,
+            third_moment, dthird_moment_dz, collisions, composition, z, vperp, vpa,
+            z_spectral, vperp_spectral, vpa_spectral, scratch_dummy,
+            external_source_settings, num_diss_params, t_params, ion_dt, ir, evolve_p,
+            add_identity)
 
         A_sparse = sparse(A_p.matrix[1][1])
         if !isassigned(adi_info.z_solve_implicit_lus, z_solve_counter)
@@ -1807,15 +1853,37 @@ end
         return nothing
     end
 
-    @begin_anyzv_z_vperp_vpa_region()
-    @loop_z_vperp_vpa iz ivperp ivpa begin
-        row = (iz - 1)*v_size + (ivperp - 1)*vpa.n + ivpa
-        this_input_buffer[row] = precon_f[ivpa,ivperp,iz]
-    end
-    @begin_anyzv_z_region()
-    @loop_z iz begin
-        row = pdf_size + iz
-        this_input_buffer[row] = precon_p[iz]
+    if z.periodic && z.nrank == 1
+        # Set RHS entries corresponding to periodicity constraint to zero.
+        @begin_anyzv_z_vperp_vpa_region()
+        @loop_z_vperp_vpa iz ivperp ivpa begin
+            row = (iz - 1)*v_size + (ivperp - 1)*vpa.n + ivpa
+            if iz == z.n
+                this_input_buffer[row] = 0.0
+            else
+                this_input_buffer[row] = precon_f[ivpa,ivperp,iz]
+            end
+        end
+        @begin_anyzv_z_region()
+        @loop_z iz begin
+            row = pdf_size + iz
+            if iz == z.n
+                this_input_buffer[row] = 0.0
+            else
+                this_input_buffer[row] = precon_p[iz]
+            end
+        end
+    else
+        @begin_anyzv_z_vperp_vpa_region()
+        @loop_z_vperp_vpa iz ivperp ivpa begin
+            row = (iz - 1)*v_size + (ivperp - 1)*vpa.n + ivpa
+            this_input_buffer[row] = precon_f[ivpa,ivperp,iz]
+        end
+        @begin_anyzv_z_region()
+        @loop_z iz begin
+            row = pdf_size + iz
+            this_input_buffer[row] = precon_p[iz]
+        end
     end
     @_anyzv_subblock_synchronize()
 
@@ -1918,9 +1986,9 @@ function get_electron_adi_preconditioner(nl_solver_params, f_electron_new, elect
                                          electron_density, electron_upar, this_phi,
                                          moments, collisions, composition, z, vperp, vpa,
                                          z_spectral, vperp_spectral, vpa_spectral,
-                                         z_advect, vpa_advect, scratch_dummy,
-                                         external_source_settings, num_diss_params,
-                                         t_params, ion_dt, ir, evolve_p,
+                                         z_advect, vperp_advect, vpa_advect,
+                                         scratch_dummy, external_source_settings,
+                                         num_diss_params, t_params, ion_dt, ir, evolve_p,
                                          add_identity=true)
     recalculate_adi_preconditioner! = kinetic_electron_recalculate_adi!(
                                           nl_solver_params, f_electron_new,
@@ -1928,10 +1996,10 @@ function get_electron_adi_preconditioner(nl_solver_params, f_electron_new, elect
                                           buffer_4, electron_density, electron_upar,
                                           this_phi, moments, collisions, composition, z,
                                           vperp, vpa, z_spectral, vperp_spectral,
-                                          vpa_spectral, z_advect, vpa_advect,
-                                          scratch_dummy, external_source_settings,
-                                          num_diss_params, t_params, ion_dt, ir, evolve_p,
-                                          add_identity)
+                                          vpa_spectral, z_advect, vperp_advect,
+                                          vpa_advect, scratch_dummy,
+                                          external_source_settings, num_diss_params,
+                                          t_params, ion_dt, ir, evolve_p, add_identity)
 
     adi_precon! = kinetic_electron_adi_precon!(nl_solver_params, z, vperp, vpa, ir,
                                                buffer_1, buffer_2, buffer_3, buffer_4,
@@ -1947,8 +2015,8 @@ function get_electron_preconditioner(nl_solver_params, f_electron_new, electron_
                                      buffer_1, buffer_2, buffer_3, buffer_4,
                                      electron_density, electron_upar, this_phi, moments,
                                      collisions, composition, z, vperp, vpa, z_spectral,
-                                     vperp_spectral, vpa_spectral, z_advect, vpa_advect,
-                                     scratch_dummy, external_source_settings,
+                                     vperp_spectral, vpa_spectral, z_advect, vperp_advect,
+                                     vpa_advect, scratch_dummy, external_source_settings,
                                      num_diss_params, t_params, ion_dt, ir, evolve_p,
                                      add_identity=true)
     preconditioner_type = nl_solver_params.preconditioner_info.preconditioner_type
@@ -1962,10 +2030,10 @@ function get_electron_preconditioner(nl_solver_params, f_electron_new, electron_
                                               electron_upar, this_phi, moments,
                                               collisions, composition, z, vperp, vpa,
                                               z_spectral, vperp_spectral, vpa_spectral,
-                                              z_advect, vpa_advect, scratch_dummy,
-                                              external_source_settings, num_diss_params,
-                                              t_params, ion_dt, ir, evolve_p,
-                                              add_identity)
+                                              z_advect, vperp_advect, vpa_advect,
+                                              scratch_dummy, external_source_settings,
+                                              num_diss_params, t_params, ion_dt, ir,
+                                              evolve_p, add_identity)
     elseif preconditioner_type === Val(:electron_adi)
         return get_electron_adi_preconditioner(nl_solver_params, f_electron_new,
                                                electron_p_new, buffer_1, buffer_2,
@@ -1973,10 +2041,10 @@ function get_electron_preconditioner(nl_solver_params, f_electron_new, electron_
                                                electron_upar, this_phi, moments,
                                                collisions, composition, z, vperp, vpa,
                                                z_spectral, vperp_spectral, vpa_spectral,
-                                               z_advect, vpa_advect, scratch_dummy,
-                                               external_source_settings, num_diss_params,
-                                               t_params, ion_dt, ir, evolve_p,
-                                               add_identity)
+                                               z_advect, vperp_advect, vpa_advect,
+                                               scratch_dummy, external_source_settings,
+                                               num_diss_params, t_params, ion_dt, ir,
+                                               evolve_p, add_identity)
     elseif preconditioner_type === Val(:none)
         left_preconditioner = identity
         right_preconditioner = identity
@@ -2179,7 +2247,7 @@ end
 """
     electron_backward_euler!(old_scratch, new_scratch, moments, phi,
         collisions, composition, r, z, vperp, vpa, z_spectral, vperp_spectral,
-        vpa_spectral, z_advect, vpa_advect, scratch_dummy, t_params,
+        vpa_spectral, z_advect, vperp_advect, vpa_advect, scratch_dummy, t_params,
         external_source_settings, num_diss_params, nl_solver_params, ir;
         evolve_p=false, ion_dt=nothing) = begin
 
@@ -2189,9 +2257,9 @@ pressure \$p_{e∥}\$.
 @timeit global_timer electron_backward_euler!(old_scratch, new_scratch, moments,
             phi::AbstractArray{mk_float,ndim_field}, collisions, composition,
             r::coordinate, z::coordinate, vperp::coordinate, vpa::coordinate, z_spectral,
-            vperp_spectral, vpa_spectral, z_advect, vpa_advect, scratch_dummy, t_params,
-            external_source_settings, num_diss_params, nl_solver_params, ir;
-            evolve_p=false, ion_dt=nothing) = begin
+            vperp_spectral, vpa_spectral, z_advect, vperp_advect, vpa_advect,
+            scratch_dummy, t_params, external_source_settings, num_diss_params,
+            nl_solver_params, ir; evolve_p=false, ion_dt=nothing) = begin
 
     # create several 0D dummy arrays for use in taking derivatives
     buffer_1 = @view scratch_dummy.buffer_rs_1[ir,1]
@@ -2231,8 +2299,8 @@ pressure \$p_{e∥}\$.
                                     buffer_1, buffer_2, buffer_3, buffer_4,
                                     electron_density, electron_upar, this_phi, moments,
                                     collisions, composition, z, vperp, vpa, z_spectral,
-                                    vperp_spectral, vpa_spectral, z_advect, vpa_advect,
-                                    scratch_dummy, external_source_settings,
+                                    vperp_spectral, vpa_spectral, z_advect, vperp_advect,
+                                    vpa_advect, scratch_dummy, external_source_settings,
                                     num_diss_params, t_params, ion_dt, ir, evolve_p)
 
     # Does preconditioner need to be recalculated?
@@ -5151,24 +5219,9 @@ function get_electron_sub_terms_z_only_Jacobian(
              d2pdf_dvpa2_array::Union{AbstractVector{mk_float},Nothing}, me::mk_float,
              moments, collisions, external_source_settings, num_diss_params, t_params,
              ion_dt, z::coordinate, vperp::coordinate, vpa::coordinate,
-             z_speed::AbstractVector{mk_float}, ir::mk_int, ivperp::mk_int, ivpa::mk_int;
-             include_qpar_integral_terms::Bool=true)
-
-    # Handle boundary condition skip here so that `add_term_to_Jacobian()` does not need
-    # to know about ivperp/ivpa.
-    if (vperp.n > 1 && ivperp == vperp.n) || ivpa == 1 || ivpa == vpa.n
-        scalar_terms = (:me, :vpa_dissipation_coefficient, :constraint_forcing_rate,
-                        :ion_dt, :nuee0, :nuei0, :krook_adjust_vth_1V, :krook_adjust_1V,
-                        :Maxwellian_prefactor)
-        vector_terms = (:source_amplitude, :source_T_array, :density_source,
-                        :momentum_source, :pressure_source, :source_vth_factor)
-        return ElectronSubTerms(; (f ∈ scalar_terms ? f=>1.0 :
-                                   f ∈ vector_terms ? f=>mk_float[] :
-                                   f === :collisions ? f=>nothing :
-                                   f === :source_type ? f=>String[] :
-                                   f=>NullTerm()
-                                   for f ∈ fieldnames(ElectronSubTerms))...)
-    end
+             z_speed::AbstractVector{mk_float}, vperp_speed::AbstractVector{mk_float},
+             vpa_speed::AbstractVector{mk_float}, ir::mk_int, ivperp::mk_int,
+             ivpa::mk_int; include_qpar_integral_terms::Bool=true)
 
     vpa_dissipation_coefficient = num_diss_params.electron.vpa_dissipation_coefficient
     constraint_forcing_rate = t_params.constraint_forcing_rate
@@ -5253,6 +5306,12 @@ function get_electron_sub_terms_z_only_Jacobian(
         Maxwellian_prefactor = 1.0 / π^1.5
     end
 
+    # Modify speeds argument to indicate whether this is a velocity-boundary and which
+    # boundary it is, because `add_term_to_Jacobian()` does not know about `ivperp` or
+    # `ivpa`.
+    speeds = get_ADI_boundary_z_solve_speeds([vpa_speed, vperp_speed, z_speed], vperp,
+                                             vpa, ivperp, ivpa)
+
     return ElectronSubTerms(; me, vpa_dissipation_coefficient, constraint_forcing_rate,
                             ion_dt, n, dn_dz, u, du_dz, p, dp_dz, dp_dz_constraint_rhs,
                             vth, dvth_dz, ppar, dppar_dz, zeroth_moment,
@@ -5264,7 +5323,8 @@ function get_electron_sub_terms_z_only_Jacobian(
                             source_amplitude, source_T_array, density_source,
                             momentum_source, pressure_source, source_vth_factor,
                             source_this_vth_factor, collisions, nuee0, nuei0,
-                            krook_adjust_vth_1V, krook_adjust_1V, Maxwellian_prefactor)
+                            krook_adjust_vth_1V, krook_adjust_1V, Maxwellian_prefactor),
+           speeds
 end
 
 function get_electron_sub_terms_v_only_Jacobian(
@@ -5282,8 +5342,9 @@ function get_electron_sub_terms_v_only_Jacobian(
              d2pdf_dvpa2_array::Union{AbstractMatrix{mk_float},Nothing}, me::mk_float,
              moments, collisions, external_source_settings, num_diss_params, t_params,
              ion_dt, z::coordinate, vperp::coordinate, vpa::coordinate,
-             z_speed::AbstractMatrix{mk_float}, vpa_speed::AbstractMatrix{mk_float},
-             ir::mk_int, iz::mk_int; include_qpar_integral_terms::Bool=true)
+             z_speed::AbstractMatrix{mk_float}, vperp_speed::AbstractMatrix{mk_float},
+             vpa_speed::AbstractMatrix{mk_float}, ir::mk_int, iz::mk_int;
+             include_qpar_integral_terms::Bool=true)
 
     vpa_dissipation_coefficient = num_diss_params.electron.vpa_dissipation_coefficient
     constraint_forcing_rate = t_params.constraint_forcing_rate
@@ -5372,9 +5433,9 @@ function get_electron_sub_terms_v_only_Jacobian(
         Maxwellian_prefactor = 1.0 / π^1.5
     end
 
-    # Modify z_speed argument to indicate whether this is a z-boundary and which boundary
+    # Modify speeds argument to indicate whether this is a z-boundary and which boundary
     # it is, because `add_term_to_Jacobian()` does not know about `iz`.
-    z_speed = get_ADI_boundary_v_solve_z_speed(z_speed, z, iz)
+    speeds = get_ADI_boundary_v_solve_speeds([vpa_speed, vperp_speed, z_speed], z, iz)
 
     return ElectronSubTerms(; me, vpa_dissipation_coefficient, constraint_forcing_rate,
                             ion_dt, n, dn_dz, u, du_dz, p, dp_dz, dp_dz_constraint_rhs,
@@ -5388,7 +5449,7 @@ function get_electron_sub_terms_v_only_Jacobian(
                             momentum_source, pressure_source, source_vth_factor,
                             source_this_vth_factor, collisions, nuee0, nuei0,
                             krook_adjust_vth_1V, krook_adjust_1V,
-                            Maxwellian_prefactor), z_speed
+                            Maxwellian_prefactor), speeds
 end
 
 """
@@ -5420,7 +5481,7 @@ end
     fill_electron_kinetic_equation_Jacobian!(jacobian, f, p, moments, phi, collisions,
                                              composition, z, vperp, vpa, z_spectral,
                                              vperp_specral, vpa_spectral, z_advect,
-                                             vpa_advect, scratch_dummy,
+                                             vperp_advect, vpa_advect, scratch_dummy,
                                              external_source_settings, num_diss_params,
                                              t_params, ion_dt, ir, evolve_p, include=:all,
                                              include_qpar_integral_terms=true,
@@ -5440,7 +5501,7 @@ in the time derivative term as it is for the non-boundary points.]
                          p::AbstractVector{mk_float}, moments,
                          phi::AbstractVector{mk_float}, collisions, composition,
                          z::coordinate, vperp::coordinate, vpa::coordinate, z_spectral,
-                         vperp_spectral, vpa_spectral, z_advect, vpa_advect,
+                         vperp_spectral, vpa_spectral, z_advect, vperp_advect, vpa_advect,
                          scratch_dummy, external_source_settings, num_diss_params,
                          t_params, ion_dt, ir, evolve_p, include::Symbol=:all,
                          include_qpar_integral_terms=true, add_identity=true) = begin
@@ -5489,6 +5550,9 @@ in the time derivative term as it is for the non-boundary points.]
                                        scratch_dummy.buffer_vpavperpr_5[:,:,ir],
                                        scratch_dummy.buffer_vpavperpr_6[:,:,ir],
                                        z_spectral, z)
+
+    # When 2V is implemented for electrons, probably need to update the verp speed here.
+    vperp_speed = @view vperp_advect[:,:,:,ir]
 
     dpdf_dvpa = @view scratch_dummy.buffer_vpavperpzr_2[:,:,:,ir]
     update_electron_speed_vpa!(vpa_advect, dens, upar, p, moments,
@@ -5556,12 +5620,16 @@ in the time derivative term as it is for the non-boundary points.]
     pdf_terms, p_terms, zeroth_moment_terms, first_moment_terms, second_moment_terms,
         third_moment_terms, dp_dz_terms, dq_dz_terms = get_all_electron_terms(sub_terms)
 
-    add_term_to_Jacobian!(jacobian, :electron_pdf, dt, pdf_terms, z_speed)
+    add_term_to_Jacobian!(jacobian, :electron_pdf, dt, pdf_terms,
+                          [vpa_speed, vperp_speed, z_speed])
     if t_params.include_wall_bc_in_preconditioner
         add_wall_boundary_condition_to_Jacobian!(
             jacobian, phi, f, p, vth, upar, z, vperp, vpa, vperp_spectral, vpa_spectral,
             vpa_advect, moments, num_diss_params.electron.vpa_dissipation_coefficient, me,
             ir, include)
+    end
+    if z.periodic
+        add_periodicity_constraint_to_jacobian!(jacobian)
     end
 
     add_term_to_Jacobian!(jacobian, :electron_p, dt, p_terms)
@@ -5577,12 +5645,11 @@ end
 
 """
     fill_electron_kinetic_equation_v_only_Jacobian!()
-        jacobian_matrix, f, p, dpdf_dz, dpdf_dvpa, d2pdf_dvpa2, z_speed, vpa_speed,
-        moments, zeroth_moment, first_moment, second_moment, third_moment,
+        jacobian_matrix, f, p, dpdf_dz, dpdf_dvpa, d2pdf_dvpa2, z_speed, vperp_speed,
+        vpa_speed, moments, zeroth_moment, first_moment, second_moment, third_moment,
         dthird_moment_dz, phi, collisions, composition, z, vperp, vpa, z_spectral,
-        vperp_spectral, vpa_spectral, z_advect, vpa_advect, scratch_dummy,
-        external_source_settings, num_diss_params, t_params, ion_dt, ir, iz, evolve_p,
-        add_idenity=true)
+        vperp_spectral, vpa_spectral, vpa_advect, scratch_dummy, external_source_settings,
+        num_diss_params, t_params, ion_dt, ir, iz, evolve_p, add_idenity=true)
 
 Fill a pre-allocated matrix with the Jacobian matrix for a velocity-space solve part of
 the ADI method for electron kinetic equation and (if `evolve_p=true`) the electron energy
@@ -5594,6 +5661,7 @@ equation.
                          dpdf_dvpa::AbstractMatrix{mk_float},
                          d2pdf_dvpa2::AbstractMatrix{mk_float},
                          z_speed::AbstractMatrix{mk_float},
+                         vperp_speed::AbstractMatrix{mk_float},
                          vpa_speed::AbstractMatrix{mk_float}, moments,
                          zeroth_moment::AbstractArray{mk_float,0},
                          first_moment::AbstractArray{mk_float,0},
@@ -5601,9 +5669,10 @@ equation.
                          third_moment::AbstractArray{mk_float,0},
                          dthird_moment_dz::mk_float, phi::mk_float, collisions,
                          composition, z::coordinate, vperp::coordinate, vpa::coordinate,
-                         z_spectral, vperp_spectral, vpa_spectral, z_advect, vpa_advect,
-                         scratch_dummy, external_source_settings, num_diss_params,
-                         t_params, ion_dt, ir, iz, evolve_p, add_identity=true) = begin
+                         z_spectral, vperp_spectral, vpa_spectral,
+                         vpa_advect, scratch_dummy, external_source_settings,
+                         num_diss_params, t_params, ion_dt, ir, iz, evolve_p,
+                         add_identity=true) = begin
     @debug_consistency_checks t_params.electron === nothing || error("electron t_params should be passed to fill_electron_kinetic_equation_v_only_Jacobian!(), but got ion t_params.")
     dt = t_params.dt[]
 
@@ -5625,14 +5694,15 @@ equation.
         jacobian_initialize_bc_diagonal!(jacobian, z_speed)
     end
 
-    sub_terms, this_z_speed = get_electron_sub_terms_v_only_Jacobian(
+    sub_terms, speeds = get_electron_sub_terms_v_only_Jacobian(
         dens, ddens_dz, upar, dupar_dz, p, dp_dz, dvth_dz, zeroth_moment, first_moment,
         second_moment, third_moment, dthird_moment_dz, dqpar_dz, upar_ion, f, dpdf_dz,
         dpdf_dvpa, d2pdf_dvpa2, me, moments, collisions, external_source_settings,
-        num_diss_params, t_params, ion_dt, z, vperp, vpa, z_speed, vpa_speed, ir, iz)
+        num_diss_params, t_params, ion_dt, z, vperp, vpa, z_speed, vperp_speed, vpa_speed,
+        ir, iz)
     pdf_terms, p_terms = get_all_electron_terms(sub_terms)
 
-    add_term_to_Jacobian!(jacobian, :electron_pdf, dt, pdf_terms, this_z_speed)
+    add_term_to_Jacobian!(jacobian, :electron_pdf, dt, pdf_terms, speeds)
     if t_params.include_wall_bc_in_preconditioner
         add_wall_boundary_condition_to_Jacobian!(
             jacobian, phi, f, p[], vth, upar, z, vperp, vpa, vperp_spectral, vpa_spectral,
@@ -5647,11 +5717,11 @@ end
 
 """
     fill_electron_kinetic_equation_z_only_Jacobian_f!(
-        jacobian_matrix, f, p, dpdf_dz, dpdf_dvpa, z_speed, moments, zeroth_moment,
-        first_moment, second_moment, third_moment, dthird_moment_dz, collisions,
-        composition, z, vperp, vpa, z_spectral, vperp_spectral, vpa_spectral, z_advect,
-        vpa_advect, scratch_dummy, external_source_settings, num_diss_params, t_params,
-        ion_dt, ir, ivperp, ivpa, add_idenity=true)
+        jacobian_matrix, f, p, dpdf_dz, dpdf_dvpa, z_speed, vperp_speed, vpa_speed,
+        moments, zeroth_moment, first_moment, second_moment, third_moment,
+        dthird_moment_dz, collisions, composition, z, vperp, vpa, z_spectral,
+        vperp_spectral, vpa_spectral, scratch_dummy, external_source_settings,
+        num_diss_params, t_params, ion_dt, ir, ivperp, ivpa, add_idenity=true)
 
 Fill a pre-allocated matrix with the Jacobian matrix for a z-direction solve part of the
 ADI method for the electron kinetic equation.
@@ -5661,16 +5731,18 @@ ADI method for the electron kinetic equation.
                          p::AbstractVector{mk_float}, dpdf_dz::AbstractVector{mk_float},
                          dpdf_dvpa::AbstractVector{mk_float},
                          d2pdf_dvpa2::AbstractVector{mk_float},
-                         z_speed::AbstractVector{mk_float}, moments,
+                         z_speed::AbstractVector{mk_float},
+                         vperp_speed::AbstractVector{mk_float},
+                         vpa_speed::AbstractVector{mk_float}, moments,
                          zeroth_moment::AbstractVector{mk_float},
                          first_moment::AbstractVector{mk_float},
                          second_moment::AbstractVector{mk_float},
                          third_moment::AbstractVector{mk_float},
                          dthird_moment_dz::AbstractVector{mk_float}, collisions,
                          composition, z::coordinate, vperp::coordinate, vpa::coordinate,
-                         z_spectral, vperp_spectral, vpa_spectral, z_advect, vpa_advect,
-                         scratch_dummy, external_source_settings, num_diss_params,
-                         t_params, ion_dt, ir, ivperp, ivpa, add_identity=true) = begin
+                         z_spectral, vperp_spectral, vpa_spectral, scratch_dummy,
+                         external_source_settings, num_diss_params, t_params, ion_dt, ir,
+                         ivperp, ivpa, add_identity=true) = begin
     @debug_consistency_checks t_params.electron === nothing || error("electron t_params should be passed to fill_electron_kinetic_equation_z_only_Jacobian!(), but got ion t_params.")
     dt = t_params.dt[]
 
@@ -5691,25 +5763,26 @@ ADI method for the electron kinetic equation.
         jacobian_initialize_bc_diagonal!(jacobian, z_speed)
     end
 
-    sub_terms = @views get_electron_sub_terms_z_only_Jacobian(
+    sub_terms, speeds = @views get_electron_sub_terms_z_only_Jacobian(
         dens, ddens_dz, upar, dupar_dz, p, dp_dz, dvth_dz, zeroth_moment, first_moment,
         second_moment, third_moment, dthird_moment_dz, dqpar_dz, upar_ion, f, dpdf_dz,
         dpdf_dvpa, d2pdf_dvpa2, me, moments, collisions, external_source_settings,
-        num_diss_params, t_params, ion_dt, z, vperp, vpa, z_speed, ir, ivperp, ivpa)
+        num_diss_params, t_params, ion_dt, z, vperp, vpa, z_speed, vperp_speed, vpa_speed,
+        ir, ivperp, ivpa)
     pdf_terms, p_terms = get_all_electron_terms(sub_terms)
 
-    add_term_to_Jacobian!(jacobian, :electron_pdf, dt, pdf_terms, z_speed)
+    add_term_to_Jacobian!(jacobian, :electron_pdf, dt, pdf_terms, speeds)
 
     return nothing
 end
 
 """
     fill_electron_kinetic_equation_z_only_Jacobian_p!(
-        jacobian_matrix, p, moments, zeroth_moment, first_moment, second_moment,
-        third_moment, dthird_moment_dz, collisions, composition, z, vperp, vpa,
-        z_spectral, vperp_spectral, vpa_spectral, z_advect, vpa_advect, scratch_dummy,
-        external_source_settings, num_diss_params, t_params, ion_dt, ir, evolve_p,
-        add_identity=true)
+        jacobian_matrix, p, f, dpdf_dvpa, dpdf_dvpa2, z_speed, vperp_speed, vpa_speed,
+        moments, zeroth_moment, first_moment, second_moment, third_moment,
+        dthird_moment_dz, collisions, composition, z, vperp, vpa, z_spectral,
+        vperp_spectral, vpa_spectral, scratch_dummy, external_source_settings,
+        num_diss_params, t_params, ion_dt, ir, evolve_p, add_identity=true)
 
 Fill a pre-allocated matrix with (if `evolve_p=true`) the Jacobian matrix for a
 z-direction solve part of the ADI method for the electron energy equation.
@@ -5719,16 +5792,18 @@ z-direction solve part of the ADI method for the electron energy equation.
                          f::AbstractVector{mk_float}, dpdf_dz::AbstractVector{mk_float},
                          dpdf_dvpa::AbstractVector{mk_float},
                          d2pdf_dvpa2::AbstractVector{mk_float},
-                         z_speed::AbstractVector{mk_float}, moments,
+                         z_speed::AbstractVector{mk_float},
+                         vperp_speed::AbstractVector{mk_float},
+                         vpa_speed::AbstractVector{mk_float}, moments,
                          zeroth_moment::AbstractVector{mk_float},
                          first_moment::AbstractVector{mk_float},
                          second_moment::AbstractVector{mk_float},
                          third_moment::AbstractVector{mk_float},
                          dthird_moment_dz::AbstractVector{mk_float}, collisions,
                          composition, z::coordinate, vperp::coordinate, vpa::coordinate,
-                         z_spectral, vperp_spectral, vpa_spectral, z_advect, vpa_advect,
-                         scratch_dummy, external_source_settings, num_diss_params,
-                         t_params, ion_dt, ir, evolve_p, add_identity=true) = begin
+                         z_spectral, vperp_spectral, vpa_spectral, scratch_dummy,
+                         external_source_settings, num_diss_params, t_params, ion_dt, ir,
+                         evolve_p, add_identity=true) = begin
     @debug_consistency_checks t_params.electron === nothing || error("electron t_params should be passed to fill_electron_kinetic_equation_z_only_Jacobian_p!(), but got ion t_params.")
     dt = t_params.dt[]
 
@@ -5755,14 +5830,15 @@ z-direction solve part of the ADI method for the electron energy equation.
         return nothing
     end
 
-    sub_terms = @views get_electron_sub_terms_z_only_Jacobian(
+    sub_terms, speeds = @views get_electron_sub_terms_z_only_Jacobian(
         dens, ddens_dz, upar, dupar_dz, p, dp_dz, dvth_dz, zeroth_moment, first_moment,
         second_moment, third_moment, dthird_moment_dz, dqpar_dz, upar_ion, f, dpdf_dz,
         dpdf_dvpa, d2pdf_dvpa2, me, moments, collisions, external_source_settings,
-        num_diss_params, t_params, ion_dt, z, vperp, vpa, z_speed, ir, 1, 1)
+        num_diss_params, t_params, ion_dt, z, vperp, vpa, z_speed, vperp_speed, vpa_speed,
+        ir, 1, 1)
     pdf_terms, p_terms = get_all_electron_terms(sub_terms)
 
-    add_term_to_Jacobian!(jacobian, :electron_p, dt, p_terms, z_speed)
+    add_term_to_Jacobian!(jacobian, :electron_p, dt, p_terms, speeds)
 
     return nothing
 end

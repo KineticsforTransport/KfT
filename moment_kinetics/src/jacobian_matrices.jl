@@ -6,7 +6,8 @@ module jacobian_matrices
 export jacobian_info, create_jacobian_info, jacobian_initialize_identity!,
        jacobian_initialize_zero!, jacobian_initialize_bc_diagonal!, get_joined_array,
        get_sparse_joined_array, get_joined_array_adi, EquationTerm, ConstantTerm,
-       CompoundTerm, NullTerm, add_term_to_Jacobian!
+       CompoundTerm, NullTerm, add_term_to_Jacobian!,
+       add_periodicity_constraint_to_jacobian!
 
 using ..array_allocation: allocate_shared_float, allocate_float
 using ..communication
@@ -36,6 +37,7 @@ struct mini_coordinate
     wgts::Vector{mk_float}
     irank::mk_int
     nrank::mk_int
+    bc::String
     periodic::Bool
     radau_first_element::Bool
 
@@ -126,13 +128,14 @@ because it is set by boundary conditions.
 `synchronize` is the function to be called to synchronize all processes in the
 shared-memory group that is working with this `jacobian_info` object.
 """
-struct jacobian_info{Tmat,N2,NTerms,Tvecinds,Tvecdims,Tveccoords,Tdimsizes,Tdimsteps,Tranges,Tfranges,Tlbranges,Tlbdranges,Tcoords,Tspectral,Tbskip,Tsync}
+struct jacobian_info{Tmat,N2,NTerms,Tvecinds,Tvecdims,Tvecdimnums,Tveccoords,Tdimsizes,Tdimsteps,Tdissf,Tranges,Tfranges,Tlbranges,Tcoords,Tspectral,Tbskip,Tsync}
     matrix::Tmat
     n_entries::mk_int
     n_entries_squared_val::Val{N2}
     state_vector_entries::NTuple{NTerms, Symbol}
     state_vector_numbers::Tvecinds
     state_vector_dims::Tvecdims
+    state_vector_dim_numbers::Tvecdimnums
     state_vector_coords::Tveccoords
     state_vector_is_constraint::NTuple{NTerms, Bool}
     state_vector_sizes::NTuple{NTerms, mk_int}
@@ -141,9 +144,9 @@ struct jacobian_info{Tmat,N2,NTerms,Tvecinds,Tvecdims,Tveccoords,Tdimsizes,Tdims
     state_vector_local_ranges::Tranges
     state_vector_local_flattened_ranges::Tfranges
     local_block_ranges::Tlbranges
-    local_block_diagonal_inds::Tlbdranges
     coords::Tcoords
     spectral::Tspectral
+    both_zero_flags::Tdissf
     boundary_skip_funcs::Tbskip
     synchronize::Tsync
 end
@@ -168,13 +171,18 @@ with all the needed 'spectral' objects.
 `comm` is the communicator to use to allocate shared memory arrays. `synchronize` is the
 function used to synchronize between shared-memory operations.
 
+`both_zero_flags` indicate which dimensions either include dissipation or have "both_zero"
+boundary conditions set, as this affects how velocity space boundary conditions are
+applied.
+
 `boundary_skip_funcs` is a NamedTuple whose keys are the variable names and whose values
 are functions to use to skip points that would be set by boundary conditions (or `nothing`
 if no function is needed for the variable).
 """
 function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=comm_block[],
                               synchronize::Union{Function,Nothing}=_block_synchronize,
-                              boundary_skip_funcs::BSF=nothing, block_banded=true, kwargs...) where {BSF}
+                              boundary_skip_funcs::BSF=nothing, both_zero_flags=nothing,
+                              block_banded=true, kwargs...) where {BSF}
 
     @debug_consistency_checks all(all(d ∈ keys(coords) for d ∈ v[2]) for v ∈ values(kwargs)) || error("Some coordinate required by the state variables were not included in `coords`.")
 
@@ -184,8 +192,10 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
     state_vector_entries = Tuple(keys(kwargs))
     n_entries = length(state_vector_entries)
     state_vector_numbers = (; (name => i for (i,name) ∈ enumerate(state_vector_entries))...)
+    dim_numbers = (; (name => i for (i,name) ∈ enumerate(keys(coords)))...)
     state_vector_region_types = Tuple(v[1] for v ∈ values(kwargs))
     state_vector_dims = Tuple(Tuple(v[2]) for v ∈ values(kwargs))
+    state_vector_dim_numbers = Tuple(Tuple(dim_numbers[d] for d ∈ v) for v ∈ state_vector_dims)
     state_vector_coords = Tuple(Tuple(mini_coords[d] for d ∈ v) for v ∈ state_vector_dims)
     state_vector_is_constraint = Tuple(v[3] for v ∈ values(kwargs))
     state_vector_sizes = Tuple(prod(mini_coords[d].n for d ∈ dims; init=1) for dims ∈ state_vector_dims)
@@ -205,7 +215,7 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
         # Periodic, but this cannot be handled by the structure of BlockSkylineMatrix at
         # the moment, so revert to dense matrices.
         println("WARNING: periodic bcs not compatible with block-banded matrix "
-                * "strucutre, using dense matrix storage for Jacobian matrix.")
+                * "structure, using dense matrix storage for Jacobian matrix.")
         block_banded = false
     end
 
@@ -381,12 +391,8 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
             end
             return intersect(all_diagonal_inds, block_local_range)
         end
-        local_block_diagonal_inds = Tuple(get_block_diagonal_inds(jacobian_matrix[ib][ib],
-                                                                  local_block_ranges[ib][ib])
-                                          for ib ∈ 1:n_entries)
     else
         local_block_ranges = nothing
-        local_block_diagonal_inds = nothing
     end
 
     if synchronize === nothing
@@ -399,11 +405,11 @@ function create_jacobian_info(coords::NamedTuple, spectral::NamedTuple; comm=com
 
     return jacobian_info(jacobian_matrix, n_entries, Val(n_entries^2),
                          state_vector_entries, state_vector_numbers, state_vector_dims,
-                         state_vector_coords, state_vector_is_constraint,
-                         state_vector_sizes, state_vector_dim_sizes,
-                         state_vector_dim_steps, state_vector_local_ranges,
-                         state_vector_local_flattened_ranges, local_block_ranges,
-                         local_block_diagonal_inds, mini_coords, mini_spectral,
+                         state_vector_dim_numbers, state_vector_coords,
+                         state_vector_is_constraint, state_vector_sizes,
+                         state_vector_dim_sizes, state_vector_dim_steps,
+                         state_vector_local_ranges, state_vector_local_flattened_ranges,
+                         local_block_ranges, mini_coords, mini_spectral, both_zero_flags,
                          boundary_skip_funcs, synchronize)
 end
 
@@ -416,16 +422,20 @@ Initialize `jacobian.matrix` with the identity.
     jacobian_matrix = jacobian.matrix
     n_entries = jacobian.n_entries
     if isa(jacobian_matrix[1][1], BlockSkylineMatrix)
-        local_block_ranges = jacobian.local_block_ranges
-        local_block_diagonal_inds = jacobian.local_block_diagonal_inds
+        state_vector_local_flattened_ranges = jacobian.state_vector_local_flattened_ranges
         for col_variable ∈ 1:n_entries
+            col_range = state_vector_local_flattened_ranges[col_variable]
             for row_variable ∈ 1:n_entries
                 this_block = jacobian_matrix[row_variable][col_variable]
-                local_range = local_block_ranges[row_variable][col_variable]
-                this_block.data[local_range] .= 0.0
                 if col_variable == row_variable
-                    local_diagonal_inds = local_block_diagonal_inds[row_variable]
-                    this_block.data[local_diagonal_inds] .= 1.0
+                    initialize_identity_diagonal_block!(jacobian, this_block,
+                                                        jacobian.state_vector_local_ranges[row_variable],
+                                                        jacobian.state_vector_dim_sizes[row_variable],
+                                                        jacobian.state_vector_coords[row_variable])
+                else
+                    for col ∈ col_range
+                        this_block[:,col] .= 0.0
+                    end
                 end
             end
         end
@@ -436,10 +446,10 @@ Initialize `jacobian.matrix` with the identity.
             for row_variable ∈ 1:n_entries
                 this_block = jacobian_matrix[row_variable][col_variable]
                 if col_variable == row_variable
-                    for col ∈ col_range
-                        this_block[:,col] .= 0.0
-                        this_block[col,col] = 1.0
-                    end
+                    initialize_identity_diagonal_block!(jacobian, this_block,
+                                                        jacobian.state_vector_local_ranges[row_variable],
+                                                        jacobian.state_vector_dim_sizes[row_variable],
+                                                        jacobian.state_vector_coords[row_variable])
                 else
                     for col ∈ col_range
                         this_block[:,col] .= 0.0
@@ -457,6 +467,21 @@ Initialize `jacobian.matrix` with the identity.
                    nothing
                   )
     jacobian.synchronize(id_hash)
+    return nothing
+end
+
+function initialize_identity_diagonal_block!(jacobian, this_block,
+                                             rows_variable_local_ranges,
+                                             rows_variable_dim_sizes,
+                                             rows_variable_coords)
+    for indices_CartesianIndex ∈ CartesianIndices(rows_variable_local_ranges)
+        indices = Tuple(indices_CartesianIndex)
+        # We only put a non-zero entry on the diagonal here, and this is a diagonal block,
+        # so we can operate by columns instead of by rows for efficiency.
+        col_index = get_flattened_index(rows_variable_dim_sizes, indices)
+        this_block[:,col_index] .= 0
+        this_block[col_index,col_index] = 1.0
+    end
     return nothing
 end
 
@@ -1587,8 +1612,12 @@ function add_derivative_term_to_Jacobian_row!(jacobian::jacobian_info,
                     jacobian_row_block[ci] += prefactor * Dmat_slice[i] / scale
                 end
             end
+        elseif ielement == derivative_coord.nelement_local &&
+                igrid == derivative_coord.ngrid && derivative_coord.periodic
+            # In serial, periodic case, only contribution to the upper boundary rows is
+            # the periodicity constraint, so no need to do anything here.
         elseif ielement == derivative_coord.nelement_local && igrid == derivative_coord.ngrid
-            if derivative_coord.irank == derivative_coord.nrank - 1
+            if (derivative_coord.irank == derivative_coord.nrank - 1)
                 column_inds =
                     get_element_inds(jacobian, current_indices,
                                      term.current_derivative_indices,
@@ -1814,20 +1843,20 @@ end
 """
     add_term_to_Jacobian!(jacobian::jacobian_info, rows_variable::Symbol,
                           prefactor::mk_float, terms::EquationTerm,
-                          boundary_speed=nothing)
+                          boundary_speeds=nothing)
 
 Add the contribution of `terms` to `jacobian`. The terms should be all or part of the
 evolution equation for `rows_variable`.
 
 `prefactor` multiplies all the terms. Usually it will be the timestep.
 
-`boundary_speed` is the speed needed by `jacobian.boundary_skip_funcs` to determine
-whether a grid point is set by the boundary conditions. This will usually be the speed in
-the z-direction.
+`boundary_speeds` are the speeds needed by `jacobian.boundary_skip_funcs` to determine
+whether a grid point is set by the boundary conditions. This will usually be the speeds
+corresponding to each dimension.
 """
 @timeit global_timer add_term_to_Jacobian!(jacobian::jacobian_info, rows_variable::Symbol,
                                            prefactor::mk_float, terms::EquationTerm,
-                                           boundary_speed=nothing) = begin
+                                           boundary_speeds=nothing) = begin
     if rows_variable ∉ jacobian.state_vector_entries
         # This term not being used at the moment.
         return nothing
@@ -1838,20 +1867,22 @@ the z-direction.
         rows_variable_number = jacobian.state_vector_numbers[rows_variable]
         @debug_consistency_checks jacobian.state_vector_is_constraint[rows_variable_number] && prefactor != 1.0 && error("Prefactor should be 1 for constraint equation, got $prefactor for $rows_variable equation")
         rows_variable_dims = jacobian.state_vector_dims[rows_variable_number]
+        rows_variable_dim_numbers = jacobian.state_vector_dim_numbers[rows_variable_number]
         rows_variable_dim_sizes = jacobian.state_vector_dim_sizes[rows_variable_number]
         rows_variable_local_ranges = jacobian.state_vector_local_ranges[rows_variable_number]
         rows_variable_coords = jacobian.state_vector_coords[rows_variable_number]
 
         boundary_skip = jacobian.boundary_skip_funcs[rows_variable]
+        both_zero_flags = jacobian.both_zero_flags
 
         set_dimension_numbers!(jacobian, rows_variable_number, terms)
 
         block_row = jacobian_matrix[rows_variable_number]
 
-        add_term_to_Jacobian!(jacobian, rows_variable, prefactor, terms, boundary_speed,
+        add_term_to_Jacobian!(jacobian, rows_variable, prefactor, terms, boundary_speeds,
                               block_row, rows_variable_number, rows_variable_dims,
                               rows_variable_dim_sizes, rows_variable_local_ranges,
-                              rows_variable_coords, boundary_skip)
+                              rows_variable_coords, boundary_skip, both_zero_flags)
     end
 
     return nothing
@@ -1863,16 +1894,18 @@ end
 # `jacobian.state_vector_local_ranges` has to happen before this function is called to
 # ensure type stability.
 function add_term_to_Jacobian!(jacobian::jacobian_info, rows_variable::Symbol,
-                               prefactor::mk_float, terms::EquationTerm, boundary_speed,
+                               prefactor::mk_float, terms::EquationTerm, boundary_speeds,
                                block_row::NTuple{N,AbstractMatrix{mk_float}} where N,
                                rows_variable_number::mk_int, rows_variable_dims::Tuple,
                                rows_variable_dim_sizes::Tuple,
                                rows_variable_local_ranges::Tuple,
-                               rows_variable_coords::Tuple, boundary_skip::F) where {F}
+                               rows_variable_coords::Tuple, boundary_skip::F,
+                               both_zero_flags) where {F}
     @inbounds begin
         for indices_CartesianIndex ∈ CartesianIndices(rows_variable_local_ranges)
             indices = Tuple(indices_CartesianIndex)
-            if boundary_skip !== nothing && boundary_skip(boundary_speed, indices...,
+            if boundary_skip !== nothing && boundary_skip(boundary_speeds,
+                                                          both_zero_flags, indices...,
                                                           rows_variable_coords...)
                 continue
             end
@@ -1883,7 +1916,102 @@ function add_term_to_Jacobian!(jacobian::jacobian_info, rows_variable::Symbol,
             set_current_values!(jacobian, terms, indices)
 
             add_term_to_Jacobian_row!(jacobian, jacobian_row, rows_variable, prefactor, terms,
-                                      indices, boundary_speed)
+                                      indices, boundary_speeds)
+        end
+
+        id_hash = @debug_block_synchronize_quick_ifelse(
+                       hash(string(@__FILE__, @__LINE__)),
+                       nothing
+                      )
+        jacobian.synchronize(id_hash)
+        return nothing
+    end
+end
+
+"""
+    add_periodicity_constraint_to_jacobian!(jacobian::jacobian_info)
+
+When using a preconditioner solver that does not have support for overlapping rows/columns
+(e.g. the serial LU solver), and one or more dimensions is periodic, we need to add a
+constraint to force the repeated points (that are perioidic copies of each other) to be
+equal. Apart from this function that adds the constraint, the other contributions to the
+Jacobian matrix will be identical for the rows that correspond to these repeated points.
+We can therefore leave the row corresponding to the 'lower' point unmodified, and add the
+constraint equation to the row corresponding to the 'upper' point, while leaving both RHS
+vector values unchanged. The solution is equivalent to the one that is given by the matrix
+where the 'lower' row is subtracted from the 'upper' row to leave just <constraint>=0, but
+this way minimises the number of places in the code where the `handle_overlaps=Val(false)`
+but periodic case needs to be handled specially.
+"""
+function add_periodicity_constraint_to_jacobian!(jacobian::jacobian_info)
+    @timeit global_timer "add_periodicity_constraint_to_jacobian!" begin
+        @inbounds begin
+            jacobian_matrix = jacobian.matrix
+            for rows_variable ∈ jacobian.state_vector_entries
+                rows_variable_number = jacobian.state_vector_numbers[rows_variable]
+                if jacobian.state_vector_is_constraint[rows_variable_number]
+                    # No need to add extra constraint for constraint rows.
+                    continue
+                end
+                rows_variable_dims = jacobian.state_vector_dims[rows_variable_number]
+                rows_variable_dim_sizes = jacobian.state_vector_dim_sizes[rows_variable_number]
+                rows_variable_local_ranges = jacobian.state_vector_local_ranges[rows_variable_number]
+                rows_variable_coords = jacobian.state_vector_coords[rows_variable_number]
+
+                # Only need diagonal block.
+                block = jacobian_matrix[rows_variable_number][rows_variable_number]
+
+                add_periodicity_constraint_to_jacobian!(jacobian, block,
+                                                        rows_variable_number,
+                                                        rows_variable_dims,
+                                                        rows_variable_dim_sizes,
+                                                        rows_variable_local_ranges,
+                                                        rows_variable_coords)
+            end
+        end
+    end
+
+    return nothing
+end
+
+# Internal version of the function, which ensures that rows_variable_local_ranges is a
+# Tuple so that the `CartesianIndices` call is type-stable - a Tuple is required so that
+# `CartesianIndices` knows at compile time how many indices there are. The lookup from
+# `jacobian.state_vector_local_ranges` has to happen before this function is called to
+# ensure type stability.
+function add_periodicity_constraint_to_jacobian!(jacobian::jacobian_info,
+                                                 block::AbstractMatrix{mk_float},
+                                                 rows_variable_number::mk_int,
+                                                 rows_variable_dims::Tuple,
+                                                 rows_variable_dim_sizes::Tuple,
+                                                 rows_variable_local_ranges::Tuple,
+                                                 rows_variable_coords::Tuple)
+    @inbounds begin
+        for (ic, coord) ∈ enumerate(rows_variable_coords)
+            if !coord.periodic
+                continue
+            end
+            if coord.nrank > 1
+                error("cannot handle periodicity like this with MPI-distributed "
+                      * "coordinate.")
+            end
+            n = coord.n
+            for indices_CartesianIndex ∈ CartesianIndices(rows_variable_local_ranges)
+                indices = Tuple(indices_CartesianIndex)
+
+                if indices[ic] == n
+                    this_row_index = get_flattened_index(rows_variable_dim_sizes, indices)
+                    lower_row_indices = ntuple(d -> d==ic ? 1 : indices[d], length(indices))
+                    lower_row_index = get_flattened_index(rows_variable_dim_sizes,
+                                                          lower_row_indices)
+                    # Add periodicity constraint constraint:
+                    #    x_upper - xlower = 0
+                    #    x[coord_index=n] - x[coord_index=1] = 0
+                    # Before this function is called, the corresponding matrix rows are
+                    # the identity.
+                    block[this_row_index,lower_row_index] -= 1.0
+                end
+            end
         end
 
         id_hash = @debug_block_synchronize_quick_ifelse(
