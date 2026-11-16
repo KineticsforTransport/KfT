@@ -10,21 +10,22 @@ export scaled_chebyshev_radau_grid
 export chebyshev_spectral_derivative!
 export chebyshev_info
 
-using LinearAlgebra: mul!
+using LinearAlgebra
 using FFTW
 using MPI
+using SparseArrays
 using ..type_definitions: mk_float, mk_int
 using ..array_allocation: allocate_float, allocate_complex
 using ..clenshaw_curtis: clenshawcurtisweights
-import ..calculus: elementwise_derivative!
-import ..calculus: elementwise_indefinite_integration!
+import ..calculus: elementwise_derivative!, elementwise_indefinite_integration!,
+                   setup_global_weak_form_matrix!
 using ..communication
 using ..debugging
 import ..interpolation: single_element_interpolate!,
                         fill_single_element_interpolation_matrix!
-using ..moment_kinetics_structs: discretization_info
+using ..moment_kinetics_structs: weak_discretization_info
 using ..gauss_legendre: integration_matrix!
-using ..lagrange_polynomials: lagrange_poly_optimised
+using ..lagrange_polynomials: lagrange_poly_optimised, lagrange_weak_product_matrix!
 """
 Chebyshev pseudospectral discretization
 """
@@ -51,11 +52,32 @@ struct chebyshev_base_info{TForward <: FFTW.cFFTWPlan, TBackward <: AbstractFFTs
     D0::Array{mk_float,1}
     # elementwise integration matrix (ngrid*ngrid)
     indefinite_integration_matrix::Array{mk_float,2}
+    # local mass matrix type 0
+    M0::Array{mk_float,2}
+    # local mass matrix type 1
+    M1::Array{mk_float,2}
+    # local K (weak second derivative) matrix type 0
+    K0::Array{mk_float,2}
+    # local K (weak second derivative) matrix type 1
+    K1::Array{mk_float,2}
+    # local P (weak derivative no integration by parts) matrix type 0
+    P0::Array{mk_float,2}
 end
 
-struct chebyshev_info{TForward <: FFTW.cFFTWPlan, TBackward <: AbstractFFTs.ScaledPlan} <: discretization_info
+struct chebyshev_info{TForward <: FFTW.cFFTWPlan, TBackward <: AbstractFFTs.ScaledPlan, TSparse, TLU} <: weak_discretization_info
     lobatto::chebyshev_base_info{TForward, TBackward}
     radau::chebyshev_base_info{TForward, TBackward}
+    # global (1D) mass matrix
+    mass_matrix::TSparse
+    # global (1D) weak second derivative matrix
+    K_matrix::TSparse
+    # global (1D) weak Laplacian derivative matrix
+    L_matrix::TSparse
+    # global (1D) weak second derivative matrix, with inverse mass matrix included (so
+    # matrix is dense)
+    dense_second_deriv_matrix::Array{mk_float,2}
+    # mass matrix global (1D) LU object
+    mass_matrix_lu::TLU
 end
 
 """
@@ -114,6 +136,20 @@ function setup_chebyshev_pseudospectral(coord, run_directory; ignore_MPI=false)
     lobatto = setup_chebyshev_pseudospectral_lobatto(coord, fftw_flags)
     radau = setup_chebyshev_pseudospectral_radau(coord, fftw_flags)
 
+    mass_matrix = allocate_float(coord, coord)
+    K_matrix = allocate_float(coord, coord)
+    L_matrix = allocate_float(coord, coord)
+
+    dirichlet_bc = (coord.bc in ["zero", "both_zero", "constant"]) # and further options in future
+    periodic_bc = coord.periodic
+    setup_global_weak_form_matrix!(mass_matrix, lobatto, radau, coord, "M"; periodic_bc=periodic_bc)
+    setup_global_weak_form_matrix!(K_matrix, lobatto, radau, coord, "K_with_BC_terms"; periodic_bc=periodic_bc)
+    setup_global_weak_form_matrix!(L_matrix, lobatto, radau, coord, "L_with_BC_terms")
+    dense_second_deriv_matrix = mass_matrix \ K_matrix
+
+    mass_matrix = sparse(mass_matrix)
+    mass_matrix_lu = lu(mass_matrix)
+
     if global_rank[] == 0
         if wisdom_filename !== nothing
             FFTW.export_wisdom(wisdom_filename)
@@ -125,7 +161,8 @@ function setup_chebyshev_pseudospectral(coord, run_directory; ignore_MPI=false)
     # reading it - root waits here for all other processes.
     this_barrier()
 
-    return chebyshev_info(lobatto,radau)
+    return chebyshev_info(lobatto, radau, mass_matrix, sparse(K_matrix), sparse(L_matrix),
+                          dense_second_deriv_matrix, mass_matrix_lu)
 end
 
 function setup_chebyshev_pseudospectral_lobatto(coord, fftw_flags)
@@ -149,39 +186,107 @@ function setup_chebyshev_pseudospectral_lobatto(coord, fftw_flags)
     indefinite_integration_matrix = allocate_float(coord.ngrid, coord.ngrid)
     x = chebyshevpoints(coord.ngrid)
     integration_matrix!(indefinite_integration_matrix,x,coord.ngrid)
+
+    # Single element matrices are calculated by integrating polynomials derived from the
+    # Lagrange polynomials from an 'unscaled' grid on [-1,1].
+    lagrange_nodes = x
+    lagrange_other_nodes = allocate_float(coord.ngrid - 1, coord.ngrid)
+    lagrange_one_over_denominator = allocate_float(coord.ngrid)
+    ngrid = coord.ngrid
+    for i ∈ 1:ngrid
+        @views lagrange_other_nodes[1:i-1,i] = lagrange_nodes[1:i-1]
+        @views lagrange_other_nodes[i:end,i] = lagrange_nodes[i+1:end]
+        if ngrid == 1
+            lagrange_one_over_denominator[i] = 1.0
+        else
+            lagrange_one_over_denominator[i] =
+                1.0 / prod(lagrange_nodes[i] - n for n ∈ @view lagrange_other_nodes[:,i])
+        end
+    end
+
+    M0 = allocate_float(ngrid, ngrid)
+    lagrange_weak_product_matrix!(M0, ngrid, lagrange_nodes, lagrange_other_nodes,
+                                  lagrange_one_over_denominator, "M0")
+    M1 = allocate_float(ngrid, ngrid)
+    lagrange_weak_product_matrix!(M1, ngrid, lagrange_nodes, lagrange_other_nodes,
+                                  lagrange_one_over_denominator, "M1")
+    K0 = allocate_float(ngrid, ngrid)
+    lagrange_weak_product_matrix!(K0, ngrid, lagrange_nodes, lagrange_other_nodes,
+                                  lagrange_one_over_denominator, "K0")
+    K1 = allocate_float(ngrid, ngrid)
+    lagrange_weak_product_matrix!(K1, ngrid, lagrange_nodes, lagrange_other_nodes,
+                                  lagrange_one_over_denominator, "K1")
+    P0 = allocate_float(ngrid, ngrid)
+    lagrange_weak_product_matrix!(P0, ngrid, lagrange_nodes, lagrange_other_nodes,
+                                  lagrange_one_over_denominator, "P0")
+    
     # return a structure containing the information needed to carry out
     # a 1D Chebyshev transform
     return chebyshev_base_info(fext, true, fcheby, dcheby, forward_transform,
                                backward_transform, Dmat, D0,
-                               indefinite_integration_matrix)
+                               indefinite_integration_matrix, M0, M1, K0, K1, P0)
 end
 
 function setup_chebyshev_pseudospectral_radau(coord, fftw_flags)
-        # ngrid_fft is the number of grid points in the extended domain
-        # in z = cos(theta).  this is necessary to turn a cosine transform on [0,π]
-        # into a complex transform on [0,2π], which is more efficient in FFTW
-        ngrid_fft = 2*coord.ngrid - 1
-        # create array for f on extended [0,2π] domain in theta = ArcCos[z]
-        fext = allocate_complex(ngrid_fft)
-        # create arrays for storing Chebyshev spectral coefficients of f and f'
-        fcheby = allocate_float(coord.ngrid, coord.nelement_local)
-        dcheby = allocate_float(coord.ngrid)
-        # setup the plans for the forward and backward Fourier transforms
-        forward_transform = plan_fft!(fext, flags=fftw_flags)
-        backward_transform = plan_ifft!(fext, flags=fftw_flags)
-        # create array for differentiation matrix 
-        Dmat = allocate_float(coord.ngrid, coord.ngrid)
-        cheb_derivative_matrix_elementwise_radau_by_FFT!(Dmat, coord, fcheby, dcheby, fext, forward_transform)
-        D0 = allocate_float(coord.ngrid)
-        cheb_lower_endpoint_derivative_vector_elementwise_radau_by_FFT!(D0, coord, fcheby, dcheby, fext, forward_transform)
-        indefinite_integration_matrix = allocate_float(coord.ngrid, coord.ngrid)
-        x = chebyshev_radau_points(coord.ngrid)
-        integration_matrix!(indefinite_integration_matrix,x,coord.ngrid)
-        # return a structure containing the information needed to carry out
-        # a 1D Chebyshev transform
-        return chebyshev_base_info(fext, false, fcheby, dcheby, forward_transform,
-                                   backward_transform, Dmat, D0,
-                                   indefinite_integration_matrix)
+    # ngrid_fft is the number of grid points in the extended domain in z = cos(theta).
+    # this is necessary to turn a cosine transform on [0,π] into a complex transform on
+    # [0,2π], which is more efficient in FFTW
+    ngrid_fft = 2*coord.ngrid - 1
+    # create array for f on extended [0,2π] domain in theta = ArcCos[z]
+    fext = allocate_complex(ngrid_fft)
+    # create arrays for storing Chebyshev spectral coefficients of f and f'
+    fcheby = allocate_float(coord.ngrid, coord.nelement_local)
+    dcheby = allocate_float(coord.ngrid)
+    # setup the plans for the forward and backward Fourier transforms
+    forward_transform = plan_fft!(fext, flags=fftw_flags)
+    backward_transform = plan_ifft!(fext, flags=fftw_flags)
+    # create array for differentiation matrix 
+    Dmat = allocate_float(coord.ngrid, coord.ngrid)
+    cheb_derivative_matrix_elementwise_radau_by_FFT!(Dmat, coord, fcheby, dcheby, fext, forward_transform)
+    D0 = allocate_float(coord.ngrid)
+    cheb_lower_endpoint_derivative_vector_elementwise_radau_by_FFT!(D0, coord, fcheby, dcheby, fext, forward_transform)
+    indefinite_integration_matrix = allocate_float(coord.ngrid, coord.ngrid)
+    x = chebyshev_radau_points(coord.ngrid)
+    integration_matrix!(indefinite_integration_matrix,x,coord.ngrid)
+
+    # Single element matrices are calculated by integrating polynomials derived from the
+    # Lagrange polynomials from an 'unscaled' grid on [-1,1].
+    lagrange_nodes = x
+    lagrange_other_nodes = allocate_float(coord.ngrid - 1, coord.ngrid)
+    lagrange_one_over_denominator = allocate_float(coord.ngrid)
+    ngrid = coord.ngrid
+    for i ∈ 1:ngrid
+        @views lagrange_other_nodes[1:i-1,i] = lagrange_nodes[1:i-1]
+        @views lagrange_other_nodes[i:end,i] = lagrange_nodes[i+1:end]
+        if ngrid == 1
+            lagrange_one_over_denominator[i] = 1.0
+        else
+            lagrange_one_over_denominator[i] =
+                1.0 / prod(lagrange_nodes[i] - n for n ∈ @view lagrange_other_nodes[:,i])
+        end
+    end
+
+    M0 = allocate_float(coord.ngrid, coord.ngrid)
+    lagrange_weak_product_matrix!(M0, ngrid, lagrange_nodes, lagrange_other_nodes,
+                                  lagrange_one_over_denominator, "M0")
+    M1 = allocate_float(coord.ngrid, coord.ngrid)
+    lagrange_weak_product_matrix!(M1, ngrid, lagrange_nodes, lagrange_other_nodes,
+                                  lagrange_one_over_denominator, "M1")
+    K0 = allocate_float(coord.ngrid, coord.ngrid)
+    lagrange_weak_product_matrix!(K0, ngrid, lagrange_nodes, lagrange_other_nodes,
+                                  lagrange_one_over_denominator, "K0")
+    K1 = allocate_float(coord.ngrid, coord.ngrid)
+    lagrange_weak_product_matrix!(K1, ngrid, lagrange_nodes, lagrange_other_nodes,
+                                  lagrange_one_over_denominator, "K1")
+    P0 = allocate_float(coord.ngrid, coord.ngrid)
+    lagrange_weak_product_matrix!(P0, ngrid, lagrange_nodes, lagrange_other_nodes,
+                                  lagrange_one_over_denominator, "P0")
+
+    # return a structure containing the information needed to carry out
+    # a 1D Chebyshev transform
+    return chebyshev_base_info(fext, false, fcheby, dcheby, forward_transform,
+                               backward_transform, Dmat, D0,
+                               indefinite_integration_matrix, M0, M1, K0, K1, P0)
 end
 
 """
