@@ -13,7 +13,7 @@ export indefinite_integral!
 
 using ..moment_kinetics_structs: discretization_info, null_spatial_dimension_info,
                                  null_velocity_dimension_info, null_vperp_dimension_info,
-                                 weak_discretization_info
+                                 weak_discretization_info, fourier_info
 using ..timer_utils
 using ..type_definitions: mk_float, mk_int
 using MPI
@@ -145,56 +145,60 @@ function second_derivative!(d2f, f, coord, spectral)
     derivative_elements_to_full_grid!(d2f, coord.scratch_2d, coord)
     # MPI reconcile code here if used with z or r coords
 
-    # Add contribution to penalise discontinuous first derivatives at element
-    # boundaries. For smooth functions this would do nothing so should not affect
-    # convergence of the second derivative. Aims to stabilise numerical instability when
-    # spike develops at an element boundary. The coefficient is an arbitrary choice, it
-    # should probably be large enough for stability but as small as possible.
-    #
-    # Arbitrary numerical coefficient
-    C = 1.0
-    function penalise_discontinuous_first_derivative!(d2f, imin, imax, df)
-        # Left element boundary
-        d2f[imin] += C * df[1]
+    if !isa(spectral, fourier_info)
+        # The Fourier discretization does not have 'element boundaries' so does not need
+        # this (attempted) 'correction'.
+        # Add contribution to penalise discontinuous first derivatives at element
+        # boundaries. For smooth functions this would do nothing so should not affect
+        # convergence of the second derivative. Aims to stabilise numerical instability when
+        # spike develops at an element boundary. The coefficient is an arbitrary choice, it
+        # should probably be large enough for stability but as small as possible.
+        #
+        # Arbitrary numerical coefficient
+        C = 1.0
+        function penalise_discontinuous_first_derivative!(d2f, imin, imax, df)
+            # Left element boundary
+            d2f[imin] += C * df[1]
 
-        # Right element boundary
-        d2f[imax] -= C * df[end]
+            # Right element boundary
+            d2f[imax] -= C * df[end]
 
-        return nothing
-    end
-    @views penalise_discontinuous_first_derivative!(d2f, 1, coord.imax[1],
-                                                    coord.scratch2_2d[:,1])
-    for ielement ∈ 2:coord.nelement_local
-        @views penalise_discontinuous_first_derivative!(d2f, coord.imin[ielement]-1,
-                                                        coord.imax[ielement],
-                                                        coord.scratch2_2d[:,ielement])
-    end
-
-    if coord.periodic
-        # Need to get first derivatives from opposite ends of grid
-        if coord.nelement_local != coord.nelement_global
-            error("Distributed memory MPI not yet supported here")
+            return nothing
         end
-        d2f[1] -= C * coord.scratch2_2d[end,end]
-        # With the first derivative from the opposite end of the grid, d2f[end] here
-        # should be equal to d2f[1] up to rounding errors...
-        @debug_consistency_checks isapprox(d2f[end] + C * coord.scratch2_2d[1,1], d2f[1]; atol=1.0e-14)
-        # ...but because arithmetic operations were in a different order, there may be
-        # rounding errors, so set the two ends exactly equal to ensure consistency for the
-        # rest of the code - we assume that duplicate versions of the 'same point' on
-        # element boundaries (due to periodic bc or distributed-MPI block boundaries) are
-        # exactly equal.
-        d2f[end] = d2f[1]
-    else
-        # For stability don't contribute to evolution at boundaries, in case these
-        # points are not set by a boundary condition.
-        # Full grid may be across processes and bc only applied to extreme ends of the
-        # domain.
-        if coord.irank == 0
-            d2f[1] = 0.0
+        @views penalise_discontinuous_first_derivative!(d2f, 1, coord.imax[1],
+                                                        coord.scratch2_2d[:,1])
+        for ielement ∈ 2:coord.nelement_local
+            @views penalise_discontinuous_first_derivative!(d2f, coord.imin[ielement]-1,
+                                                            coord.imax[ielement],
+                                                            coord.scratch2_2d[:,ielement])
         end
-        if coord.irank == coord.nrank - 1
-            d2f[end] = 0.0
+
+        if coord.periodic
+            # Need to get first derivatives from opposite ends of grid
+            if coord.nelement_local != coord.nelement_global
+                error("Distributed memory MPI not yet supported here")
+            end
+            d2f[1] -= C * coord.scratch2_2d[end,end]
+            # With the first derivative from the opposite end of the grid, d2f[end] here
+            # should be equal to d2f[1] up to rounding errors...
+            @debug_consistency_checks isapprox(d2f[end] + C * coord.scratch2_2d[1,1], d2f[1]; atol=1.0e-14)
+            # ...but because arithmetic operations were in a different order, there may be
+            # rounding errors, so set the two ends exactly equal to ensure consistency for the
+            # rest of the code - we assume that duplicate versions of the 'same point' on
+            # element boundaries (due to periodic bc or distributed-MPI block boundaries) are
+            # exactly equal.
+            d2f[end] = d2f[1]
+        else
+            # For stability don't contribute to evolution at boundaries, in case these
+            # points are not set by a boundary condition.
+            # Full grid may be across processes and bc only applied to extreme ends of the
+            # domain.
+            if coord.irank == 0
+                d2f[1] = 0.0
+            end
+            if coord.irank == coord.nrank - 1
+                d2f[end] = 0.0
+            end
         end
     end
     return nothing
@@ -226,44 +230,49 @@ function laplacian_derivative!(d2f, f, coord, spectral)
     end
     # MPI reconcile code here if used with z or r coords
 
-    # Add contribution to penalise discontinuous first derivatives at element
-    # boundaries. For smooth functions this would do nothing so should not affect
-    # convergence of the second derivative. Aims to stabilise numerical instability when
-    # spike develops at an element boundary. The coefficient is an arbitrary choice, it
-    # should probably be large enough for stability but as small as possible.
-    #
-    # Arbitrary numerical coefficient
-    C = 1.0
-    function penalise_discontinuous_first_derivative!(d2f, imin, imax, df)
-        # Left element boundary
-        d2f[imin] += C * df[1]
+    if !isa(spectral, fourier_info)
+        # The Fourier discretization does not have 'element boundaries' so does not need
+        # this (attempted) 'correction'.
+        # Add contribution to penalise discontinuous first derivatives at element
+        # boundaries. For smooth functions this would do nothing so should not affect
+        # convergence of the second derivative. Aims to stabilise numerical instability when
+        # spike develops at an element boundary. The coefficient is an arbitrary choice, it
+        # should probably be large enough for stability but as small as possible.
+        #
+        # Arbitrary numerical coefficient
+        C = 1.0
+        function penalise_discontinuous_first_derivative!(d2f, imin, imax, df)
+            # Left element boundary
+            d2f[imin] += C * df[1]
 
-        # Right element boundary
-        d2f[imax] -= C * df[end]
+            # Right element boundary
+            d2f[imax] -= C * df[end]
 
-        return nothing
-    end
-    @views penalise_discontinuous_first_derivative!(d2f, 1, coord.imax[1],
-                                                    coord.scratch2_2d[:,1])
-    for ielement ∈ 2:coord.nelement_local
-        @views penalise_discontinuous_first_derivative!(d2f, coord.imin[ielement]-1,
-                                                        coord.imax[ielement],
-                                                        coord.scratch2_2d[:,ielement])
-    end
-
-    if coord.bc ∈ ("zero", "both_zero", "zero-no-regularity")
-        # For stability don't contribute to evolution at boundaries, in case these
-        # points are not set by a boundary condition.
-        # Full grid may be across processes and bc only applied to extreme ends of the
-        # domain.
-        if coord.irank == coord.nrank - 1
-            d2f[end] = 0.0
+            return nothing
         end
-    else
-        error("Unsupported bc '$(coord.bc)'")
+        @views penalise_discontinuous_first_derivative!(d2f, 1, coord.imax[1],
+                                                        coord.scratch2_2d[:,1])
+        for ielement ∈ 2:coord.nelement_local
+            @views penalise_discontinuous_first_derivative!(d2f, coord.imin[ielement]-1,
+                                                            coord.imax[ielement],
+                                                            coord.scratch2_2d[:,ielement])
+        end
+
+        if coord.bc ∈ ("zero", "both_zero", "zero-no-regularity")
+            # For stability don't contribute to evolution at boundaries, in case these
+            # points are not set by a boundary condition.
+            # Full grid may be across processes and bc only applied to extreme ends of the
+            # domain.
+            if coord.irank == coord.nrank - 1
+                d2f[end] = 0.0
+            end
+        else
+            error("Unsupported bc '$(coord.bc)'")
+        end
     end
     return nothing
 end
+
 """
     mass_matrix_solve!(f, b, spectral::weak_discretization_info)
 
