@@ -50,7 +50,7 @@ using ..velocity_moments: get_density, get_upar, get_p, get_ppar, get_pperp
 using ..input_structs: direct_integration, multipole_expansion, delta_f_multipole
 using ..fokker_planck_test: F_Maxwellian, G_Maxwellian, H_Maxwellian, dHdvpa_Maxwellian, dHdvperp_Maxwellian
 using ..fokker_planck_test: d2Gdvpa2_Maxwellian, d2Gdvperp2_Maxwellian, d2Gdvperpdvpa_Maxwellian, dGdvperp_Maxwellian
-using moment_kinetics.gauss_legendre: get_QQ_local!
+using moment_kinetics.calculus: get_QQ_local!
 using Dates
 using SpecialFunctions: ellipk, ellipe
 using SparseArrays: sparse, AbstractSparseArray
