@@ -55,8 +55,8 @@ function get_coordinate_input(input_dict, name; ignore_MPI=false,
         # "chebyshev_pseudospectral", "gausslegendre_pseudospectral" and
         # "finite_difference"
         discretization="chebyshev_pseudospectral",
-        # option for implementation of chebyshev discretization: "FFT" or "matrix"
-        cheb_option="FFT",
+        # option for implementation of chebyshev discretization: "matrix" or "FFT"
+        cheb_option="matrix",
         # finite_difference_option determines the finite difference scheme to be used
         # supported options are "third_order_upwind", "second_order_upwind" and
         # "first_order_upwind"
