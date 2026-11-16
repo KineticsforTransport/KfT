@@ -9,8 +9,6 @@ export GaussLegendreLobatto_mass_matrix!
 export GaussLegendre_mass_matrix_1!
 export GaussLegendreLobatto_inverse_mass_matrix!
 export GaussLegendreLobatto_K_matrix!
-export GaussLegendreLobatto_S_matrix!
-export GaussLegendre_S_matrix_1!
 export scaled_gauss_legendre_lobatto_grid
 export scaled_gauss_legendre_radau_grid
 export gausslegendre_derivative!
@@ -98,35 +96,20 @@ A struct for Gauss-Legendre arrays needed for global operations in 1D,
 contains the struct of elemental matrices for Lobatto and Radau points,
 as well as some assembled 1D global matrices.
 """
-struct gausslegendre_info{TSparse, TSparseCSR, TLU, TLmat, TLmatLU} <: weak_discretization_info
+struct gausslegendre_info{TSparse, TLU} <: weak_discretization_info
     lobatto::gausslegendre_base_info
     radau::gausslegendre_base_info
     # global (1D) mass matrix
-    mass_matrix::Array{mk_float,2}
-    # global (1D) weak derivative matrix
-    #S_matrix::Array{mk_float,2}
-    S_matrix::TSparse
+    mass_matrix::TSparse
     # global (1D) weak second derivative matrix
     K_matrix::TSparse
     # global (1D) weak Laplacian derivative matrix
     L_matrix::TSparse
-    # global (1D) strong first derivative matrix
-    D_matrix::TSparse
-    # global (1D) strong first derivative matrix in Compressed Sparse Row (CSR) format
-    D_matrix_csr::TSparseCSR
     # global (1D) weak second derivative matrix, with inverse mass matrix included (so
     # matrix is dense)
     dense_second_deriv_matrix::Array{mk_float,2}
-    # global (1D) weak Laplacian derivative matrix with boundary conditions - might be
-    # `nothing` if boundary conditions are not supported
-    L_matrix_with_bc::TLmat
     # mass matrix global (1D) LU object
     mass_matrix_lu::TLU
-    # Laplacian global (1D) LU object - might be
-    # `nothing` if boundary conditions are not supported
-    L_matrix_lu::TLmatLU
-    # dummy matrix for local operators
-    Qmat::Array{mk_float,2}
 end
 
 """
@@ -136,39 +119,22 @@ function setup_gausslegendre_pseudospectral(coord; collision_operator_dim=true)
     lobatto = setup_gausslegendre_pseudospectral_lobatto(coord,collision_operator_dim=collision_operator_dim)
     radau = setup_gausslegendre_pseudospectral_radau(coord,collision_operator_dim=collision_operator_dim)
 
-    if collision_operator_dim
-        S_matrix = allocate_float(coord, coord)
-        setup_global_weak_form_matrix!(S_matrix, lobatto, radau, coord, "S")
-    else
-        S_matrix = allocate_float(Symbol(coord.name)=>0, Symbol(coord.name)=>0)
-    end
     mass_matrix = allocate_float(coord, coord)
     K_matrix = allocate_float(coord, coord)
     L_matrix = allocate_float(coord, coord)
-    D_matrix = allocate_float(coord, coord)
 
-    dirichlet_bc = (coord.bc in ["zero", "constant"]) # and further options in future
+    dirichlet_bc = (coord.bc in ["zero", "both_zero", "constant"]) # and further options in future
     periodic_bc = coord.periodic
     setup_global_weak_form_matrix!(mass_matrix, lobatto, radau, coord, "M"; periodic_bc=periodic_bc)
     setup_global_weak_form_matrix!(K_matrix, lobatto, radau, coord, "K_with_BC_terms"; periodic_bc=periodic_bc)
     setup_global_weak_form_matrix!(L_matrix, lobatto, radau, coord, "L_with_BC_terms")
-    setup_global_strong_form_matrix!(D_matrix, lobatto, radau, coord, "D"; periodic_bc=periodic_bc)
-    dense_second_deriv_matrix = inv(mass_matrix) * K_matrix
+    dense_second_deriv_matrix = mass_matrix \ K_matrix
+
+    mass_matrix = sparse(mass_matrix)
     mass_matrix_lu = lu(sparse(mass_matrix))
-    if dirichlet_bc || periodic_bc
-        L_matrix_with_bc = allocate_float(coord, coord)
-        setup_global_weak_form_matrix!(L_matrix_with_bc, lobatto, radau, coord, "L", dirichlet_bc=dirichlet_bc, periodic_bc=periodic_bc)
-        L_matrix_with_bc = sparse(L_matrix_with_bc )
-        L_matrix_lu = lu(sparse(L_matrix_with_bc))
-    else
-        L_matrix_with_bc = nothing
-        L_matrix_lu = nothing
-    end    
 
-    Qmat = allocate_float(coord.ngrid, coord.ngrid)
-
-    return gausslegendre_info(lobatto,radau,mass_matrix,sparse(S_matrix),sparse(K_matrix),sparse(L_matrix),sparse(D_matrix),convert(SparseMatrixCSR{1,mk_float,mk_int},D_matrix),dense_second_deriv_matrix,L_matrix_with_bc,
-                              mass_matrix_lu,L_matrix_lu,Qmat)
+    return gausslegendre_info(lobatto, radau, mass_matrix, sparse(K_matrix),
+                              sparse(L_matrix), dense_second_deriv_matrix, mass_matrix_lu)
 end
 
 """
