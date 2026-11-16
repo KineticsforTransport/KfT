@@ -33,22 +33,16 @@ densities of the various ion species:
     sum_i dens_i = dens_e
 inputs:
     dens_e = electron density at previous time level
-    updated = flag indicating if the electron density is updated
     dens_i = updated ion density
 output:
     dens_e = updated electron density
-    updated = flag indicating that the electron density has been updated
 """
-function calculate_electron_density!(dens_e, updated, dens_i)
+function calculate_electron_density!(dens_e, dens_i)
     # only update the electron density if it has not already been updated
-    if !updated[]
-        @begin_r_anyzv_region()
-        @loop_r ir begin
-            @views calculate_electron_density_no_r!(dens_e[:,ir], dens_i[:,ir,:], ir)
-        end
+    @begin_r_anyzv_region()
+    @loop_r ir begin
+        @views calculate_electron_density_no_r!(dens_e[:,ir], dens_i[:,ir,:], ir)
     end
-    # set flag indicating that the electron density has been updated
-    updated[] = true
     return nothing
 end
 function calculate_electron_density_no_r!(dens_e, dens_i, ir)
@@ -69,31 +63,25 @@ use charge conservation equation to solve for the electron parallel flow density
     ==> {sum_i n_i upar_i}(z) - {sum_i n_i upar_i}(zbound) = {n_e upar_e}(z) - {n_e upar_e}(zbound)
 inputs: 
     upar_e = should contain updated electron parallel flow at boundaries in zed
-    updated = flag indicating whether the electron parallel flow is already updated
     dens_e = electron particle density
     upar_i = ion parallel flow density
     dens_i = ion particle density
 output:
     upar_e = contains the updated electron parallel flow
 """
-function calculate_electron_upar_from_charge_conservation!(upar_e, updated, dens_e,
-                                                           upar_i, dens_i, electron_model,
-                                                           r, z)
-    # only calculate the electron parallel flow if it is not already updated
-    if !updated[]
-        @begin_r_anyzv_region()
-        @loop_r ir begin
-            @views calculate_electron_upar_from_charge_conservation_no_r!(
-                       upar_e[:,ir], updated, dens_e[:,ir], upar_i[:,ir,:], dens_i[:,ir,:],
-                       electron_model, r, z, ir)
-        end
-        updated[] = true
+function calculate_electron_upar_from_charge_conservation!(upar_e, dens_e, upar_i, dens_i,
+                                                           electron_model, r, z)
+    @begin_r_anyzv_region()
+    @loop_r ir begin
+        @views calculate_electron_upar_from_charge_conservation_no_r!(
+                   upar_e[:,ir], dens_e[:,ir], upar_i[:,ir,:], dens_i[:,ir,:],
+                   electron_model, r, z, ir)
     end
     return nothing
 end
-function calculate_electron_upar_from_charge_conservation_no_r!(upar_e, updated, dens_e,
-                                                                upar_i, dens_i,
-                                                                electron_model, r, z, ir)
+function calculate_electron_upar_from_charge_conservation_no_r!(upar_e, dens_e, upar_i,
+                                                                dens_i, electron_model, r,
+                                                                z, ir)
     @begin_anyzv_z_region()
     # initialise the electron parallel flow density to zero
     @loop_z iz begin
@@ -188,8 +176,8 @@ function calculate_electron_moments_no_r!(pdf_electron, electron_density, electr
                                           composition, collisions, r, z, vperp, vpa, ir)
     calculate_electron_density_no_r!(electron_density, ion_density, ir)
     calculate_electron_upar_from_charge_conservation_no_r!(
-        electron_upar, moments.electron.upar_updated, electron_density,
-        ion_upar, ion_density, composition.electron_physics, r, z, ir)
+        electron_upar, electron_density, ion_upar, ion_density,
+        composition.electron_physics, r, z, ir)
     if composition.electron_physics ∉ (braginskii_fluid, kinetic_electrons,
                                        kinetic_electrons_with_temperature_equation)
         @begin_anyzv_z_region()
@@ -197,7 +185,6 @@ function calculate_electron_moments_no_r!(pdf_electron, electron_density, electr
             electron_p[iz] = 0.5 * composition.me_over_mi *
                              electron_density[iz] * moments.electron.vth[iz,ir]^2
         end
-        moments.electron.p_updated[] = true
     end
     @views update_electron_vth_temperature_no_r!(moments.electron.vth[:,ir],
                                                  moments.electron.temp[:,ir], electron_p,
@@ -496,7 +483,6 @@ function electron_braginskii_conduction!(p_out::AbstractVector{mk_float},
     update_electron_vth_temperature_no_r!(vth, temp, p_in, dens, composition)
     derivative_z_anyzv!(dT_dz, temp, buffer_r_1, buffer_r_2, buffer_r_3, buffer_r_4,
                         z_spectral, z)
-    electron_moments.qpar_updated[] = false
     calculate_electron_qpar_no_r!(electron_moments, nothing, p_in, dens, upar_e, upar_i,
                                   collisions.electron_fluid.nu_ei, composition.me_over_mi,
                                   composition.electron_physics, nothing, nothing, ir)
@@ -698,7 +684,6 @@ there are currently two supported options for the parallel heat flux:
     collisionless closure - d(qpar_e)/dz = 0 ==> qpar_e = constant
 inputs:
     qpar_e = parallel electron heat flux at the previous time level
-    qpar_updated = flag indicating whether qpar is updated already
     pdf = electron pdf
     p_e = electron pressure
     upar_e = electron parallel flow
@@ -711,7 +696,6 @@ inputs:
     vpa = struct containing information about the vpa coordinate
 output:
     qpar_e = updated parallel electron heat flux
-    qpar_updated = flag indicating that the parallel electron heat flux is updated
 """
 function calculate_electron_qpar!(electron_moments, pdf, p_e, dens_e, upar_e, upar_i,
                                   nu_ei, me_over_mi, electron_model, vperp, vpa)
@@ -737,42 +721,36 @@ end
 
 function calculate_electron_qpar_no_r!(electron_moments, pdf, p_e, dens_e, upar_e, upar_i,
                                        nu_ei, me_over_mi, electron_model, vperp, vpa, ir)
-    # only calculate qpar_e if needs updating
-    qpar_updated = electron_moments.qpar_updated
-    #if !qpar_updated[]
-        qpar_e = @view electron_moments.qpar[:,ir]
-        vth_e = @view electron_moments.vth[:,ir]
-        if electron_model == braginskii_fluid
-            dTe_dz = @view electron_moments.dT_dz[:,ir]
-            @begin_anyzv_z_region()
-            # use the classical Braginskii expression for the electron heat flux
-            @loop_z iz begin
-                qpar_e[iz] = 0.0
-                @loop_s is begin
-                    qpar_e[iz] -= 0.71 * p_e[iz] * (upar_i[iz,is] - upar_e[iz])
-                end
-            end
-            if nu_ei > 0.0
-                @loop_z iz begin
-                    qpar_e[iz] -= 3.16 * p_e[iz] / (me_over_mi * nu_ei) * dTe_dz[iz]
-                end
-            end
-        elseif electron_model ∈ (kinetic_electrons,
-                                 kinetic_electrons_with_temperature_equation)
-            # use the modified electron pdf to calculate the electron heat flux
-            calculate_electron_qpar_from_pdf_no_r!(qpar_e, dens_e, vth_e, pdf, vperp, vpa,
-                                                   me_over_mi, ir)
-        else
-            @begin_anyzv_z_region()
-            # qpar_e is not used. Initialize to 0.0 to avoid failure of
-            # @debug_track_initialized check
-            @loop_z iz begin
-                qpar_e[iz] = 0.0
+    qpar_e = @view electron_moments.qpar[:,ir]
+    vth_e = @view electron_moments.vth[:,ir]
+    if electron_model == braginskii_fluid
+        dTe_dz = @view electron_moments.dT_dz[:,ir]
+        @begin_anyzv_z_region()
+        # use the classical Braginskii expression for the electron heat flux
+        @loop_z iz begin
+            qpar_e[iz] = 0.0
+            @loop_s is begin
+                qpar_e[iz] -= 0.71 * p_e[iz] * (upar_i[iz,is] - upar_e[iz])
             end
         end
-    #end
-    # qpar has been updated
-    qpar_updated[] = true
+        if nu_ei > 0.0
+            @loop_z iz begin
+                qpar_e[iz] -= 3.16 * p_e[iz] / (me_over_mi * nu_ei) * dTe_dz[iz]
+            end
+        end
+    elseif electron_model ∈ (kinetic_electrons,
+                             kinetic_electrons_with_temperature_equation)
+        # use the modified electron pdf to calculate the electron heat flux
+        calculate_electron_qpar_from_pdf_no_r!(qpar_e, dens_e, vth_e, pdf, vperp, vpa,
+                                               me_over_mi, ir)
+    else
+        @begin_anyzv_z_region()
+        # qpar_e is not used. Initialize to 0.0 to avoid failure of
+        # @debug_track_initialized check
+        @loop_z iz begin
+            qpar_e[iz] = 0.0
+        end
+    end
     return nothing
 end
 
@@ -811,7 +789,6 @@ function update_electron_vth_temperature!(moments, p, dens, composition, ir)
         temp[iz] = this_p / dens[iz]
         vth[iz] = sqrt(2.0 * temp[iz] / composition.me_over_mi)
     end
-    moments.electron.temp_updated[] = true
 
     return nothing
 end

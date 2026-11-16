@@ -13,7 +13,6 @@ export update_pperp!
 export update_ion_qpar!
 export update_derived_ion_moment_time_derivatives!
 export update_vth!
-export reset_moments_status!
 export update_derived_electron_moment_time_derivatives!
 export update_neutral_density!
 export update_neutral_uz!
@@ -65,19 +64,10 @@ function create_moments_ion(z, r, composition, evolve_density, evolve_upar,
                             evolve_p, ion_source_settings, num_diss_params)
     # allocate array used for the particle density
     density = allocate_shared_float(z, r, composition.ion_species_coord)
-    # allocate array of Bools that indicate if the density is updated for each species
-    density_updated = allocate_bool(composition.ion_species_coord)
-    density_updated .= false
     # allocate array used for the parallel flow
     parallel_flow = allocate_shared_float(z, r, composition.ion_species_coord)
-    # allocate array of Bools that indicate if the parallel flow is updated for each species
-    parallel_flow_updated = allocate_bool(composition.ion_species_coord)
-    parallel_flow_updated .= false
     # allocate array used for the pressure
     pressure = allocate_shared_float(z, r, composition.ion_species_coord)
-    # allocate array of Bools that indicate if the pressure is updated for each species
-    pressure_updated = allocate_bool(composition.ion_species_coord)
-    pressure_updated .= false
     # allocate array used for the parallel pressure
     parallel_pressure = allocate_shared_float(z, r, composition.ion_species_coord)
     # allocate array used for the perpendicular pressure
@@ -86,9 +76,6 @@ function create_moments_ion(z, r, composition, evolve_density, evolve_upar,
     temperature = allocate_shared_float(z, r, composition.ion_species_coord)
     # allocate array used for the parallel flow
     parallel_heat_flux = allocate_shared_float(z, r, composition.ion_species_coord)
-    # allocate array of Bools that indicate if the parallel flow is updated for each species
-    parallel_heat_flux_updated = allocate_bool(composition.ion_species_coord)
-    parallel_heat_flux_updated .= false
     # allocate array of Bools that indicate if the parallel flow is updated for each species
     # allocate array used for the thermal speed
     thermal_speed = allocate_shared_float(z, r, composition.ion_species_coord)
@@ -268,15 +255,13 @@ function create_moments_ion(z, r, composition, evolve_density, evolve_upar,
     end
 
     # return struct containing arrays needed to update moments
-    return moments_ion_substruct(density, density_updated, parallel_flow,
-        parallel_flow_updated, pressure, pressure_updated, parallel_pressure,
-        perpendicular_pressure, parallel_heat_flux, parallel_heat_flux_updated,
-        thermal_speed, temperature, chodura_integral_lower, chodura_integral_upper,
-        v_norm_fac, ddens_dr, ddens_dr_upwind, ddens_dz, ddens_dz_upwind, d2dens_dz2,
-        dupar_dr, dupar_dr_upwind, dupar_dz, dupar_dz_upwind, d2upar_dz2, dp_dr_upwind,
-        dp_dz, dp_dz_upwind, d2p_dz2, dppar_dz, dqpar_dz, dvth_dr, dvth_dz, dT_dz,
-        ddens_dt, dupar_dt, dnupar_dt, dp_dt, dvth_dt, entropy_production,
-        external_source_amplitude, external_source_T_array,
+    return moments_ion_substruct(density, parallel_flow, pressure, parallel_pressure,
+        perpendicular_pressure, parallel_heat_flux, thermal_speed, temperature,
+        chodura_integral_lower, chodura_integral_upper, v_norm_fac, ddens_dr,
+        ddens_dr_upwind, ddens_dz, ddens_dz_upwind, d2dens_dz2, dupar_dr, dupar_dr_upwind,
+        dupar_dz, dupar_dz_upwind, d2upar_dz2, dp_dr_upwind, dp_dz, dp_dz_upwind, d2p_dz2,
+        dppar_dz, dqpar_dz, dvth_dr, dvth_dz, dT_dz, ddens_dt, dupar_dt, dnupar_dt, dp_dt,
+        dvth_dt, entropy_production, external_source_amplitude, external_source_T_array,
         external_source_density_amplitude, external_source_momentum_amplitude,
         external_source_pressure_amplitude, external_source_controller_integral,
         constraints_A_coefficient, constraints_B_coefficient, constraints_C_coefficient)
@@ -288,28 +273,18 @@ create a moment struct containing information about the electron moments
 function create_moments_electron(z, r, electron_model, num_diss_params, n_sources)
     # allocate array used for the particle density
     density = allocate_shared_float(z, r)
-    # initialise Bool variable that indicates if the density is updated for each species
-    density_updated = Ref(false)
     # allocate array used for the parallel flow
     parallel_flow = allocate_shared_float(z, r)
-    # allocate Bool variable that indicates if the parallel flow is updated for each species
-    parallel_flow_updated = Ref(false)
     # allocate array used for the pressure
     pressure = allocate_shared_float(z, r)
-    # allocate array of Bools that indicate if the pressure is updated for each species
-    pressure_updated = Ref(false)
     # allocate array used for the parallel pressure
     parallel_pressure = allocate_shared_float(z, r)
     # allocate array used for the perpendicular pressure
     perpendicular_pressure = allocate_shared_float(z, r)
     # allocate array used for the temperature
     temperature = allocate_shared_float(z, r)
-    # allocate Bool variable that indicates if the temperature is updated for each species
-    temperature_updated = Ref(false)
     # allocate array used for the parallel flow
     parallel_heat_flux = allocate_shared_float(z, r)
-    # allocate Bool variables that indicates if the parallel flow is updated for each species
-    parallel_heat_flux_updated = Ref(false)
     # allocate array used for the election-ion parallel friction force
     parallel_friction_force = allocate_shared_float(z, r)
     # allocate arrays used for external sources (third index is for the different sources)
@@ -382,11 +357,9 @@ function create_moments_electron(z, r, electron_model, num_diss_params, n_source
     end
 
     # return struct containing arrays needed to update moments
-    return moments_electron_substruct(density, density_updated, parallel_flow,
-        parallel_flow_updated, pressure, pressure_updated, parallel_pressure,
-        perpendicular_pressure, temperature, temperature_updated, parallel_heat_flux,
-        parallel_heat_flux_updated, thermal_speed, parallel_friction_force,
-        external_source_amplitude, external_source_T_array,
+    return moments_electron_substruct(density, parallel_flow, pressure, parallel_pressure,
+        perpendicular_pressure, temperature, parallel_heat_flux, thermal_speed,
+        parallel_friction_force, external_source_amplitude, external_source_T_array,
         external_source_density_amplitude, external_source_momentum_amplitude,
         external_source_pressure_amplitude, v_norm_fac, ddens_dz, dupar_dz, dp_dz,
         d2p_dz2, dppar_dz, dqpar_dz, dT_dz, dT_dz_upwind, dvth_dz, dp_dt, dT_dt, dvth_dt,
@@ -401,29 +374,13 @@ end
 function create_moments_neutral(z, r, composition, evolve_density, evolve_upar,
                                 evolve_p, neutral_source_settings, num_diss_params)
     density = allocate_shared_float(z, r, composition.neutral_species_coord)
-    density_updated = allocate_bool(composition.neutral_species_coord)
-    density_updated .= false
     uz = allocate_shared_float(z, r, composition.neutral_species_coord)
-    uz_updated = allocate_bool(composition.neutral_species_coord)
-    uz_updated .= false
     ur = allocate_shared_float(z, r, composition.neutral_species_coord)
-    ur_updated = allocate_bool(composition.neutral_species_coord)
-    ur_updated .= false
     uzeta = allocate_shared_float(z, r, composition.neutral_species_coord)
-    uzeta_updated = allocate_bool(composition.neutral_species_coord)
-    uzeta_updated .= false
     p = allocate_shared_float(z, r, composition.neutral_species_coord)
-    p_updated = allocate_bool(composition.neutral_species_coord)
-    p_updated .= false
     pz = allocate_shared_float(z, r, composition.neutral_species_coord)
-    pz_updated = allocate_bool(composition.neutral_species_coord)
-    pz_updated .= false
     pr = allocate_shared_float(z, r, composition.neutral_species_coord)
-    pr_updated = allocate_bool(composition.neutral_species_coord)
-    pr_updated .= false
     pzeta = allocate_shared_float(z, r, composition.neutral_species_coord)
-    pzeta_updated = allocate_bool(composition.neutral_species_coord)
-    pzeta_updated .= false
     vth = allocate_shared_float(z, r, composition.neutral_species_coord)
     if evolve_p
         v_norm_fac = vth
@@ -434,8 +391,6 @@ function create_moments_neutral(z, r, composition, evolve_density, evolve_upar,
         end
     end
     qz = allocate_shared_float(z, r, composition.neutral_species_coord)
-    qz_updated = allocate_bool(composition.neutral_species_coord)
-    qz_updated .= false
 
     if evolve_density
         ddens_dz = allocate_shared_float(z, r, composition.neutral_species_coord)
@@ -570,12 +525,10 @@ function create_moments_neutral(z, r, composition, evolve_density, evolve_upar,
     end
 
     # return struct containing arrays needed to update moments
-    return moments_neutral_substruct(density, density_updated, uz, uz_updated, ur,
-        ur_updated, uzeta, uzeta_updated, p, p_updated, pz, pz_updated, pr, pr_updated,
-        pzeta, pzeta_updated, qz, qz_updated, vth, v_norm_fac, ddens_dz, ddens_dz_upwind,
-        d2dens_dz2, duz_dz, duz_dz_upwind, d2uz_dz2, dp_dz, dp_dz_upwind, d2p_dz2, dpz_dz,
-        dqz_dz, dvth_dz, ddens_dt, duz_dt, dnuz_dt, dp_dt, dvth_dt,
-        external_source_amplitude, external_source_T_array,
+    return moments_neutral_substruct(density, uz, ur, uzeta, p, pz, pr, pzeta, qz, vth,
+        v_norm_fac, ddens_dz, ddens_dz_upwind, d2dens_dz2, duz_dz, duz_dz_upwind,
+        d2uz_dz2, dp_dz, dp_dz_upwind, d2p_dz2, dpz_dz, dqz_dz, dvth_dz, ddens_dt, duz_dt,
+        dnuz_dt, dp_dt, dvth_dt, external_source_amplitude, external_source_T_array,
         external_source_density_amplitude, external_source_momentum_amplitude,
         external_source_pressure_amplitude, external_source_controller_integral,
         constraints_A_coefficient, constraints_B_coefficient, constraints_C_coefficient)
@@ -599,12 +552,11 @@ function update_moments!(moments, ff_in, gyroavs::gyro_operators, vpa, vperp, z,
     n_species = size(ff,5)
     @debug_consistency_checks n_species == size(moments.ion.dens,3) || throw(BoundsError(moments))
     @loop_s is begin
-        if moments.ion.dens_updated[is] == false
+        if !moments.evolve_density
             @views update_density_species!(moments.ion.dens[:,:,is], ff[:,:,:,:,is],
                                            vpa, vperp, z, r)
-            moments.ion.dens_updated[is] = true
         end
-        if moments.ion.upar_updated[is] == false
+        if !moments.evolve_upar
             # Can pass moments.ppar here even though it has not been updated yet,
             # because moments.ppar is only needed if evolve_p=true, in which case it
             # will not be updated because it is not calculated from the distribution
@@ -614,13 +566,11 @@ function update_moments!(moments, ff_in, gyroavs::gyro_operators, vpa, vperp, z,
                                         moments.ion.ppar[:,:,is], ff[:,:,:,:,is], vpa,
                                         vperp, z, r, moments.evolve_density,
                                         moments.evolve_p)
-            moments.ion.upar_updated[is] = true
         end
-        if moments.ion.p_updated[is] == false
+        if !moments.evolve_p
             @views update_p_species!(moments.ion.p[:,:,is], moments.ion.dens[:,:,is],
                                      moments.ion.upar[:,:,is], ff[:,:,:,:,is], vpa, vperp,
                                      z, r, moments.evolve_density, moments.evolve_upar)
-            moments.ion.p_updated[is] = true
         end
         @views update_ppar_species!(moments.ion.ppar[:,:,is], moments.ion.dens[:,:,is],
                                     moments.ion.upar[:,:,is], moments.ion.vth[:,:,is],
@@ -629,17 +579,13 @@ function update_moments!(moments, ff_in, gyroavs::gyro_operators, vpa, vperp, z,
                                     moments.evolve_p)
         @views update_pperp_species!(moments.ion.pperp[:,:,is], moments.ion.p[:,:,is],
                                      moments.ion.ppar[:,:,is], z, r)
-        if moments.ion.qpar_updated[is] == false
-            @views update_ion_qpar_species!(moments.ion.qpar[:,:,is],
-                                            moments.ion.dens[:,:,is],
-                                            moments.ion.upar[:,:,is],
-                                            moments.ion.vth[:,:,is],  moments.ion.dT_dz,
-                                            ff[:,:,:,:,is], vpa, vperp, z, r,
-                                            moments.evolve_density, moments.evolve_upar,
-                                            moments.evolve_p, composition.ion_physics,
-                                            collisions, composition.T_e)
-            moments.ion.qpar_updated[is] = true
-        end
+        @views update_ion_qpar_species!(moments.ion.qpar[:,:,is],
+                                        moments.ion.dens[:,:,is],
+                                        moments.ion.upar[:,:,is], moments.ion.vth[:,:,is],
+                                        moments.ion.dT_dz, ff[:,:,:,:,is], vpa, vperp, z,
+                                        r, moments.evolve_density, moments.evolve_upar,
+                                        moments.evolve_p, composition.ion_physics,
+                                        collisions, composition.T_e)
     end
 
     update_vth!(moments.ion.vth, moments.ion.temp, moments.ion.p, moments.ion.dens, z, r,
@@ -653,20 +599,17 @@ function update_moments!(moments, ff_in, gyroavs::gyro_operators, vpa, vperp, z,
 end
 
 """
-NB: if this function is called and if dens_updated is false, then
-the incoming pdf is the un-normalized pdf that satisfies int dv pdf = density
+NB: if this function is called then the incoming pdf is the un-normalized pdf that
+satisfies int dv pdf = density
 """
-function update_density!(dens, dens_updated, pdf, vpa, vperp, z, r, composition)
+function update_density!(dens, pdf, vpa, vperp, z, r, composition)
 
     @begin_r_z_region()
 
     n_species = size(pdf,5)
     @debug_consistency_checks n_species == size(dens,3) || throw(BoundsError(dens))
     @loop_s is begin
-        if dens_updated[is] == false
-            @views update_density_species!(dens[:,:,is], pdf[:,:,:,:,is], vpa, vperp, z, r)
-            dens_updated[is] = true
-        end
+        @views update_density_species!(dens[:,:,is], pdf[:,:,:,:,is], vpa, vperp, z, r)
     end
 end
 
@@ -697,22 +640,19 @@ function get_density(ff, vpa, vperp)
 end
 
 """
-NB: if this function is called and if upar_updated is false, then
-the incoming pdf is the un-normalized pdf that satisfies int dv pdf = density
+NB: if this function is called then the incoming pdf is the un-normalized pdf that
+satisfies int dv pdf = density
 """
-function update_upar!(upar, upar_updated, density, vth, pdf, vpa, vperp, z, r,
-                      composition, evolve_density, evolve_p)
+function update_upar!(upar, density, vth, pdf, vpa, vperp, z, r, composition,
+                      evolve_density, evolve_p)
     @begin_r_z_region()
 
     n_species = size(pdf,5)
     @debug_consistency_checks n_species == size(upar,3) || throw(BoundsError(upar))
     @loop_s is begin
-        if upar_updated[is] == false
-            @views update_upar_species!(upar[:,:,is], density[:,:,is], vth[:,:,is],
-                                        pdf[:,:,:,:,is], vpa, vperp, z, r, evolve_density,
-                                        evolve_p)
-            upar_updated[is] = true
-        end
+        @views update_upar_species!(upar[:,:,is], density[:,:,is], vth[:,:,is],
+                                    pdf[:,:,:,:,is], vpa, vperp, z, r, evolve_density,
+                                    evolve_p)
     end
 end
 
@@ -774,11 +714,11 @@ function get_upar(ff, density, vpa, vperp, evolve_density)
 end
 
 """
-NB: if this function is called and if p_updated is false, then
-the incoming pdf is the un-normalized pdf that satisfies int dv pdf = density
+NB: if this function is called then the incoming pdf is the un-normalized pdf that
+satisfies int dv pdf = density
 """
-function update_p!(p, p_updated, density, upar, pdf, vpa, vperp, z, r, composition,
-                   evolve_density, evolve_upar)
+function update_p!(p, density, upar, pdf, vpa, vperp, z, r, composition, evolve_density,
+                   evolve_upar)
     @debug_consistency_checks composition.n_ion_species == size(p,3) || throw(BoundsError(p))
     @debug_consistency_checks r.n == size(p,2) || throw(BoundsError(p))
     @debug_consistency_checks z.n == size(p,1) || throw(BoundsError(p))
@@ -786,12 +726,9 @@ function update_p!(p, p_updated, density, upar, pdf, vpa, vperp, z, r, compositi
     @begin_r_z_region()
 
     @loop_s is begin
-        if p_updated[is] == false
-            @views update_p_species!(p[:,:,is], density[:,:,is], upar[:,:,is],
-                                     pdf[:,:,:,:,is], vpa, vperp, z, r, evolve_density,
-                                     evolve_upar)
-            p_updated[is] = true
-        end
+        @views update_p_species!(p[:,:,is], density[:,:,is], upar[:,:,is],
+                                 pdf[:,:,:,:,is], vpa, vperp, z, r, evolve_density,
+                                 evolve_upar)
     end
 end
 
@@ -1008,20 +945,18 @@ end
 """
 NB: the incoming pdf is the normalized pdf
 """
-function update_ion_qpar!(qpar, qpar_updated, density, upar, vth, dT_dz, pdf, vpa, vperp, z, r,
-                          composition, ion_physics, collisions, evolve_density, evolve_upar, evolve_p)
+function update_ion_qpar!(qpar, density, upar, vth, dT_dz, pdf, vpa, vperp, z, r,
+                          composition, ion_physics, collisions, evolve_density,
+                          evolve_upar, evolve_p)
     @debug_consistency_checks composition.n_ion_species == size(qpar,3) || throw(BoundsError(qpar))
 
     @begin_r_z_region()
 
     @loop_s is begin
-        if qpar_updated[is] == false
-            @views update_ion_qpar_species!(qpar[:,:,is], density[:,:,is], upar[:,:,is],
-                                        vth[:,:,is], dT_dz, pdf[:,:,:,:,is], vpa, vperp, z, r,
-                                        evolve_density, evolve_upar, evolve_p,
+        @views update_ion_qpar_species!(qpar[:,:,is], density[:,:,is], upar[:,:,is],
+                                        vth[:,:,is], dT_dz, pdf[:,:,:,:,is], vpa, vperp,
+                                        z, r, evolve_density, evolve_upar, evolve_p,
                                         ion_physics, collisions, composition.T_e)
-            qpar_updated[is] = true
-        end
     end
 end
 
@@ -1817,12 +1752,11 @@ function update_moments_neutral!(moments, pdf, vz, vr, vzeta, z, r, composition)
     n_species = size(pdf,6)
     @debug_consistency_checks n_species == size(moments.neutral.dens,3) || throw(BoundsError(moments))
     @loop_sn isn begin
-        if moments.neutral.dens_updated[isn] == false
+        if !moments.evolve_density
             @views update_neutral_density_species!(moments.neutral.dens[:,:,isn],
                                                    pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r)
-            moments.neutral.dens_updated[isn] = true
         end
-        if moments.neutral.uz_updated[isn] == false
+        if !moments.evolve_upar
             # Can pass moments.neutral.pz here even though it has not been updated yet,
             # because moments.neutral.pz isn only needed if evolve_p=true, in which
             # case it will not be updated because it isn not calculated from the
@@ -1832,54 +1766,38 @@ function update_moments_neutral!(moments, pdf, vz, vr, vzeta, z, r, composition)
                                               moments.neutral.pz[:,:,isn],
                                               pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
                                               moments.evolve_density, moments.evolve_p)
-            moments.neutral.uz_updated[isn] = true
         end
-        if moments.neutral.ur_updated[isn] == false
-            @views update_neutral_ur_species!(moments.neutral.ur[:,:,isn],
-                                              moments.neutral.dens[:,:,isn],
-                                              moments.neutral.vth[:,:,isn],
-                                              pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
-                                              moments.evolve_density, moments.evolve_p)
-            moments.neutral.ur_updated[isn] = true
-        end
-        if moments.neutral.uzeta_updated[isn] == false
-            @views update_neutral_uzeta_species!(moments.neutral.uzeta[:,:,isn],
-                                                 moments.neutral.dens[:,:,isn],
-                                                 moments.neutral.vth[:,:,isn],
-                                                 pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
-                                                 moments.evolve_density, moments.evolve_p)
-            moments.neutral.uzeta_updated[isn] = true
-        end
-        if moments.neutral.pz_updated[isn] == false
-            @views update_neutral_pz_species!(moments.neutral.pz[:,:,isn],
-                                              moments.neutral.dens[:,:,isn],
-                                              moments.neutral.uz[:,:,isn],
-                                              moments.neutral.vth[:,:,isn],
-                                              pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
-                                              moments.evolve_density, moments.evolve_upar,
-                                              moments.evolve_p)
-            moments.neutral.pz_updated[isn] = true
-        end
-        if moments.neutral.pr_updated[isn] == false
-            @views update_neutral_pr_species!(moments.neutral.pr[:,:,isn],
-                                              moments.neutral.dens[:,:,isn],
-                                              moments.neutral.ur[:,:,isn],
-                                              moments.neutral.vth[:,:,isn],
-                                              pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
-                                              moments.evolve_density, moments.evolve_upar,
-                                              moments.evolve_p)
-            moments.neutral.pr_updated[isn] = true
-        end
-        if moments.neutral.pzeta_updated[isn] == false
-            @views update_neutral_pzeta_species!(moments.neutral.pzeta[:,:,isn],
-                                                 moments.neutral.dens[:,:,isn],
-                                                 moments.neutral.uzeta[:,:,isn],
-                                                 moments.neutral.vth[:,:,isn],
-                                                 pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
-                                                 moments.evolve_density,
-                                                 moments.evolve_upar, moments.evolve_p)
-            moments.neutral.pr_updated[isn] = true
-        end
+        @views update_neutral_ur_species!(moments.neutral.ur[:,:,isn],
+                                          moments.neutral.dens[:,:,isn],
+                                          moments.neutral.vth[:,:,isn],
+                                          pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
+                                          moments.evolve_density, moments.evolve_p)
+        @views update_neutral_uzeta_species!(moments.neutral.uzeta[:,:,isn],
+                                             moments.neutral.dens[:,:,isn],
+                                             moments.neutral.vth[:,:,isn],
+                                             pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
+                                             moments.evolve_density, moments.evolve_p)
+        @views update_neutral_pz_species!(moments.neutral.pz[:,:,isn],
+                                          moments.neutral.dens[:,:,isn],
+                                          moments.neutral.uz[:,:,isn],
+                                          moments.neutral.vth[:,:,isn],
+                                          pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
+                                          moments.evolve_density, moments.evolve_upar,
+                                          moments.evolve_p)
+        @views update_neutral_pr_species!(moments.neutral.pr[:,:,isn],
+                                          moments.neutral.dens[:,:,isn],
+                                          moments.neutral.ur[:,:,isn],
+                                          moments.neutral.vth[:,:,isn],
+                                          pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
+                                          moments.evolve_density, moments.evolve_upar,
+                                          moments.evolve_p)
+        @views update_neutral_pzeta_species!(moments.neutral.pzeta[:,:,isn],
+                                             moments.neutral.dens[:,:,isn],
+                                             moments.neutral.uzeta[:,:,isn],
+                                             moments.neutral.vth[:,:,isn],
+                                             pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
+                                             moments.evolve_density, moments.evolve_upar,
+                                             moments.evolve_p)
         if !moments.evolve_p
             @loop_r_z ir iz begin
                 moments.neutral.p[iz,ir,isn] = 1.0/3.0 * (moments.neutral.pzeta[iz,ir,isn] +
@@ -1891,16 +1809,13 @@ function update_moments_neutral!(moments, pdf, vz, vr, vzeta, z, r, composition)
             moments.neutral.vth[iz,ir,isn] =
                 sqrt(2*moments.neutral.p[iz,ir,isn]/moments.neutral.dens[iz,ir,isn])
         end
-        if moments.neutral.qz_updated[isn] == false
-            @views update_neutral_qz_species!(moments.neutral.qz[:,:,isn],
-                                              moments.neutral.dens[:,:,isn],
-                                              moments.neutral.uz[:,:,isn],
-                                              moments.neutral.vth[:,:,isn],
-                                              pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
-                                              moments.evolve_density, moments.evolve_upar,
-                                              moments.evolve_p)
-            moments.neutral.qz_updated[isn] = true
-        end
+        @views update_neutral_qz_species!(moments.neutral.qz[:,:,isn],
+                                          moments.neutral.dens[:,:,isn],
+                                          moments.neutral.uz[:,:,isn],
+                                          moments.neutral.vth[:,:,isn],
+                                          pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
+                                          moments.evolve_density, moments.evolve_upar,
+                                          moments.evolve_p)
     end
     return nothing
 end
@@ -1908,17 +1823,13 @@ end
 """
 calculate the neutral density from the neutral pdf
 """
-function update_neutral_density!(dens, dens_updated, pdf, vz, vr, vzeta, z, r,
-                                 composition)
+function update_neutral_density!(dens, pdf, vz, vr, vzeta, z, r, composition)
     
     @begin_r_z_region()
     @debug_consistency_checks composition.n_neutral_species == size(pdf, 6) || throw(BoundsError(pdf))
     @debug_consistency_checks composition.n_neutral_species == size(dens, 3) || throw(BoundsError(dens))
     @loop_sn isn begin
-        if dens_updated[isn] == false
-            @views update_neutral_density_species!(dens[:,:,isn], pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r)
-            dens_updated[isn] = true
-        end
+        @views update_neutral_density_species!(dens[:,:,isn], pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r)
     end
 end
 
@@ -1946,19 +1857,16 @@ function get_neutral_density(ff, vz, vr, vzeta)
 end
 
 
-function update_neutral_uz!(uz, uz_updated, density, vth, pdf, vz, vr, vzeta, z, r,
-                            composition, evolve_density, evolve_p)
+function update_neutral_uz!(uz, density, vth, pdf, vz, vr, vzeta, z, r, composition,
+                            evolve_density, evolve_p)
     
     @begin_r_z_region()
     @debug_consistency_checks composition.n_neutral_species == size(pdf, 6) || throw(BoundsError(pdf))
     @debug_consistency_checks composition.n_neutral_species == size(uz, 3) || throw(BoundsError(uz))
     @loop_sn isn begin
-        if uz_updated[isn] == false
-            @views update_neutral_uz_species!(uz[:,:,isn], density[:,:,isn], vth[:,:,isn],
-                                              pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
-                                              evolve_density, evolve_p)
-            uz_updated[isn] = true
-        end
+        @views update_neutral_uz_species!(uz[:,:,isn], density[:,:,isn], vth[:,:,isn],
+                                          pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
+                                          evolve_density, evolve_p)
     end
 end
 
@@ -2017,19 +1925,16 @@ function get_neutral_uz(ff, density, vz, vr, vzeta, evolve_density)
     return upar
 end
 
-function update_neutral_ur!(ur, ur_updated, density, vth, pdf, vz, vr, vzeta, z, r,
-                            composition, evolve_density, evolve_p)
+function update_neutral_ur!(ur, density, vth, pdf, vz, vr, vzeta, z, r, composition,
+                            evolve_density, evolve_p)
     
     @begin_r_z_region()
     @debug_consistency_checks composition.n_neutral_species == size(pdf, 6) || throw(BoundsError(pdf))
     @debug_consistency_checks composition.n_neutral_species == size(ur, 3) || throw(BoundsError(ur))
     @loop_sn isn begin
-        if ur_updated[isn] == false
-            @views update_neutral_ur_species!(ur[:,:,isn], density[:,:,isn], vth[:,:,isn],
-                                              pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
-                                              evolve_density, evolve_p)
-            ur_updated[isn] = true
-        end
+        @views update_neutral_ur_species!(ur[:,:,isn], density[:,:,isn], vth[:,:,isn],
+                                          pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
+                                          evolve_density, evolve_p)
     end
 end
 
@@ -2064,19 +1969,16 @@ function update_neutral_ur_species!(ur, density, vth, ff, vz, vr, vzeta, z, r,
     return nothing
 end
 
-function update_neutral_uzeta!(uzeta, uzeta_updated, density, vth, pdf, vz, vr, vzeta, z,
-                               r, composition, evolve_density, evolve_p)
+function update_neutral_uzeta!(uzeta, density, vth, pdf, vz, vr, vzeta, z, r, composition,
+                               evolve_density, evolve_p)
 
     @begin_r_z_region()
     @debug_consistency_checks composition.n_neutral_species == size(pdf, 6) || throw(BoundsError(pdf))
     @debug_consistency_checks composition.n_neutral_species == size(uzeta, 3) || throw(BoundsError(uzeta))
     @loop_sn isn begin
-        if uzeta_updated[isn] == false
-            @views update_neutral_uzeta_species!(uzeta[:,:,isn], density[:,:,isn],
-                                                 vth[:,:,isn], pdf[:,:,:,:,:,isn], vz, vr,
-                                                 vzeta, z, r, evolve_density, evolve_p)
-            uzeta_updated[isn] = true
-        end
+        @views update_neutral_uzeta_species!(uzeta[:,:,isn], density[:,:,isn],
+                                             vth[:,:,isn], pdf[:,:,:,:,:,isn], vz, vr,
+                                             vzeta, z, r, evolve_density, evolve_p)
     end
 end
 
@@ -2111,8 +2013,8 @@ function update_neutral_uzeta_species!(uzeta, density, vth, ff, vz, vr, vzeta, z
     return nothing
 end
 
-function update_neutral_p!(p, p_updated, density, uz, ur, uzeta, vth, pdf, vz, vr, vzeta,
-                           z, r, composition, evolve_density, evolve_upar, evolve_p)
+function update_neutral_p!(p, density, uz, ur, uzeta, vth, pdf, vz, vr, vzeta, z, r,
+                           composition, evolve_density, evolve_upar, evolve_p)
     @debug_consistency_checks r.n == size(p,2) || throw(BoundsError(p))
     @debug_consistency_checks z.n == size(p,1) || throw(BoundsError(p))
 
@@ -2121,13 +2023,10 @@ function update_neutral_p!(p, p_updated, density, uz, ur, uzeta, vth, pdf, vz, v
     @debug_consistency_checks composition.n_neutral_species == size(p, 3) || throw(BoundsError(p))
 
     @loop_sn isn begin
-        if p_updated[isn] == false
-            @views update_neutral_p_species!(p[:,:,isn], density[:,:,isn], uz[:,:,isn],
-                                             ur[:,:,isn], uzeta[:,:,isn], vth[:,:,isn],
-                                             pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
-                                             evolve_density, evolve_upar, evolve_p)
-            p_updated[isn] = true
-        end
+        @views update_neutral_p_species!(p[:,:,isn], density[:,:,isn], uz[:,:,isn],
+                                         ur[:,:,isn], uzeta[:,:,isn], vth[:,:,isn],
+                                         pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
+                                         evolve_density, evolve_upar, evolve_p)
     end
 end
 
@@ -2195,7 +2094,7 @@ function get_neutral_p(ff, density, upar, vzeta, vr, vz, evolve_density, evolve_
     end
 end
 
-function update_neutral_pz!(pz, pz_updated, density, uz, p, vth, pdf, vz, vr, vzeta, z, r,
+function update_neutral_pz!(pz, density, uz, p, vth, pdf, vz, vr, vzeta, z, r,
                             composition, evolve_density, evolve_upar, evolve_p)
     @debug_consistency_checks r.n == size(pz,2) || throw(BoundsError(pz))
     @debug_consistency_checks z.n == size(pz,1) || throw(BoundsError(pz))
@@ -2206,22 +2105,16 @@ function update_neutral_pz!(pz, pz_updated, density, uz, p, vth, pdf, vz, vr, vz
     
     if vzeta.n == 1 && vr.n == 1
         @loop_sn isn begin
-            if pz_updated[isn] == false
-                @loop_r_z ir iz begin
-                    pz[iz,ir,isn] = 3.0 * p[iz,ir,isn]
-                end
-                pz_updated[isn] = true
+            @loop_r_z ir iz begin
+                pz[iz,ir,isn] = 3.0 * p[iz,ir,isn]
             end
         end
     else
         @loop_sn isn begin
-            if pz_updated[isn] == false
-                @views update_neutral_pz_species!(pz[:,:,isn], density[:,:,isn], uz[:,:,isn],
-                                                  vth[:,:,isn], pdf[:,:,:,:,:,isn], vz, vr,
-                                                  vzeta, z, r, evolve_density, evolve_upar,
-                                                  evolve_p)
-                pz_updated[isn] = true
-            end
+            @views update_neutral_pz_species!(pz[:,:,isn], density[:,:,isn], uz[:,:,isn],
+                                              vth[:,:,isn], pdf[:,:,:,:,:,isn], vz, vr,
+                                              vzeta, z, r, evolve_density, evolve_upar,
+                                              evolve_p)
         end
     end
 end
@@ -2290,8 +2183,8 @@ function update_neutral_pz_species!(pz, density, uz, vth, ff, vz, vr, vzeta, z, 
     return nothing
 end
 
-function update_neutral_pr!(pr, pr_updated, density, ur, vth, pdf, vz, vr, vzeta, z, r,
-                            composition, evolve_density, evolve_upar, evolve_p)
+function update_neutral_pr!(pr, density, ur, vth, pdf, vz, vr, vzeta, z, r, composition,
+                            evolve_density, evolve_upar, evolve_p)
     @debug_consistency_checks r.n == size(pr,2) || throw(BoundsError(pr))
     @debug_consistency_checks z.n == size(pr,1) || throw(BoundsError(pr))
     
@@ -2300,13 +2193,9 @@ function update_neutral_pr!(pr, pr_updated, density, ur, vth, pdf, vz, vr, vzeta
     @debug_consistency_checks composition.n_neutral_species == size(pr, 3) || throw(BoundsError(pr))
     
     @loop_sn isn begin
-        if pr_updated[isn] == false
-            @views update_neutral_pr_species!(pr[:,:,isn], density[:,:,isn], ur[:,:,isn],
-                                              vth[:,:,isn], pdf[:,:,:,:,:,isn], vz, vr,
-                                              vzeta, z, r, evolve_density, evolve_upar,
-                                              evolve_p)
-            pr_updated[isn] = true
-        end
+        @views update_neutral_pr_species!(pr[:,:,isn], density[:,:,isn], ur[:,:,isn],
+                                          vth[:,:,isn], pdf[:,:,:,:,:,isn], vz, vr, vzeta,
+                                          z, r, evolve_density, evolve_upar, evolve_p)
     end
 end
 
@@ -2362,9 +2251,8 @@ function update_neutral_pr_species!(pr, density, ur, vth, ff, vz, vr, vzeta, z, 
     return nothing
 end
 
-function update_neutral_pzeta!(pzeta, pzeta_updated, density, uzeta, vth, pdf, vz, vr,
-                               vzeta, z, r, composition, evolve_density, evolve_upar,
-                               evolve_p)
+function update_neutral_pzeta!(pzeta, density, uzeta, vth, pdf, vz, vr, vzeta, z, r,
+                               composition, evolve_density, evolve_upar, evolve_p)
     @debug_consistency_checks r.n == size(pzeta,2) || throw(BoundsError(pzeta))
     @debug_consistency_checks z.n == size(pzeta,1) || throw(BoundsError(pzeta))
     
@@ -2373,13 +2261,10 @@ function update_neutral_pzeta!(pzeta, pzeta_updated, density, uzeta, vth, pdf, v
     @debug_consistency_checks composition.n_neutral_species == size(pzeta, 3) || throw(BoundsError(pzeta))
     
     @loop_sn isn begin
-        if pzeta_updated[isn] == false
-            @views update_neutral_pzeta_species!(pzeta[:,:,isn], density[:,:,isn],
-                                                 uzeta[:,:,isn], vth[:,:,isn],
-                                                 pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
-                                                 evolve_density, evolve_upar, evolve_p)
-            pzeta_updated[isn] = true
-        end
+        @views update_neutral_pzeta_species!(pzeta[:,:,isn], density[:,:,isn],
+                                             uzeta[:,:,isn], vth[:,:,isn],
+                                             pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
+                                             evolve_density, evolve_upar, evolve_p)
     end
 end
 
@@ -2447,8 +2332,8 @@ function update_neutral_vth!(vth, p, dens, z, r, composition)
     end
 end
 
-function update_neutral_qz!(qz, qz_updated, density, uz, vth, pdf, vz, vr, vzeta, z, r,
-                            composition, evolve_density, evolve_upar, evolve_p)
+function update_neutral_qz!(qz, density, uz, vth, pdf, vz, vr, vzeta, z, r, composition,
+                            evolve_density, evolve_upar, evolve_p)
     @debug_consistency_checks r.n == size(qz,2) || throw(BoundsError(qz))
     @debug_consistency_checks z.n == size(qz,1) || throw(BoundsError(qz))
     
@@ -2457,13 +2342,9 @@ function update_neutral_qz!(qz, qz_updated, density, uz, vth, pdf, vz, vr, vzeta
     @debug_consistency_checks composition.n_neutral_species == size(qz, 3) || throw(BoundsError(qz))
     
     @loop_sn isn begin
-        if qz_updated[isn] == false
-            @views update_neutral_qz_species!(qz[:,:,isn], density[:,:,isn], uz[:,:,isn],
-                                              vth[:,:,isn], pdf[:,:,:,:,:,isn], vz, vr,
-                                              vzeta, z, r, evolve_density, evolve_upar,
-                                              evolve_p)
-            qz_updated[isn] = true
-        end
+        @views update_neutral_qz_species!(qz[:,:,isn], density[:,:,isn], uz[:,:,isn],
+                                          vth[:,:,isn], pdf[:,:,:,:,:,isn], vz, vr, vzeta,
+                                          z, r, evolve_density, evolve_upar, evolve_p)
     end
 end
 
@@ -2612,19 +2493,16 @@ update velocity moments that are calculable from the evolved ion pdf
     end
 
     if !moments.evolve_density
-        update_density!(new_scratch.density, moments.ion.dens_updated,
-                        ff, vpa, vperp, z, r, composition)
+        update_density!(new_scratch.density, ff, vpa, vperp, z, r, composition)
     end
     if !moments.evolve_upar
-        update_upar!(new_scratch.upar, moments.ion.upar_updated, new_scratch.density,
-                     moments.ion.vth, ff, vpa, vperp, z, r, composition,
-                     moments.evolve_density, moments.evolve_p)
+        update_upar!(new_scratch.upar, new_scratch.density, moments.ion.vth, ff, vpa,
+                     vperp, z, r, composition, moments.evolve_density, moments.evolve_p)
     end
     if !moments.evolve_p
         # update_ppar! calculates (p_parallel/m_s N_e c_s^2) + (n_s/N_e)*(upar_s/c_s)^2 = (1/√π)∫d(vpa/c_s) (vpa/c_s)^2 * (√π f_s c_s / N_e)
-        update_p!(new_scratch.p, moments.ion.p_updated, new_scratch.density,
-                  new_scratch.upar, ff, vpa, vperp, z, r, composition,
-                  moments.evolve_density, moments.evolve_upar)
+        update_p!(new_scratch.p, new_scratch.density, new_scratch.upar, ff, vpa, vperp, z,
+                  r, composition, moments.evolve_density, moments.evolve_upar)
     end
     update_ppar!(moments.ion.ppar, new_scratch.density, new_scratch.upar, moments.ion.vth,
                  new_scratch.p, ff, vpa, vperp, z, r, composition, moments.evolve_density,
@@ -2644,9 +2522,9 @@ update velocity moments that are calculable from the evolved ion pdf
     update_vth!(moments.ion.vth, moments.ion.temp, new_scratch.p, new_scratch.density, z,
                 r, composition)
     # update the parallel heat flux
-    update_ion_qpar!(moments.ion.qpar, moments.ion.qpar_updated, new_scratch.density,
-                     new_scratch.upar, moments.ion.vth, moments.ion.dT_dz, ff, vpa, vperp,
-                     z, r, composition, composition.ion_physics, collisions,
+    update_ion_qpar!(moments.ion.qpar, new_scratch.density, new_scratch.upar,
+                     moments.ion.vth, moments.ion.dT_dz, ff, vpa, vperp, z, r,
+                     composition, composition.ion_physics, collisions,
                      moments.evolve_density, moments.evolve_upar, moments.evolve_p)
     # add further moments to be computed here
 
@@ -2661,36 +2539,31 @@ update velocity moments that are calculable from the evolved neutral pdf
                                                            composition) = begin
 
     if !moments.evolve_density
-        update_neutral_density!(new_scratch.density_neutral, moments.neutral.dens_updated,
-                                new_scratch.pdf_neutral, vz, vr, vzeta, z, r, composition)
+        update_neutral_density!(new_scratch.density_neutral, new_scratch.pdf_neutral, vz,
+                                vr, vzeta, z, r, composition)
     end
     if !moments.evolve_upar
-        update_neutral_uz!(new_scratch.uz_neutral, moments.neutral.uz_updated,
-                           new_scratch.density_neutral, moments.neutral.vth,
-                           new_scratch.pdf_neutral, vz, vr, vzeta, z, r, composition,
-                           moments.evolve_density, moments.evolve_p)
+        update_neutral_uz!(new_scratch.uz_neutral, new_scratch.density_neutral,
+                           moments.neutral.vth, new_scratch.pdf_neutral, vz, vr, vzeta, z,
+                           r, composition, moments.evolve_density, moments.evolve_p)
     end
     if !moments.evolve_p
-        update_neutral_uzeta!(moments.neutral.uzeta, moments.neutral.uzeta_updated,
-                              new_scratch.density_neutral, moments.neutral.vth,
-                              new_scratch.pdf_neutral, vz, vr, vzeta, z, r, composition,
-                              moments.evolve_density, moments.evolve_p)
-        update_neutral_ur!(moments.neutral.ur, moments.neutral.ur_updated,
-                           new_scratch.density_neutral, moments.neutral.vth,
-                           new_scratch.pdf_neutral, vz, vr, vzeta, z, r, composition,
-                           moments.evolve_density, moments.evolve_p)
-        update_neutral_p!(new_scratch.p_neutral, moments.neutral.p_updated,
-                          new_scratch.density_neutral, new_scratch.uz_neutral,
-                          moments.neutral.ur, moments.neutral.uzeta,
-                          moments.neutral.vth, new_scratch.pdf_neutral, vz, vr, vzeta, z,
-                          r, composition, moments.evolve_density, moments.evolve_upar,
-                          moments.evolve_p)
+        update_neutral_uzeta!(moments.neutral.uzeta, new_scratch.density_neutral,
+                              moments.neutral.vth, new_scratch.pdf_neutral, vz, vr, vzeta,
+                              z, r, composition, moments.evolve_density, moments.evolve_p)
+        update_neutral_ur!(moments.neutral.ur, new_scratch.density_neutral,
+                           moments.neutral.vth, new_scratch.pdf_neutral, vz, vr, vzeta, z,
+                           r, composition, moments.evolve_density, moments.evolve_p)
+        update_neutral_p!(new_scratch.p_neutral, new_scratch.density_neutral,
+                          new_scratch.uz_neutral, moments.neutral.ur,
+                          moments.neutral.uzeta, moments.neutral.vth,
+                          new_scratch.pdf_neutral, vz, vr, vzeta, z, r, composition,
+                          moments.evolve_density, moments.evolve_upar, moments.evolve_p)
     end
     # pz is needed for the neutral parallel momentum equation if evolving uz and the
     # neutral pressure equation if evolving p.
-    update_neutral_pz!(moments.neutral.pz, moments.neutral.pz_updated,
-                       new_scratch.density_neutral, new_scratch.uz_neutral,
-                       new_scratch.p_neutral, moments.neutral.vth,
+    update_neutral_pz!(moments.neutral.pz, new_scratch.density_neutral,
+                       new_scratch.uz_neutral, new_scratch.p_neutral, moments.neutral.vth,
                        new_scratch.pdf_neutral, vz, vr, vzeta, z, r, composition,
                        moments.evolve_density, moments.evolve_upar, moments.evolve_p)
     update_neutral_vth!(moments.neutral.vth, new_scratch.p_neutral,
@@ -2888,36 +2761,6 @@ function integrate_over_negative_vz(integrand, dzdt, vz_wgts, wgts_mod, vr_grid,
         # the 0 integers are the powers by which dzdt and vperp_grid are raised to in the integral
     end
     return velocity_integral
-end
-
-"""
-"""
-function reset_moments_status!(moments)
-    if moments.evolve_density == false
-        moments.ion.dens_updated .= false
-        moments.neutral.dens_updated .= false
-    end
-    if moments.evolve_upar == false
-        moments.ion.upar_updated .= false
-        moments.neutral.uz_updated .= false
-    end
-    if moments.evolve_p == false
-        moments.ion.p_updated .= false
-        moments.neutral.p_updated .= false
-    end
-    moments.ion.qpar_updated .= false
-    moments.neutral.uzeta_updated .= false
-    moments.neutral.ur_updated .= false
-    moments.neutral.pzeta_updated .= false
-    moments.neutral.pr_updated .= false
-    moments.neutral.pz_updated .= false
-    moments.neutral.qz_updated .= false
-    moments.electron.dens_updated[] = false
-    moments.electron.upar_updated[] = false
-    if false
-        moments.electron.p_updated[] = false
-    end
-    moments.electron.qpar_updated[] = false
 end
 
 end

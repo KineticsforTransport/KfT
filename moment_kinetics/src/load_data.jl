@@ -1039,18 +1039,6 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
             close(fid)
         end
     end
-    moments.ion.dens_updated .= true
-    moments.ion.upar_updated .= true
-    moments.ion.p_updated .= true
-    moments.ion.qpar_updated .= true
-    moments.electron.dens_updated[] = true
-    moments.electron.upar_updated[] = true
-    moments.electron.p_updated[] = true
-    moments.electron.qpar_updated[] = true
-    moments.neutral.dens_updated .= true
-    moments.neutral.uz_updated .= true
-    moments.neutral.p_updated .= true
-    moments.neutral.qz_updated .= true
 
     restart_electron_physics = MPI.bcast(restart_electron_physics, 0, comm_block[])
     MPI.Bcast!(dt, comm_block[])
@@ -1120,12 +1108,10 @@ function reload_electron_data!(pdf, moments, phi, t_params, restart_prefix_ibloc
 
             pdf_electron_converged[] = get_attribute(fid, "pdf_electron_converged")
 
-            moments.electron.upar_updated[] = true
             moments.electron.p .=
                 reload_electron_moment("electron_pressure", dynamic, time_index, coords,
                                        reload_ranges, restart_coords,
                                        interpolation_needed)
-            moments.electron.p_updated[] = true
             moments.electron.ppar .=
                 reload_electron_moment("electron_parallel_pressure", dynamic, time_index,
                                        coords, reload_ranges, restart_coords,
@@ -1134,7 +1120,6 @@ function reload_electron_data!(pdf, moments, phi, t_params, restart_prefix_ibloc
                 reload_electron_moment("electron_parallel_heat_flux", dynamic, time_index,
                                        coords, reload_ranges, restart_coords,
                                        interpolation_needed)
-            moments.electron.qpar_updated[] = true
             moments.electron.vth .=
                 reload_electron_moment("electron_thermal_speed", dynamic, time_index,
                                        coords, reload_ranges, restart_coords,

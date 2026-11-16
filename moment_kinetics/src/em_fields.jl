@@ -14,7 +14,6 @@ using ..communication: @_block_synchronize
 using ..input_structs
 using ..looping
 using ..moment_kinetics_structs: em_fields_struct
-using ..velocity_moments: update_density!
 #using ..calculus: derivative!
 using ..debugging
 using ..derivatives: derivative_r!, derivative_z!
