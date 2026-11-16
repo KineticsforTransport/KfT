@@ -2611,7 +2611,7 @@ function test_jacobian_inversion(test_input, counter::mk_int; rtol=2.0e-11)
                                        @view residual_f[1:regression_f_step:end];
                                        rtol=rtol, atol=1.0e-16)
 
-            if (nl_solver_params.electron_advance.preconditioner_type === Val(:electron_lu_separate_dp_dz_dq_dz)
+            if (nl_solver_params.electron_advance.preconditioner_info.preconditioner_type === Val(:electron_lu_separate_dp_dz_dq_dz)
                     && bc == "periodic")
                 # This combination has a strangely high relative error. Not sure why,
                 # maybe just bad luck (?), but :lu_separate_dp_dz_dq_dz is not commonly
