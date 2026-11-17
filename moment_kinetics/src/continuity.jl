@@ -23,7 +23,7 @@ species
     vEr = fields.vEr
     vEz = fields.vEz
     n = fvec_in.density
-    upar = fvec_in.upar
+    upar = moments.ion.upar
     dn_dr_upwind = moments.ion.ddens_dr_upwind
     dn_dz_upwind = moments.ion.ddens_dz_upwind
     du_dz = moments.ion.dupar_dz
@@ -86,7 +86,7 @@ species
     @loop_sn_r_z isn ir iz begin
         # Use ddens_dz is upwinded using uz
         ddens_dt[iz,ir,isn] =
-            - (fvec_in.uz_neutral[iz,ir,isn]*moments.neutral.ddens_dz_upwind[iz,ir,isn] +
+            - (moments.neutral.uz[iz,ir,isn]*moments.neutral.ddens_dz_upwind[iz,ir,isn] +
                fvec_in.density_neutral[iz,ir,isn]*moments.neutral.duz_dz[iz,ir,isn])
     end
 

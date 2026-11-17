@@ -6,7 +6,7 @@ using Base.Filesystem: tempname
 
 using moment_kinetics.interpolation: interpolate_to_grid_z, interpolate_to_grid_vpa
 using moment_kinetics.load_data: get_run_info_no_setup, close_run_info,
-                                 postproc_load_variable
+                                 get_variable
 using moment_kinetics.type_definitions: mk_float
 using moment_kinetics.utils: merge_dict_with_kwargs!
 
@@ -83,27 +83,27 @@ function run_test(test_input, rtol, atol, upar_rtol=nothing; args...)
             time = run_info.time
             
             # load fields data
-            phi_zrt = postproc_load_variable(run_info, "phi")
-            Er_zrt = postproc_load_variable(run_info, "Er")
-            Ez_zrt = postproc_load_variable(run_info, "Ez")
+            phi_zrt = get_variable(run_info, "phi")
+            Er_zrt = get_variable(run_info, "Er")
+            Ez_zrt = get_variable(run_info, "Ez")
 
             # load velocity moments data
-            n_ion_zrst = postproc_load_variable(run_info, "density")
-            upar_ion_zrst = postproc_load_variable(run_info, "parallel_flow")
-            ppar_ion_zrst = postproc_load_variable(run_info, "parallel_pressure")
-            qpar_ion_zrst = postproc_load_variable(run_info, "parallel_heat_flux")
-            v_t_ion_zrst = postproc_load_variable(run_info, "thermal_speed")
-            n_neutral_zrst = postproc_load_variable(run_info, "density_neutral")
-            upar_neutral_zrst = postproc_load_variable(run_info, "uz_neutral")
-            ppar_neutral_zrst = postproc_load_variable(run_info, "pz_neutral")
-            qpar_neutral_zrst = postproc_load_variable(run_info, "qz_neutral")
-            v_t_neutral_zrst = postproc_load_variable(run_info, "thermal_speed_neutral")
+            n_ion_zrst = get_variable(run_info, "density")
+            upar_ion_zrst = get_variable(run_info, "parallel_flow")
+            ppar_ion_zrst = get_variable(run_info, "parallel_pressure")
+            qpar_ion_zrst = get_variable(run_info, "parallel_heat_flux")
+            v_t_ion_zrst = get_variable(run_info, "thermal_speed")
+            n_neutral_zrst = get_variable(run_info, "density_neutral")
+            upar_neutral_zrst = get_variable(run_info, "uz_neutral")
+            ppar_neutral_zrst = get_variable(run_info, "pz_neutral")
+            qpar_neutral_zrst = get_variable(run_info, "qz_neutral")
+            v_t_neutral_zrst = get_variable(run_info, "thermal_speed_neutral")
             z = run_info.z
             z_spectral = run_info.z_spectral
 
             # load particle distribution function (pdf) data
-            f_ion_vpavperpzrst = postproc_load_variable(run_info, "f")
-            f_neutral_vzvrvzetazrst = postproc_load_variable(run_info, "f_neutral")
+            f_ion_vpavperpzrst = get_variable(run_info, "f")
+            f_neutral_vzvrvzetazrst = get_variable(run_info, "f_neutral")
             vpa = run_info.vpa
             vpa_spectral = run_info.vpa_spectral
 

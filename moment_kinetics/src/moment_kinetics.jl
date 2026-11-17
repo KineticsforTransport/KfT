@@ -378,7 +378,7 @@ parallel loop ranges, and are only used by the tests in `debug_test/`.
         # setup i/o
         ascii_io, io_moments, io_dfns = setup_file_io(io_input, vz, vr, vzeta, vpa,
             vperp, z, r, composition, collisions, moments.evolve_density,
-            moments.evolve_upar, moments.evolve_p, external_source_settings,
+            moments.evolve_n_upar, moments.evolve_p, external_source_settings,
             manufactured_source_list, input_dict, restart_time_index, previous_runs_info,
             time_for_setup, t_params, nl_solver_params)
         # write initial data to ascii files

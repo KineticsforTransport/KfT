@@ -368,6 +368,7 @@ function test_get_pdf_term(test_input::AbstractDict, label::String, get_term::Fu
 
         dens = @view moments.electron.dens[:,ir]
         ddens_dz = @view moments.electron.ddens_dz[:,ir]
+        n_upar = @view moments.electron.n_upar[:,ir]
         upar = @view moments.electron.upar[:,ir]
         dupar_dz = @view moments.electron.dupar_dz[:,ir]
         p = @view moments.electron.p[:,ir]
@@ -377,6 +378,7 @@ function test_get_pdf_term(test_input::AbstractDict, label::String, get_term::Fu
         qpar = @view moments.electron.qpar[:,ir]
         dqpar_dz = @view moments.electron.dqpar_dz[:,ir]
         ion_dens = @view moments.ion.dens[:,ir]
+        ion_n_upar = @view moments.ion.n_upar[:,ir]
         ion_upar = @view moments.ion.upar[:,ir]
         z_spectral = spectral_objects.z_spectral
         vperp_spectral = spectral_objects.vperp_spectral
@@ -448,6 +450,7 @@ function test_get_pdf_term(test_input::AbstractDict, label::String, get_term::Fu
                 # Modify ion_upar to make sure it is different from upar_electron so that the
                 # term proportional to (u_i-u_e) gets tested in case it is ever needed.
                 @. ion_upar += sin(4.0*π*test_wavenumber*z.grid/z.L)
+                @. ion_n_upar = ion_dens * ion_upar
             end
         else
             upar_test = upar
@@ -706,11 +709,12 @@ function test_get_pdf_term(test_input::AbstractDict, label::String, get_term::Fu
             # For "electron_krook_collisions" upar_test is different from upar. Do not
             # pass in upar_test here, because we want upar_test to stay fixed at its
             # initial value, not be updated to be equal to ion_upar.
-            calculate_electron_moments_no_r!(this_f, dens, upar, this_p, ion_dens,
-                                             ion_upar, moments, composition, collisions,
+            calculate_electron_moments_no_r!(this_f, dens, n_upar, this_p, ion_dens,
+                                             ion_n_upar, moments, composition, collisions,
                                              r, z, vperp, vpa, ir)
+            moments.electron.upar .= upar_test
             calculate_electron_moment_derivatives_no_r!(
-                moments, dens, upar_test, this_p, scratch_dummy, z, z_spectral,
+                moments, dens, this_p, scratch_dummy, z, z_spectral,
                 num_diss_params.electron.moment_dissipation_coefficient, ir)
 
             # electron_kinetic_equation_euler_update!() just adds dt*d(g_e)/dt to the
@@ -947,12 +951,14 @@ function test_get_p_term(test_input::AbstractDict, label::String, get_term::Func
             ascii_io, io_moments, io_dfns = get_mk_state(this_test_input)
 
         dens = @view moments.electron.dens[:,ir]
+        n_upar = @view moments.electron.n_upar[:,ir]
         upar = @view moments.electron.upar[:,ir]
         p = @view moments.electron.p[:,ir]
         ppar = @view moments.electron.ppar[:,ir]
         vth = @view moments.electron.vth[:,ir]
         qpar = @view moments.electron.qpar[:,ir]
         ion_dens = @view moments.ion.dens[:,ir]
+        ion_n_upar = @view moments.ion.n_upar[:,ir]
         ion_upar = @view moments.ion.upar[:,ir]
         ddens_dz = @view moments.electron.ddens_dz[:,ir]
         dupar_dz = @view moments.electron.dupar_dz[:,ir]
@@ -1259,11 +1265,11 @@ function test_get_p_term(test_input::AbstractDict, label::String, get_term::Func
         function residual_func!(residual, this_f, this_p)
             @begin_anyzv_z_region()
             # Calculate derived moments and derivatives using new_variables
-            calculate_electron_moments_no_r!(this_f, dens, upar, this_p, ion_dens,
-                                             ion_upar, moments, composition, collisions,
+            calculate_electron_moments_no_r!(this_f, dens, n_upar, this_p, ion_dens,
+                                             ion_n_upar, moments, composition, collisions,
                                              r, z, vperp, vpa, ir)
             calculate_electron_moment_derivatives_no_r!(
-                moments, dens, upar, this_p, scratch_dummy, z, z_spectral,
+                moments, dens, this_p, scratch_dummy, z, z_spectral,
                 num_diss_params.electron.moment_dissipation_coefficient, ir)
 
             # electron_kinetic_equation_euler_update!() just adds dt*d(g_e)/dt to the
@@ -1476,13 +1482,14 @@ function test_electron_kinetic_equation(test_input, counter::mk_int;
 
         dens = @view moments.electron.dens[:,ir]
         ddens_dz = @view moments.electron.ddens_dz[:,ir]
+        n_upar = @view moments.electron.n_upar[:,ir]
         upar = @view moments.electron.upar[:,ir]
         p = @view moments.electron.p[:,ir]
         dp_dz = @view moments.electron.dp_dz[:,ir]
         vth = @view moments.electron.vth[:,ir]
         qpar = @view moments.electron.qpar[:,ir]
         ion_dens = @view moments.ion.dens[:,ir]
-        ion_upar = @view moments.ion.upar[:,ir]
+        ion_n_upar = @view moments.ion.n_upar[:,ir]
         phi = @view fields.phi[:,ir]
         z_spectral = spectral_objects.z_spectral
         vperp_spectral = spectral_objects.vperp_spectral
@@ -1800,11 +1807,11 @@ function test_electron_kinetic_equation(test_input, counter::mk_int;
         function residual_func!(residual_f, residual_p, this_f, this_p)
             @begin_anyzv_z_region()
             # Calculate derived moments and derivatives using new_variables
-            calculate_electron_moments_no_r!(this_f, dens, upar, this_p, ion_dens,
-                                             ion_upar, moments, composition, collisions,
+            calculate_electron_moments_no_r!(this_f, dens, n_upar, this_p, ion_dens,
+                                             ion_n_upar, moments, composition, collisions,
                                              r, z, vperp, vpa, ir)
             calculate_electron_moment_derivatives_no_r!(
-                moments, dens, upar, this_p, scratch_dummy, z, z_spectral,
+                moments, dens, this_p, scratch_dummy, z, z_spectral,
                 num_diss_params.electron.moment_dissipation_coefficient, ir)
 
             # electron_kinetic_equation_euler_update!() just adds dt*d(g_e)/dt to the
@@ -2075,12 +2082,13 @@ function test_electron_wall_bc(test_input, counter::mk_int; atol=(10.0*epsilon)^
             ascii_io, io_moments, io_dfns = get_mk_state(this_test_input)
 
         dens = @view moments.electron.dens[:,ir]
+        n_upar = @view moments.electron.n_upar[:,ir]
         upar = @view moments.electron.upar[:,ir]
         p = @view moments.electron.p[:,ir]
         vth = @view moments.electron.vth[:,ir]
         qpar = @view moments.electron.qpar[:,ir]
         ion_dens = @view moments.ion.dens[:,ir]
-        ion_upar = @view moments.ion.upar[:,ir]
+        ion_n_upar = @view moments.ion.n_upar[:,ir]
         ddens_dz = @view moments.electron.ddens_dz[:,ir]
         dp_dz = @view moments.electron.dp_dz[:,ir]
         phi = @view fields.phi[:,ir]
@@ -2272,11 +2280,11 @@ function test_electron_wall_bc(test_input, counter::mk_int; atol=(10.0*epsilon)^
         function residual_func!(residual, this_f, this_p)
             @begin_anyzv_z_region()
             # Calculate derived moments and derivatives using new_variables
-            calculate_electron_moments_no_r!(this_f, dens, upar, this_p, ion_dens,
-                                             ion_upar, moments, composition, collisions,
+            calculate_electron_moments_no_r!(this_f, dens, n_upar, this_p, ion_dens,
+                                             ion_n_upar, moments, composition, collisions,
                                              r, z, vperp, vpa, ir)
             calculate_electron_moment_derivatives_no_r!(
-                moments, dens, upar, this_p, scratch_dummy, z, z_spectral,
+                moments, dens, this_p, scratch_dummy, z, z_spectral,
                 num_diss_params.electron.moment_dissipation_coefficient, ir)
 
             # enforce the boundary condition(s) on the electron pdf
@@ -2530,12 +2538,14 @@ function test_jacobian_inversion(test_input, counter::mk_int; rtol=2.0e-11)
 
         dens = @view moments.electron.dens[:,ir]
         ddens_dz = @view moments.electron.ddens_dz[:,ir]
+        n_upar = @view moments.electron.n_upar[:,ir]
         upar = @view moments.electron.upar[:,ir]
         p = @view moments.electron.p[:,ir]
         dp_dz = @view moments.electron.dp_dz[:,ir]
         vth = @view moments.electron.vth[:,ir]
         qpar = @view moments.electron.qpar[:,ir]
         ion_dens = @view moments.ion.dens[:,ir]
+        ion_n_upar = @view moments.ion.n_upar[:,ir]
         ion_upar = @view moments.ion.upar[:,ir]
         phi = @view fields.phi[:,ir]
         z_spectral = spectral_objects.z_spectral
@@ -2586,9 +2596,9 @@ function test_jacobian_inversion(test_input, counter::mk_int; rtol=2.0e-11)
                                                     t_params=t_params.electron, ion_dt,
                                                     scratch_dummy, this_phi=phi,
                                                     electron_density=dens,
-                                                    electron_upar=upar,
-                                                    ion_density=ion_dens, ion_upar, r, z,
-                                                    vperp, vpa, z_spectral,
+                                                    electron_n_upar=n_upar,
+                                                    ion_density=ion_dens, ion_n_upar, r,
+                                                    z, vperp, vpa, z_spectral,
                                                     vperp_spectral, vpa_spectral,
                                                     z_advect, vpa_advect, num_diss_params,
                                                     ir)

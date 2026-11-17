@@ -45,16 +45,16 @@ using ..timer_utils
             # values of dz/dt; as charge exchange and ionization collisions require
             # the evaluation of the pdf for species s' to obtain the update for species s,
             # will thus have to interpolate between the different vpa grids
-            if moments.evolve_upar && moments.evolve_p
-                # if evolve_ppar = true and evolve_upar = true, vpa coordinate is
+            if moments.evolve_n_upar && moments.evolve_p
+                # if evolve_ppar = true and evolve_n_upar = true, vpa coordinate is
                 # wpahat_s = (vpa-upar_s)/vth_s;
                 # we have f_{s'}(wpahat_{s'}) = f_{s'}((wpahat_s * vth_s + upar_s - upar_{s'}) / vth_{s'});
                 # to get f_{s'}(wpahat_s), need to obtain wpahat_s grid locations
                 # in terms of the wpahat_{s'} coordinate:
                 # (wpahat_{s'})_j = ((wpahat_{s})_j * vth_{s} + upar_{s} - upar_{s'}) / vth_{s'}
-                new_grid = @. vpa.scratch = (vpa.grid * moments.ion.vth[iz,ir,is] + fvec_in.upar[iz,ir,is] - fvec_in.uz_neutral[iz,ir,isn]) / moments.neutral.vth[iz,ir,isn]
-            elseif !moments.evolve_upar
-                # if evolve_ppar = true and evolve_upar = false, vpa coordinate is
+                new_grid = @. vpa.scratch = (vpa.grid * moments.ion.vth[iz,ir,is] + moments.ion.upar[iz,ir,is] - moments.neutral.uz[iz,ir,isn]) / moments.neutral.vth[iz,ir,isn]
+            elseif !moments.evolve_n_upar
+                # if evolve_ppar = true and evolve_n_upar = false, vpa coordinate is
                 # vpahat_s = vpa/vth_s;
                 # we have f_{s'}(vpahat_{s'}) = f_{s'}(vpahat_s * vth_s / vth_{s'});
                 # to get f_{s'}(vpahat_s), need to obtain vpahat_s grid locations
@@ -62,13 +62,13 @@ using ..timer_utils
                 # (vpahat_s)_j = (vpahat_{s'})_j * vth_{s'} / vth_{s}
                 new_grid = @. vpa.scratch = vpa.grid / vth_ratio
             elseif !moments.evolve_p
-                # if evolve_ppar = false and evolve_upar = true, vpa coordinate is
+                # if evolve_ppar = false and evolve_n_upar = true, vpa coordinate is
                 # wpa_s = vpa-upar_s;
                 # we have f_{s'}(wpa_{s'}) = f_{s'}((wpa_s + upar_s - upar_{s'};
                 # to get f_{s'}(wpa_s), need to obtain wpa_s grid locations
                 # in terms of the wpa_{s'} coordinate:
                 # (wpa_s)_j = (wpa_{s'})_j + upar_{s'} - upar_{s}
-                new_grid = @. vpa.scratch = vpa.grid + fvec_in.upar[iz,ir,is] - fvec_in.uz_neutral[iz,ir,isn]
+                new_grid = @. vpa.scratch = vpa.grid + moments.ion.upar[iz,ir,is] - moments.neutral.uz[iz,ir,isn]
             else
                 new_grid = vpa.grid
             end

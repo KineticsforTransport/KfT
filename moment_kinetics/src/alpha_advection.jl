@@ -21,8 +21,8 @@ Do a single stage time advance (potentially as part of a multi-stage RK scheme).
 
     # Get the updated alpha-advection speed projected along the z direction using the
     # current f.
-    @views update_speed_alpha!(advect, moments.evolve_upar, moments.evolve_p, fields, vpa,
-                               vperp, z, r, geometry)
+    @views update_speed_alpha!(advect, moments.evolve_n_upar, moments.evolve_p, fields,
+                               vpa, vperp, z, r, geometry)
 
     @begin_s_r_vperp_vpa_region()
 
@@ -45,13 +45,13 @@ end
 """
 calculate the advection speed in the z-direction at each grid point
 """
-function update_speed_alpha!(advect, evolve_upar::Bool, evolve_p::Bool, fields, vpa,
+function update_speed_alpha!(advect, evolve_n_upar::Bool, evolve_p::Bool, fields, vpa,
                              vperp, z, r, geometry)
-    return update_speed_alpha!(advect, Val(evolve_upar), Val(evolve_p), fields, vpa,
+    return update_speed_alpha!(advect, Val(evolve_n_upar), Val(evolve_p), fields, vpa,
                                vperp, z, r, geometry)
 end
-function update_speed_alpha!(advect, evolve_upar::Val, evolve_p::Val, fields, vpa, vperp,
-                             z, r, geometry)
+function update_speed_alpha!(advect, evolve_n_upar::Val, evolve_p::Val, fields, vpa,
+                             vperp, z, r, geometry)
     @debug_consistency_checks r.n == size(advect,4) || throw(BoundsError(advect))
     @debug_consistency_checks z.n == size(advect,3) || throw(BoundsError(advect))
     @debug_consistency_checks vperp.n == size(advect,2) || throw(BoundsError(advect))
@@ -60,7 +60,7 @@ function update_speed_alpha!(advect, evolve_upar::Val, evolve_p::Val, fields, vp
     @begin_s_r_z_vperp_region()
 
     speed_args = get_speed_alpha_inner_args(advect, fields, geometry, z, vpa, vperp,
-                                            evolve_upar, evolve_p)
+                                            evolve_n_upar, evolve_p)
     @loop_s_r is ir begin
         speed_args_sr = get_speed_alpha_inner_views_sr(is, ir, speed_args...)
         @loop_z iz begin
@@ -75,41 +75,41 @@ function update_speed_alpha!(advect, evolve_upar::Val, evolve_p::Val, fields, vp
 end
 
 @inline function get_speed_alpha_inner_args(advect, fields, geometry, z, vpa, vperp,
-                                            evolve_upar, evolve_p)
+                                            evolve_n_upar, evolve_p)
     return advect, fields.vEz, geometry.rhostar, z.scratch, geometry.bzeta,
            geometry.jacobian, geometry.Bmag, geometry.curvature_drift_z,
-           geometry.grad_B_drift_z, fields.gEr, vpa.grid, vperp.grid, evolve_upar,
+           geometry.grad_B_drift_z, fields.gEr, vpa.grid, vperp.grid, evolve_n_upar,
            evolve_p
 end
 
 @inline function get_speed_alpha_inner_views_sr(is, ir, advect, vEz, rhostar, geofac,
                                                 bzeta, jacobian, Bmag, curvature_drift_z,
                                                 grad_B_drift_z, gEr, vpa, vperp,
-                                                evolve_upar, evolve_p)
+                                                evolve_n_upar, evolve_p)
     @views @. geofac = bzeta[:,ir] * jacobian[:,ir] / Bmag[:,ir]
     return @views advect[:,:,:,ir,is], vEz[:,ir], rhostar, geofac,
                   curvature_drift_z[:,ir], grad_B_drift_z[:,ir], gEr[:,:,ir,is], vpa,
-                  vperp, evolve_upar, evolve_p
+                  vperp, evolve_n_upar, evolve_p
 end
 
 @inline function get_speed_alpha_inner_views_z(iz, advect, vEz, rhostar, geofac,
                                                curvature_drift_z, grad_B_drift_z, gEr,
-                                               vpa, vperp, evolve_upar, evolve_p)
+                                               vpa, vperp, evolve_n_upar, evolve_p)
     return @views advect[:,:,iz], vEz[iz], rhostar, geofac[iz], curvature_drift_z[iz],
-                  grad_B_drift_z[iz], gEr[:,iz], vpa, vperp, evolve_upar, evolve_p
+                  grad_B_drift_z[iz], gEr[:,iz], vpa, vperp, evolve_n_upar, evolve_p
 end
 
 @inline function get_speed_alpha_inner_views_vperp(ivperp, advect, vEz, rhostar, geofac,
                                                    curvature_drift_z, grad_B_drift_z, gEr,
-                                                   vpa, vperp, evolve_upar, evolve_p)
+                                                   vpa, vperp, evolve_n_upar, evolve_p)
     return @views advect[:,ivperp], vEz, rhostar, geofac, curvature_drift_z, grad_B_drift_z,
-                  gEr[ivperp], vpa, vperp[ivperp], evolve_upar, evolve_p
+                  gEr[ivperp], vpa, vperp[ivperp], evolve_n_upar, evolve_p
 end
 
 function update_speed_alpha_inner!(advect, vEz, rhostar, geofac, curvature_drift_z,
-                                   grad_B_drift_z, gEr, vpa, vperp, evolve_upar::Val,
+                                   grad_B_drift_z, gEr, vpa, vperp, evolve_n_upar::Val,
                                    evolve_p::Val)
-    if evolve_upar === Val(true) || evolve_p === Val(true)
+    if evolve_n_upar === Val(true) || evolve_p === Val(true)
         # Magnetic drifts not supported here yet
         # ExB drift
         @. advect = vEz

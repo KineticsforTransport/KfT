@@ -105,8 +105,8 @@ function check_Chodura_condition(r, z, vperp, vpa, dens, upar, vth, temp_e, comp
                                  it0::Union{Nothing, mk_int}=nothing,
                                  ir0::Union{Nothing, mk_int}=nothing;
                                  f_lower=nothing, f_upper=nothing,
-                                 evolve_density=false, evolve_upar=false, evolve_p=false,
-                                 find_extra_offset=false)
+                                 evolve_density=false, evolve_n_upar=false,
+                                 evolve_p=false, find_extra_offset=false)
 
     if z_bc != "wall"
         return nothing, nothing
@@ -186,7 +186,7 @@ function check_Chodura_condition(r, z, vperp, vpa, dens, upar, vth, temp_e, comp
         ##############
 
         v_parallel = vpagrid_to_vpa(vpa.grid, vth[1,ir,is,it], upar[1,ir,is,it], evolve_p,
-                                    evolve_upar)
+                                    evolve_n_upar)
         vpabar = @. v_parallel - geometry.rhostar * Er[1,ir,it] / geometry.bzed[1,ir]
 
         # Get rid of a zero if it is there to avoid a blow up - f should be zero at that
@@ -243,7 +243,7 @@ function check_Chodura_condition(r, z, vperp, vpa, dens, upar, vth, temp_e, comp
         ##############
 
         v_parallel = vpagrid_to_vpa(vpa.grid, vth[end,ir,is,it], upar[end,ir,is,it],
-                                    evolve_p, evolve_upar)
+                                    evolve_p, evolve_n_upar)
         vpabar = @. v_parallel - geometry.rhostar * Er[end,ir,it] / geometry.bzed[end,ir]
 
         # Get rid of a zero if it is there to avoid a blow up - f should be zero at that
@@ -1093,9 +1093,9 @@ coordinate at a point in space.
 Inputs should depend only on vpa.
 """
 function get_unnormalised_f_dzdt_1d(f, vpa_grid, density, upar, vth, evolve_density,
-                                    evolve_upar, evolve_p)
+                                    evolve_n_upar, evolve_p)
 
-    dzdt = vpagrid_to_vpa(vpa_grid, vth, upar, evolve_p, evolve_upar)
+    dzdt = vpagrid_to_vpa(vpa_grid, vth, upar, evolve_p, evolve_n_upar)
 
     f_unnorm = get_unnormalised_f_1d(f, density, vth, evolve_density, evolve_p)
 
@@ -1133,25 +1133,25 @@ Get the unnormalised distribution function and unnormalised ('lab space') coordi
 Inputs should depend only on z and vpa.
 """
 function get_unnormalised_f_coords_2d(f, z_grid, vpa_grid, density, upar, vth,
-                                      evolve_density, evolve_upar, evolve_p)
+                                      evolve_density, evolve_n_upar, evolve_p)
 
     nvpa, nz = size(f)
     z2d = zeros(nvpa, nz)
     for iz ∈ 1:nz
         z2d[:,iz] .= z_grid[iz]
     end
-    v_parallel_2d = vpagrid_to_v_parallel_2d(vpa_grid, vth, upar, evolve_p, evolve_upar)
+    v_parallel_2d = vpagrid_to_v_parallel_2d(vpa_grid, vth, upar, evolve_p, evolve_n_upar)
     f_unnorm = get_unnormalised_f_2d(f, density, vth, evolve_density, evolve_p)
 
     return f_unnorm, z2d, v_parallel_2d
 end
-function vpagrid_to_v_parallel_2d(vpa_grid, vth, upar, evolve_p, evolve_upar)
+function vpagrid_to_v_parallel_2d(vpa_grid, vth, upar, evolve_p, evolve_n_upar)
     nvpa = length(vpa_grid)
     nz = length(vth)
     v_parallel_2d = zeros(nvpa, nz)
     for iz ∈ 1:nz
         @views v_parallel_2d[:,iz] .= vpagrid_to_vpa(vpa_grid, vth[iz], upar[iz],
-                                                     evolve_p, evolve_upar)
+                                                     evolve_p, evolve_n_upar)
     end
     return v_parallel_2d
 end

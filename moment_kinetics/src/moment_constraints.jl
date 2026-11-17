@@ -75,7 +75,7 @@ Note this function assumes the input is given at a single spatial position.
         @loop_vperp_vpa ivperp ivpa begin
             f[ivpa,ivperp] = f[ivpa,ivperp] * (A + B*vpa.grid[ivpa] + C*(vpa.grid[ivpa]^2 + vperp.grid[ivperp]^2))
         end
-    elseif moments.evolve_upar
+    elseif moments.evolve_n_upar
         # fnew = (A + B*wpa)*f
         # Constraints:
         #   1 = ∫fnew d^3w
@@ -216,7 +216,7 @@ Notes:
         C = (1.5 - A*I2 -B*I3) / I4
 
         @. f1d = A*f1d + B*vz.grid*f1d + C*vz.grid*vz.grid*f1d
-    elseif moments.evolve_upar
+    elseif moments.evolve_n_upar
         # fnew = (A + B*wz)*f
         # Constraints:
         #   1 = ∫fnew dwpa
@@ -344,7 +344,7 @@ function moment_constraints_on_residual!(residual::AbstractArray{T,N},
         C = -(J2 + I2*A + I3*B) / I4
 
         @. residual = residual + (A + B*vpa.grid + C*vpa.grid*vpa.grid) * f
-    elseif moments.evolve_upar
+    elseif moments.evolve_n_upar
         # rnew = r + (A + B*wpa + C*wpa^2)*f
         # Constraints:
         #   0 = ∫rnew dwpa

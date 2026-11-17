@@ -88,18 +88,18 @@ function plots_for_variable(run_info, variable_name; plot_prefix, has_rdim=true,
         end
         # Here we can pass 'run_info' objects as the 'moments' argument of
         # regrid_time_evolving because they contain the necessary
-        # `evolve_density`/`evolve_upar`/`evolve_p` flags.
+        # `evolve_density`/`evolve_n_upar`/`evolve_p` flags.
         if interpolate_to_other_grid
             variable = [v .- regrid_time_evolving(subtract_from, _run_info_to_coords(ri),
                                                   _run_info_to_coords(subtract_from_info),
                                                   ri, subtract_from_info.evolve_density,
-                                                  subtract_from_info.evolve_upar,
+                                                  subtract_from_info.evolve_n_upar,
                                                   subtract_from_info.evolve_p)
                         for (ri, v) ∈ zip(run_info, variable)]
         else
             variable = [regrid_time_evolving(v, _run_info_to_coords(subtract_from_info),
                                              _run_info_to_coords(ri), subtract_from_info,
-                                             ri.evolve_density, ri.evolve_upar,
+                                             ri.evolve_density, ri.evolve_n_upar,
                                              ri.evolve_p) .- subtract_from
                         for (ri, v) ∈ zip(run_info, variable)]
 
@@ -231,7 +231,7 @@ function plots_for_dfn_variable(run_info, variable_name; plot_prefix, has_rdim=t
     plot_dims = tuple(:t, animate_dims...)
 
     moment_kinetic = any(ri !== nothing
-                         && (ri.evolve_density || ri.evolve_upar || ri.evolve_p)
+                         && (ri.evolve_density || ri.evolve_n_upar || ri.evolve_p)
                          for ri ∈ run_info)
 
     # test if any plot is needed
@@ -273,11 +273,11 @@ function plots_for_dfn_variable(run_info, variable_name; plot_prefix, has_rdim=t
         end
         # Here we can pass 'run_info' objects as the 'moments' argument of
         # regrid_time_evolving because they contain the necessary
-        # `evolve_density`/`evolve_upar`/`evolve_p` flags.
+        # `evolve_density`/`evolve_n_upar`/`evolve_p` flags.
         if interpolate_to_other_grid
             if variable_name == "f"
                 moments = ((evolve_density=ri.evolve_density,
-                            evolve_upar=ri.evolve_upar,
+                            evolve_n_upar=ri.evolve_n_upar,
                             evolve_p=ri.evolve_p,
                             ion=(dens=get_variable(ri, "density"),
                                  upar=get_variable(ri, "parallel_flow"),
@@ -286,7 +286,7 @@ function plots_for_dfn_variable(run_info, variable_name; plot_prefix, has_rdim=t
                            ) for ri ∈ run_info)
             elseif variable_name == "f_electron"
                 moments = ((evolve_density=ri.evolve_density,
-                            evolve_upar=ri.evolve_upar,
+                            evolve_n_upar=ri.evolve_n_upar,
                             evolve_p=ri.evolve_p,
                             electron=(dens=get_variable(ri, "electron_density"),
                                       upar=get_variable(ri, "electron_parallel_flow"),
@@ -295,7 +295,7 @@ function plots_for_dfn_variable(run_info, variable_name; plot_prefix, has_rdim=t
                            ) for ri ∈ run_info)
             elseif variable_name == "f_neutral"
                 moments = ((evolve_density=ri.evolve_density,
-                            evolve_upar=ri.evolve_upar,
+                            evolve_n_upar=ri.evolve_n_upar,
                             evolve_p=ri.evolve_p,
                             neutral=(dens=get_variable(ri, "density_neutral"),
                                      uz=get_variable(ri, "uz_neutral"),
@@ -308,13 +308,13 @@ function plots_for_dfn_variable(run_info, variable_name; plot_prefix, has_rdim=t
             variable = [v .- regrid_time_evolving(subtract_from, _run_info_to_coords(ri),
                                                   _run_info_to_coords(subtract_from_info),
                                                   m, subtract_from_info.evolve_density,
-                                                  subtract_from_info.evolve_upar,
+                                                  subtract_from_info.evolve_n_upar,
                                                   subtract_from_info.evolve_p)
                         for (ri, v, m) ∈ zip(run_info, variable, moments)]
         else
             if variable_name == "f"
                 moments = (evolve_density=subtract_from_info.evolve_density,
-                           evolve_upar=subtract_from_info.evolve_upar,
+                           evolve_n_upar=subtract_from_info.evolve_n_upar,
                            evolve_p=subtract_from_info.evolve_p,
                            ion=(dens=get_variable(subtract_from_info, "density"),
                                 upar=get_variable(subtract_from_info, "parallel_flow"),
@@ -323,7 +323,7 @@ function plots_for_dfn_variable(run_info, variable_name; plot_prefix, has_rdim=t
                           )
             elseif variable_name == "f_electron"
                 moments = (evolve_density=subtract_from_info.evolve_density,
-                           evolve_upar=subtract_from_info.evolve_upar,
+                           evolve_n_upar=subtract_from_info.evolve_n_upar,
                            evolve_p=subtract_from_info.evolve_p,
                            electron=(dens=get_variable(subtract_from_info, "electron_density"),
                                      upar=get_variable(subtract_from_info, "electron_parallel_flow"),
@@ -332,7 +332,7 @@ function plots_for_dfn_variable(run_info, variable_name; plot_prefix, has_rdim=t
                           )
             elseif variable_name == "f_neutral"
                 moments = (evolve_density=subtract_from_info.evolve_density,
-                           evolve_upar=subtract_from_info.evolve_upar,
+                           evolve_n_upar=subtract_from_info.evolve_n_upar,
                            evolve_p=subtract_from_info.evolve_p,
                            neutral=(dens=get_variable(subtract_from_info, "density_neutral"),
                                     uz=get_variable(subtract_from_info, "uz_neutral"),
@@ -344,7 +344,7 @@ function plots_for_dfn_variable(run_info, variable_name; plot_prefix, has_rdim=t
             end
             variable = [regrid_time_evolving(v, _run_info_to_coords(subtract_from_info),
                                              _run_info_to_coords(ri), moments,
-                                             ri.evolve_density, ri.evolve_upar,
+                                             ri.evolve_density, ri.evolve_n_upar,
                                              ri.evolve_p) .- subtract_from
                         for (ri, v) ∈ zip(run_info, variable)]
 
@@ -512,13 +512,13 @@ function _run_info_to_coords(ri)
 end
 
 function regrid_time_evolving(variable, new_coords, old_coords, moments,
-                              old_evolve_density, old_evolve_upar, old_evolve_p)
+                              old_evolve_density, old_evolve_n_upar, old_evolve_p)
     tdim = ndims(variable)
     nt = size(variable, tdim)
 
     first_regridded = regrid_variable(selectdim(variable, tdim, 1), new_coords,
                                       old_coords, moments, old_evolve_density,
-                                      old_evolve_upar, old_evolve_p)
+                                      old_evolve_n_upar, old_evolve_p)
 
     result = allocate_float(size(first_regridded)..., nt)
     selectdim(result, tdim, 1) .= first_regridded
@@ -527,7 +527,7 @@ function regrid_time_evolving(variable, new_coords, old_coords, moments,
         selectdim(result, tdim, it) .= regrid_variable(selectdim(variable, tdim, it),
                                                        new_coords, old_coords, moments,
                                                        old_evolve_density,
-                                                       old_evolve_upar, old_evolve_p)
+                                                       old_evolve_n_upar, old_evolve_p)
     end
 
     return result

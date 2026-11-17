@@ -44,7 +44,7 @@ function check_moment_constraints(run_info, is_neutral; input, plot_prefix)
                          outfile=plot_prefix * "density_moment_neutral_check.gif")
         end
 
-        if run_info.evolve_upar
+        if run_info.evolve_n_upar
             moment = zeros(run_info.z.n, run_info.r.n, run_info.nt)
             for it ∈ 1:run_info.nt, ir ∈ 1:run_info.r.n, iz ∈ 1:run_info.z.n
                 moment[iz,ir,it] = integral(
@@ -83,7 +83,7 @@ function check_moment_constraints(run_info, is_neutral; input, plot_prefix)
                          outfile=plot_prefix * "density_moment_check.gif")
         end
 
-        if run_info.evolve_upar
+        if run_info.evolve_n_upar
             moment = zeros(run_info.z.n, run_info.r.n, run_info.nt)
             for it ∈ 1:run_info.nt, ir ∈ 1:run_info.r.n, iz ∈ 1:run_info.z.n
                 moment[iz,ir,it] = integral(
@@ -139,14 +139,14 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
         ir0 = input.ir0
 
         if input.plot
-            if any(ri.evolve_density || ri.evolve_upar || ri.evolve_p
+            if any(ri.evolve_density || ri.evolve_n_upar || ri.evolve_p
                    for ri ∈ run_info)
 
                 # Ions
                 frame_index = Observable(1)
                 fig, ax = get_1d_ax(; xlabel="z", ylabel="constraint coefficient")
                 for ri ∈ run_info
-                    if !(ri.evolve_density || ri.evolve_upar || ri.evolve_p)
+                    if !(ri.evolve_density || ri.evolve_n_upar || ri.evolve_p)
                         continue
                     end
                     nspecies = ri.n_ion_species
@@ -189,12 +189,12 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
 
             # Neutrals
             if any(ri.n_neutral_species > 0
-                   && (ri.evolve_density || ri.evolve_upar || ri.evolve_p)
+                   && (ri.evolve_density || ri.evolve_n_upar || ri.evolve_p)
                    for ri ∈ run_info)
 
                 fig, ax = get_1d_ax(; xlabel="z", ylabel="constraint coefficient")
                 for ri ∈ run_info
-                    if !(ri.evolve_density || ri.evolve_upar || ri.evolve_p)
+                    if !(ri.evolve_density || ri.evolve_n_upar || ri.evolve_p)
                         continue
                     end
                     nspecies = ri.n_neutral_species
@@ -276,7 +276,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
         if input.animate
             nt = minimum(ri.nt for ri ∈ run_info)
 
-            if any(ri.evolve_density || ri.evolve_upar || ri.evolve_p
+            if any(ri.evolve_density || ri.evolve_n_upar || ri.evolve_p
                    for ri ∈ run_info)
 
                 # Ions
@@ -289,7 +289,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                 ymin = Inf
                 ymax = -Inf
                 for ri ∈ run_info
-                    if !(ri.evolve_density || ri.evolve_upar || ri.evolve_p)
+                    if !(ri.evolve_density || ri.evolve_n_upar || ri.evolve_p)
                         continue
                     end
                     nspecies = ri.n_ion_species
@@ -345,7 +345,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
 
             # Neutrals
             if any(ri.n_neutral_species > 0
-                   && (ri.evolve_density || ri.evolve_upar || ri.evolve_p)
+                   && (ri.evolve_density || ri.evolve_n_upar || ri.evolve_p)
                    for ri ∈ run_info)
 
                 frame_index = Observable(1)
@@ -357,7 +357,7 @@ function constraints_plots(run_info; plot_prefix=plot_prefix)
                 ymin = Inf
                 ymax = -Inf
                 for ri ∈ run_info
-                    if !(ri.evolve_density || ri.evolve_upar || ri.evolve_p)
+                    if !(ri.evolve_density || ri.evolve_n_upar || ri.evolve_p)
                         continue
                     end
                     nspecies = ri.n_neutral_species

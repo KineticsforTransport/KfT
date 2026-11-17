@@ -22,9 +22,7 @@ using ..plots_post_processing: get_coords_nelement, get_coords_ngrid
 using moment_kinetics.array_allocation: allocate_float
 using moment_kinetics.type_definitions: mk_float, mk_int
 using moment_kinetics.load_data: open_readonly_output_file
-using moment_kinetics.load_data: load_fields_data, load_pdf_data
-using moment_kinetics.load_data: load_ion_moments_data, load_neutral_particle_moments_data
-using moment_kinetics.load_data: load_neutral_pdf_data, load_time_data, load_species_data
+using moment_kinetics.load_data: load_time_data, load_species_data
 using moment_kinetics.load_data: load_block_data, load_coordinate_data, load_input
 using moment_kinetics.load_data: read_distributed_zr_data!, construct_global_zr_coords
 using moment_kinetics.manufactured_solns: manufactured_solutions, manufactured_electric_fields
@@ -219,14 +217,18 @@ function get_MMS_error_data(path_list,scan_type,scan_name)
         read_distributed_zr_data!(Er,"Er",run_names,"moments",nbs,z.n,r.n,iskip) 
         # ion particle moments
         read_distributed_zr_data!(density,"density",run_names,"moments",nbs,z.n,r.n,iskip) 
-        read_distributed_zr_data!(parallel_flow,"parallel_flow",run_names,"moments",nbs,z.n,r.n,iskip) 
+        read_distributed_zr_data!(parallel_flow,"parallel_particle_flux",run_names,"moments",nbs,z.n,r.n,iskip) 
+        # Convert parallel particle flux to parallel flow
+        map((x, y) -> x ./ y, parallel_flow, density)
         read_distributed_zr_data!(parallel_pressure,"parallel_pressure",run_names,"moments",nbs,z.n,r.n,iskip) 
         read_distributed_zr_data!(parallel_heat_flux,"parallel_heat_flux",run_names,"moments",nbs,z.n,r.n,iskip) 
         read_distributed_zr_data!(thermal_speed,"thermal_speed",run_names,"moments",nbs,z.n,r.n,iskip) 
         # neutral particle moments 
         if n_neutral_species > 0
             read_distributed_zr_data!(neutral_density,"density_neutral",run_names,"moments",nbs,z.n,r.n,iskip) 
-            read_distributed_zr_data!(neutral_uz,"uz_neutral",run_names,"moments",nbs,z.n,r.n,iskip) 
+            read_distributed_zr_data!(neutral_uz,"n_uz_neutral",run_names,"moments",nbs,z.n,r.n,iskip) 
+            # Convert parallel particle flux to parallel flow
+            map((x, y) -> x ./ y, neutral_uz, neutral_density)
             read_distributed_zr_data!(neutral_pz,"pz_neutral",run_names,"moments",nbs,z.n,r.n,iskip) 
             read_distributed_zr_data!(neutral_qz,"qz_neutral",run_names,"moments",nbs,z.n,r.n,iskip) 
             read_distributed_zr_data!(neutral_thermal_speed,"thermal_speed_neutral",run_names,"moments",nbs,z.n,r.n,iskip) 

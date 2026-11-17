@@ -168,7 +168,8 @@ function print_output_data_for_test_update(path; write_grid=true, write_pdf=true
         print("],\n")
         return nothing
     end
-    n_ion_zrst, upar_ion_zrst, p_ion_zrst, ppar_ion_zrst, pperp_ion_zrst, qpar_ion_zrst, v_t_ion_zrst, dSdt_zrst = load_ion_moments_data(fid,extended_moments=true)
+    n_ion_zrst, n_upar_ion_zrst, p_ion_zrst, ppar_ion_zrst, pperp_ion_zrst, qpar_ion_zrst, v_t_ion_zrst, dSdt_zrst = load_ion_moments_data(fid,extended_moments=true)
+    upar_ion_zrst = n_upar_ion_zrst ./ n_ion_zrst
     phi_zrt, Er_zrt, Ez_zrt = load_fields_data(fid)
     if write_grid
         print_grid(vpa)
@@ -345,7 +346,7 @@ function run_test(test_input, expected, atol, final_atol; interp_to_expected=tru
             phi_zrt, Er_zrt, Ez_zrt = load_fields_data(fid)
 
             # load velocity moments data
-            n_ion_zrst, upar_ion_zrst, p_ion_zrst,  ppar_ion_zrst,
+            n_ion_zrst, n_upar_ion_zrst, p_ion_zrst, ppar_ion_zrst,
             pperp_ion_zrst, qpar_ion_zrst, v_t_ion_zrst, dSdt_zrst = load_ion_moments_data(fid,extended_moments=true)
             
             close(fid)
@@ -383,10 +384,10 @@ function run_test(test_input, expected, atol, final_atol; interp_to_expected=tru
                                         vpa_spectral=vpa_spectral),
                                        Dict("r"=>false, "z"=>false, "vperp"=>evolve_p,
                                             "vpa"=>(evolve_upar || evolve_p)),
-                                       (evolve_density=false, evolve_upar=false,
+                                       (evolve_density=false, evolve_n_upar=false,
                                         evolve_p=false,
                                         ion=(dens=n_ion_zrst[:,:,:,it],
-                                             upar=upar_ion_zrst[:,:,:,it],
+                                             upar=n_upar_ion_zrst[:,:,:,it] ./ n_ion_zrst[:,:,:,it],
                                              vth=v_t_ion_zrst[:,:,:,it])),
                                        evolve_density, evolve_upar, evolve_p)
                 end
@@ -396,7 +397,7 @@ function run_test(test_input, expected, atol, final_atol; interp_to_expected=tru
             # keep the two time points in the arrays
             phi = phi_zrt[1,1,:]
             n_ion = n_ion_zrst[1,1,1,:]
-            upar_ion = upar_ion_zrst[1,1,1,:]
+            upar_ion = n_upar_ion_zrst[1,1,1,:] ./ n_ion
             ppar_ion = ppar_ion_zrst[1,1,1,:]
             pperp_ion = pperp_ion_zrst[1,1,1,:]
             qpar_ion = qpar_ion_zrst[1,1,1,:]
@@ -534,9 +535,6 @@ function runtests(; highres=false)
 
             # GaussLegendre pseudospectral
             if !highres || !evolve_density
-                # This case does not conserve moments well enough to compare full-f to
-                # moment-kinetic cases, so skip unless separate expected output is saved
-                # for full-f and moment-kinetic.
                 @long @testset "Gauss Legendre base" begin
                     run_name = "gausslegendre_pseudospectral"
                     vperp_bc = "zero-impose-regularity"

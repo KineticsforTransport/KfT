@@ -105,7 +105,7 @@ update_phi updates the electrostatic potential, phi
             jpar_i .= 0.0
             for is in 1:n_ion_species
                 @loop_r ir begin
-                     jpar_i[ir] +=  fvec.density[1,ir,is]*fvec.upar[1,ir,is]
+                     jpar_i[ir] += fvec.n_upar[1,ir,is]
                 end
             end
             # Calculate N_e using J_||e at sheath entrance at z = 0 (lower boundary).
@@ -133,8 +133,8 @@ update_phi updates the electrostatic potential, phi
         calculate_Epar_from_electron_force_balance!(fields.Ez, dens_e, moments.electron.dppar_dz,
             collisions.electron_fluid.nu_ei, moments.electron.parallel_friction,
             composition.n_neutral_species, collisions.reactions.electron_charge_exchange_frequency,
-            composition.me_over_mi, fvec.density_neutral, fvec.uz_neutral,
-            fvec.electron_upar)
+            composition.me_over_mi, fvec.density_neutral, moments.neutral.uz,
+            moments.electron.upar)
         calculate_phi_from_Epar!(fields.phi, fields.Ez, r, z, z_spectral)
     end
     ## can calculate phi at z = L and hence phi_wall(z=L) using jpar_i at z =L if needed
