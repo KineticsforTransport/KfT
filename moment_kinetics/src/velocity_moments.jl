@@ -39,6 +39,7 @@ using LinearAlgebra: dot
 using ..type_definitions: mk_float
 using ..array_allocation: allocate_shared_float, allocate_bool, allocate_float
 using ..calculus: integral
+using ..chebyshev: chebyshev_info
 using ..communication
 using ..debugging
 using ..derivatives: derivative_z!, derivative_z_anyzv!, second_derivative_z!
@@ -1146,8 +1147,9 @@ end
 function apply_Neumann_z_bc_to_moment!(m::AbstractArray{mk_float,3}, z::coordinate,
                                        z_spectral, lower_boundary_value=0.0,
                                        upper_boundary_value=0.0)
-    if !isa(z_spectral, gausslegendre_info)
-        error("Neumann z boundary condition is only implemented for Gauss-Legendre discretization")
+    if !isa(z_spectral, Union{gausslegendre_info, chebyshev_info})
+        error("Neumann z boundary condition is only implemented for Gauss-Legendre and "
+              * "Chebyshev discretizations.")
     end
 
     # See comments in `create_r_section()` for Neumann bc for notes on implementation.
