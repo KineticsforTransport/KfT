@@ -7,6 +7,7 @@ module moment_kinetics_structs
 using ..type_definitions: mk_float, mk_int, MPISharedArray
 
 using ConcreteStructs
+using FFTW
 using MPI
 
 export scratch_pdf, scratch_electron_pdf, em_fields_struct, moments_ion_substruct,
@@ -606,6 +607,33 @@ discretization_info for a discretization that supports 'weak form' methods, for 
 dimension
 """
 abstract type weak_discretization_info <: discretization_info end
+
+# Define the concrete structs for the Fourier method here, rather than in fourier.jl, so
+# that `fourier_info` can be used in calculus.jl.
+"""
+Fourier pseudospectral discretization
+"""
+struct fourier_base_info{TForward <: FFTW.cFFTWPlan, TBackward <: AbstractFFTs.ScaledPlan}
+    # fbuffer is an array for storing f(z) on the extended domain needed
+    # to perform complex-to-complex FFT using the fact that f(theta) is even in theta
+    fbuffer::Vector{Complex{mk_float}}
+    # flag for whether we are Radau or Lobatto
+    is_lobatto::Bool
+    # Wavenumbers for each point on the Fourier-space grid
+    # second dimension indicates the element
+    k::Vector{mk_float}
+    # plan for the complex-to-complex, in-place, forward Fourier transform
+    forward::TForward
+    # plan for the complex-to-complex, in-place, backward Fourier transform
+    # backward_transform::FFTW.cFFTWPlan
+    backward::TBackward
+end
+"""
+discretization_info for Fourier method, for one dimension
+"""
+struct fourier_info{TForward <: FFTW.cFFTWPlan, TBackward <: AbstractFFTs.ScaledPlan} <: discretization_info
+    lobatto::fourier_base_info{TForward, TBackward}
+end
 
 """
 Type representing a spatial dimension with only one grid point

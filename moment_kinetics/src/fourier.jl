@@ -15,30 +15,7 @@ import ..calculus: elementwise_indefinite_integration!
 using ..communication
 using ..debugging
 import ..interpolation: single_element_interpolate!
-using ..moment_kinetics_structs: discretization_info
-
-"""
-Fourier pseudospectral discretization
-"""
-struct fourier_base_info{TForward <: FFTW.cFFTWPlan, TBackward <: AbstractFFTs.ScaledPlan}
-    # fbuffer is an array for storing f(z) on the extended domain needed
-    # to perform complex-to-complex FFT using the fact that f(theta) is even in theta
-    fbuffer::Vector{Complex{mk_float}}
-    # flag for whether we are Radau or Lobatto
-    is_lobatto::Bool
-    # Wavenumbers for each point on the Fourier-space grid
-    # second dimension indicates the element
-    k::Vector{mk_float}
-    # plan for the complex-to-complex, in-place, forward Fourier transform
-    forward::TForward
-    # plan for the complex-to-complex, in-place, backward Fourier transform
-    # backward_transform::FFTW.cFFTWPlan
-    backward::TBackward
-end
-
-struct fourier_info{TForward <: FFTW.cFFTWPlan, TBackward <: AbstractFFTs.ScaledPlan} <: discretization_info
-    lobatto::fourier_base_info{TForward, TBackward}
-end
+using ..moment_kinetics_structs: fourier_info, fourier_base_info
 
 """
 create arrays needed for explicit Fourier pseudospectral treatment

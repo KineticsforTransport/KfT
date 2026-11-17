@@ -11,9 +11,10 @@ export reconcile_element_boundaries_MPI!
 export integral
 export indefinite_integral!
 
+using ..array_allocation: allocate_float
 using ..moment_kinetics_structs: discretization_info, null_spatial_dimension_info,
                                  null_velocity_dimension_info, null_vperp_dimension_info,
-                                 weak_discretization_info
+                                 weak_discretization_info, fourier_info
 using ..timer_utils
 using ..type_definitions: mk_float, mk_int
 using MPI
@@ -145,56 +146,60 @@ function second_derivative!(d2f, f, coord, spectral)
     derivative_elements_to_full_grid!(d2f, coord.scratch_2d, coord)
     # MPI reconcile code here if used with z or r coords
 
-    # Add contribution to penalise discontinuous first derivatives at element
-    # boundaries. For smooth functions this would do nothing so should not affect
-    # convergence of the second derivative. Aims to stabilise numerical instability when
-    # spike develops at an element boundary. The coefficient is an arbitrary choice, it
-    # should probably be large enough for stability but as small as possible.
-    #
-    # Arbitrary numerical coefficient
-    C = 1.0
-    function penalise_discontinuous_first_derivative!(d2f, imin, imax, df)
-        # Left element boundary
-        d2f[imin] += C * df[1]
+    if !isa(spectral, fourier_info)
+        # The Fourier discretization does not have 'element boundaries' so does not need
+        # this (attempted) 'correction'.
+        # Add contribution to penalise discontinuous first derivatives at element
+        # boundaries. For smooth functions this would do nothing so should not affect
+        # convergence of the second derivative. Aims to stabilise numerical instability when
+        # spike develops at an element boundary. The coefficient is an arbitrary choice, it
+        # should probably be large enough for stability but as small as possible.
+        #
+        # Arbitrary numerical coefficient
+        C = 1.0
+        function penalise_discontinuous_first_derivative!(d2f, imin, imax, df)
+            # Left element boundary
+            d2f[imin] += C * df[1]
 
-        # Right element boundary
-        d2f[imax] -= C * df[end]
+            # Right element boundary
+            d2f[imax] -= C * df[end]
 
-        return nothing
-    end
-    @views penalise_discontinuous_first_derivative!(d2f, 1, coord.imax[1],
-                                                    coord.scratch2_2d[:,1])
-    for ielement ∈ 2:coord.nelement_local
-        @views penalise_discontinuous_first_derivative!(d2f, coord.imin[ielement]-1,
-                                                        coord.imax[ielement],
-                                                        coord.scratch2_2d[:,ielement])
-    end
-
-    if coord.periodic
-        # Need to get first derivatives from opposite ends of grid
-        if coord.nelement_local != coord.nelement_global
-            error("Distributed memory MPI not yet supported here")
+            return nothing
         end
-        d2f[1] -= C * coord.scratch2_2d[end,end]
-        # With the first derivative from the opposite end of the grid, d2f[end] here
-        # should be equal to d2f[1] up to rounding errors...
-        @debug_consistency_checks isapprox(d2f[end] + C * coord.scratch2_2d[1,1], d2f[1]; atol=1.0e-14)
-        # ...but because arithmetic operations were in a different order, there may be
-        # rounding errors, so set the two ends exactly equal to ensure consistency for the
-        # rest of the code - we assume that duplicate versions of the 'same point' on
-        # element boundaries (due to periodic bc or distributed-MPI block boundaries) are
-        # exactly equal.
-        d2f[end] = d2f[1]
-    else
-        # For stability don't contribute to evolution at boundaries, in case these
-        # points are not set by a boundary condition.
-        # Full grid may be across processes and bc only applied to extreme ends of the
-        # domain.
-        if coord.irank == 0
-            d2f[1] = 0.0
+        @views penalise_discontinuous_first_derivative!(d2f, 1, coord.imax[1],
+                                                        coord.scratch2_2d[:,1])
+        for ielement ∈ 2:coord.nelement_local
+            @views penalise_discontinuous_first_derivative!(d2f, coord.imin[ielement]-1,
+                                                            coord.imax[ielement],
+                                                            coord.scratch2_2d[:,ielement])
         end
-        if coord.irank == coord.nrank - 1
-            d2f[end] = 0.0
+
+        if coord.periodic
+            # Need to get first derivatives from opposite ends of grid
+            if coord.nelement_local != coord.nelement_global
+                error("Distributed memory MPI not yet supported here")
+            end
+            d2f[1] -= C * coord.scratch2_2d[end,end]
+            # With the first derivative from the opposite end of the grid, d2f[end] here
+            # should be equal to d2f[1] up to rounding errors...
+            @debug_consistency_checks isapprox(d2f[end] + C * coord.scratch2_2d[1,1], d2f[1]; atol=1.0e-14)
+            # ...but because arithmetic operations were in a different order, there may be
+            # rounding errors, so set the two ends exactly equal to ensure consistency for the
+            # rest of the code - we assume that duplicate versions of the 'same point' on
+            # element boundaries (due to periodic bc or distributed-MPI block boundaries) are
+            # exactly equal.
+            d2f[end] = d2f[1]
+        else
+            # For stability don't contribute to evolution at boundaries, in case these
+            # points are not set by a boundary condition.
+            # Full grid may be across processes and bc only applied to extreme ends of the
+            # domain.
+            if coord.irank == 0
+                d2f[1] = 0.0
+            end
+            if coord.irank == coord.nrank - 1
+                d2f[end] = 0.0
+            end
         end
     end
     return nothing
@@ -226,44 +231,628 @@ function laplacian_derivative!(d2f, f, coord, spectral)
     end
     # MPI reconcile code here if used with z or r coords
 
-    # Add contribution to penalise discontinuous first derivatives at element
-    # boundaries. For smooth functions this would do nothing so should not affect
-    # convergence of the second derivative. Aims to stabilise numerical instability when
-    # spike develops at an element boundary. The coefficient is an arbitrary choice, it
-    # should probably be large enough for stability but as small as possible.
-    #
-    # Arbitrary numerical coefficient
-    C = 1.0
-    function penalise_discontinuous_first_derivative!(d2f, imin, imax, df)
-        # Left element boundary
-        d2f[imin] += C * df[1]
+    if !isa(spectral, fourier_info)
+        # The Fourier discretization does not have 'element boundaries' so does not need
+        # this (attempted) 'correction'.
+        # Add contribution to penalise discontinuous first derivatives at element
+        # boundaries. For smooth functions this would do nothing so should not affect
+        # convergence of the second derivative. Aims to stabilise numerical instability when
+        # spike develops at an element boundary. The coefficient is an arbitrary choice, it
+        # should probably be large enough for stability but as small as possible.
+        #
+        # Arbitrary numerical coefficient
+        C = 1.0
+        function penalise_discontinuous_first_derivative!(d2f, imin, imax, df)
+            # Left element boundary
+            d2f[imin] += C * df[1]
 
-        # Right element boundary
-        d2f[imax] -= C * df[end]
+            # Right element boundary
+            d2f[imax] -= C * df[end]
 
-        return nothing
-    end
-    @views penalise_discontinuous_first_derivative!(d2f, 1, coord.imax[1],
-                                                    coord.scratch2_2d[:,1])
-    for ielement ∈ 2:coord.nelement_local
-        @views penalise_discontinuous_first_derivative!(d2f, coord.imin[ielement]-1,
-                                                        coord.imax[ielement],
-                                                        coord.scratch2_2d[:,ielement])
-    end
-
-    if coord.bc ∈ ("zero", "both_zero", "zero-no-regularity")
-        # For stability don't contribute to evolution at boundaries, in case these
-        # points are not set by a boundary condition.
-        # Full grid may be across processes and bc only applied to extreme ends of the
-        # domain.
-        if coord.irank == coord.nrank - 1
-            d2f[end] = 0.0
+            return nothing
         end
-    else
-        error("Unsupported bc '$(coord.bc)'")
+        @views penalise_discontinuous_first_derivative!(d2f, 1, coord.imax[1],
+                                                        coord.scratch2_2d[:,1])
+        for ielement ∈ 2:coord.nelement_local
+            @views penalise_discontinuous_first_derivative!(d2f, coord.imin[ielement]-1,
+                                                            coord.imax[ielement],
+                                                            coord.scratch2_2d[:,ielement])
+        end
+
+        if coord.bc ∈ ("zero", "both_zero", "zero-no-regularity")
+            # For stability don't contribute to evolution at boundaries, in case these
+            # points are not set by a boundary condition.
+            # Full grid may be across processes and bc only applied to extreme ends of the
+            # domain.
+            if coord.irank == coord.nrank - 1
+                d2f[end] = 0.0
+            end
+        else
+            error("Unsupported bc '$(coord.bc)'")
+        end
     end
     return nothing
 end
+
+"""
+A function that assigns the local weak-form matrices to a global array QQ_global for later
+solving weak form of required 1D equation.
+
+The 'option' variable is a flag for choosing the type of matrix to be constructed.
+Currently the function is set up to assemble the elemental matrices without imposing
+boundary conditions on the first and final rows of the matrix by default. This means that
+the operators constructed from this function can only be used for differentiation, and not
+solving 1D ODEs.  This assembly function assumes that the coordinate is not distributed.
+To extend this function to support distributed-memory MPI, addition of off-memory matrix
+elements to the exterior points would be required.
+
+The typical use of this function is to assemble matrixes M and K in
+
+ M * d2f = K * f
+
+where M is the mass matrix and K is the stiffness matrix, and we wish to solve for d2f
+given f. To solve 1D ODEs
+
+K * f = b = M * d2f
+
+for f given boundary data on f with periodic or dirichlet boundary conditions, set
+
+`periodic_bc = true`, `b[end] = 0`
+
+or
+
+`dirichlet_bc = true`, `b[1] = f[1]` (except for cylindrical coordinates), `b[end] = f[end]`
+
+in the function call, and create new matrices for this purpose in a
+`weak_discretization_info` struct. Currently the Laplacian matrix is supported with
+boundary conditions.
+"""
+function setup_global_weak_form_matrix!(QQ_global::Array{mk_float,2}, lobatto, radau,
+                                        coord, option; dirichlet_bc=false,
+                                        periodic_bc=false)
+    QQ_j = allocate_float(coord.ngrid, coord.ngrid)
+
+    ngrid = coord.ngrid
+    imin = coord.imin
+    imax = coord.imax
+    @. QQ_global = 0.0
+
+    # assembly below assumes no contributions from elements outside of local domain
+    k = 0
+    for j in 1:coord.nelement_local
+        get_QQ_local!(QQ_j, j, lobatto, radau, coord, option)
+        iminl = imin[j]-k
+        imaxl = imax[j]
+        @. QQ_global[iminl:imaxl,iminl:imaxl] += QQ_j[:,:]
+        k = 1
+    end
+
+    if dirichlet_bc
+        # Make matrix diagonal for first/last grid points so it does not change the values
+        # there
+        if !(coord.name == "vperp")
+            # modify lower endpoint if not a radial/cylindrical coordinate
+            if coord.irank == 0
+                QQ_global[1,:] .= 0.0
+                QQ_global[1,1] = 1.0
+            end
+        end
+        if coord.irank == coord.nrank - 1
+            QQ_global[end,:] .= 0.0
+            QQ_global[end,end] = 1.0
+        end
+        # requires RHS vector b[1],b[end] = boundary values
+    end
+    if periodic_bc
+        # Make periodic boundary condition by modifying elements of matrix for duplicate point
+        # add assembly contribution to lower endpoint from upper endpoint
+        j = coord.nelement_local
+        get_QQ_local!(QQ_j, j, lobatto, radau, coord, option)
+        iminl = imin[j] - mk_int(coord.nelement_local > 1)
+        imaxl = imax[j]
+        QQ_global[1,iminl:imaxl] .+= QQ_j[end,:]
+        # Enforce continuity at the periodic boundary
+        # All-zero row in RHS matrix sets last element of `b` vector in
+        # `mass_matrix.x = b` to zero
+        QQ_global[end,:] .= 0.0
+        # enforce periodicity `x[1] = x[end]` using the last row of the
+        # `A.x = b` system.
+        QQ_global[end,1] = 1.0
+        QQ_global[end,end] = -1.0
+        if option == "L" # or any other derivative (ODE) matrix requiring two BC (periodicity + value at endpoint)
+            QQ_global[1,:] .= 0.0
+            QQ_global[1,1] = 1.0
+        end
+    end
+
+    return nothing
+end
+
+"""
+Construction function to provide the appropriate elemental matrix `Q` to the global matrix
+assembly functions.
+"""
+function get_QQ_local!(QQ::AbstractArray{mk_float,2}, ielement, lobatto, radau, coord,
+                       option)
+
+    if option == "M"
+        get_MM_local!(QQ, ielement, lobatto, radau, coord)
+    elseif option == "R"
+        get_MR_local!(QQ, ielement, lobatto, radau, coord)
+    elseif option == "N"
+        get_MN_local!(QQ, ielement, lobatto, radau, coord)
+    elseif option == "P"
+        get_PP_local!(QQ, ielement, lobatto, radau, coord)
+    elseif option == "U"
+        get_PU_local!(QQ, ielement, lobatto, radau, coord)
+    elseif option == "S"
+        get_SS_local!(QQ, ielement, lobatto, radau, coord)
+    elseif option == "K"
+        get_KK_local!(QQ, ielement, lobatto, radau, coord)
+    elseif option == "K_with_BC_terms"
+        get_KK_local!(QQ, ielement, lobatto, radau, coord, explicit_BC_terms=true)
+    elseif option == "J"
+        get_KJ_local!(QQ, ielement, lobatto, radau, coord)
+    elseif option == "L"
+        get_LL_local!(QQ, ielement, lobatto, radau, coord)
+    elseif option == "L_with_BC_terms"
+        get_LL_local!(QQ, ielement, lobatto, radau, coord, explicit_BC_terms=true)
+    elseif option == "D"
+        get_DD_local!(QQ, ielement, lobatto, radau, coord)
+    end
+    return nothing
+end
+
+"""
+If called for `coord.name = vperp` elemental matrix `MM` on the \$i^{th}\$ element is
+```math
+ M_{jk} = \\int^{v_\\perp^U}_{v_\\perp^L}  \\varphi_j(v_\\perp)\\varphi_k(v_\\perp) v_\\perp d v_\\perp = \\int^1_{-1} (c_i + x s_i)l_j(x)l_k(x) s_i d x
+```
+with \$c_i\$ and \$s_i\$ the appropriate shift and scale factors, respectively.
+Otherwise, if called for any other coordinate elemental matrix `MM` is
+```math
+ M_{jk} = \\int^{v_\\|^U}_{v_\\|^L}  \\varphi_j(v_\\|)\\varphi_k(v_\\|) d v_\\| = \\int^1_{-1} l_j(x)l_k(x) s_i d x.
+```
+"""
+function get_MM_local!(QQ, ielement, lobatto, radau, coord)
+    scale_factor = coord.element_scale[ielement]
+    shift_factor = coord.element_shift[ielement]
+    if coord.name == "vperp" # assume integrals of form int^infty_0 (.) vperp d vperp
+        # extra scale and shift factors required because of vperp in integral
+        if ielement > 1 || coord.irank > 0 # lobatto points
+            @. QQ = (shift_factor*lobatto.M0 + scale_factor*lobatto.M1)*scale_factor
+        else # radau points
+            @. QQ = (shift_factor*radau.M0 + scale_factor*radau.M1)*scale_factor
+        end
+    else # assume integrals of form int^infty_-infty (.) d vpa
+        @. QQ = lobatto.M0*scale_factor
+    end
+    return nothing
+end
+
+function get_SS_local!(QQ, ielement, lobatto, radau, coord)
+    scale_factor = coord.element_scale[ielement]
+    shift_factor = coord.element_shift[ielement]
+    if coord.name == "vperp" # assume integrals of form int^infty_0 (.) vperp d vperp
+        # extra scale and shift factors required because of vperp in integral
+        if ielement > 1 || coord.irank > 0 # lobatto points
+            @. QQ =  shift_factor*lobatto.S0 + scale_factor*lobatto.S1
+            # boundary terms from integration by parts
+            imin = coord.imin[ielement] - 1
+            imax = coord.imax[ielement]
+            QQ[1,1] -= coord.grid[imin]
+            QQ[coord.ngrid,coord.ngrid] += coord.grid[imax]
+        else # radau points
+            @. QQ =  shift_factor*radau.S0 + scale_factor*radau.S1
+            # boundary terms from integration by parts
+            imax = coord.imax[ielement]
+            QQ[coord.ngrid,coord.ngrid] += coord.grid[imax]
+        end
+    else # assume integrals of form int^infty_-infty (.) d vpa
+        @. QQ = lobatto.S0
+        # boundary terms from integration by parts
+        QQ[1,1] -= 1.0
+        QQ[coord.ngrid,coord.ngrid] += 1.0
+    end
+    return nothing
+end
+
+"""
+If called for `coord.name = vperp` elemental matrix `KK` on the \$i^{th}\$ element is
+```math
+ K_{jk} = -\\int^{v_\\perp^U}_{v_\\perp^L} \\left(v_\\perp \\frac{\\partial\\varphi_j(v_\\perp)}{\\partial v_\\perp} + \\varphi_j(v_\\perp) \\right)
+ \\frac{\\partial\\varphi_k(v_\\perp)}{\\partial v_\\perp} d v_\\perp
+ = -\\int^1_{-1} ((c_i + x s_i)l_j^\\prime(x) + l_j(x))l_k^\\prime(x) d x /s_i
+```
+with \$c_i\$ and \$s_i\$ the appropriate shift and scale factors, respectively.
+Otherwise, if called for any other coordinate elemental matrix `KK` is the same as `LL`
+(see `get_LL_local!()).  If `explicit_BC_terms = true`, boundary terms arising from
+integration by parts are included at the extreme boundary points.
+"""
+function get_KK_local!(QQ, ielement, lobatto, radau, coord; explicit_BC_terms=false)
+    nelement = coord.nelement_local
+    scale_factor = coord.element_scale[ielement]
+    shift_factor = coord.element_shift[ielement]
+    if coord.name == "vperp" # assume integrals of form int^infty_0 (.) vperp d vperp
+        # extra scale and shift factors required because of vperp in integral
+        # P0 factors make this a d^2 / dvperp^2 rather than (1/vperp) d ( vperp d (.) / d vperp)
+        if ielement > 1 || coord.irank > 0 # lobatto points
+            @. QQ =  (shift_factor/scale_factor)*lobatto.K0 + lobatto.K1 - lobatto.P0
+            # boundary terms from integration by parts
+            if explicit_BC_terms && ielement == 1 && coord.irank == 0
+                imin = coord.imin[ielement] - 1
+                @. QQ[1,:] -= coord.grid[imin]*lobatto.Dmat[1,:]/scale_factor
+            end
+            if explicit_BC_terms && ielement == nelement && coord.irank == coord.nrank - 1
+                imax = coord.imax[ielement]
+                @. QQ[coord.ngrid,:] += coord.grid[imax]*lobatto.Dmat[coord.ngrid,:]/scale_factor
+            end
+        else # radau points
+            @. QQ =  (shift_factor/scale_factor)*radau.K0 + radau.K1 - radau.P0
+            # boundary terms from integration by parts
+            if explicit_BC_terms && ielement == nelement && coord.irank == coord.nrank - 1
+                imax = coord.imax[ielement]
+                @. QQ[coord.ngrid,:] += coord.grid[imax]*radau.Dmat[coord.ngrid,:]/scale_factor
+            end
+        end
+    else # assume integrals of form int^infty_-infty (.) d vpa
+        @. QQ = lobatto.K0/scale_factor
+        if !coord.periodic
+            # boundary terms from integration by parts
+            if explicit_BC_terms && ielement == 1 && coord.irank == 0
+                @. QQ[1,:] -= lobatto.Dmat[1,:]/scale_factor
+            end
+            if explicit_BC_terms && ielement == nelement && coord.irank == coord.nrank - 1
+                @. QQ[coord.ngrid,:] += lobatto.Dmat[coord.ngrid,:]/scale_factor
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+If called for `coord.name = vperp` elemental matrix `KJ` on the \$i^{th}\$ element is
+```math
+ (KJ)_{jk} = -\\int^{v_\\perp^U}_{v_\\perp^L} \\frac{\\partial\\varphi_j(v_\\perp)}{\\partial v_\\perp}\\frac{\\partial\\varphi_k(v_\\perp)}{\\partial v_\\perp} v_\\perp^2 d v_\\perp
+ = -\\int^1_{-1} (c_i + x s_i)^2l_j^\\prime(x)l_k^\\prime(x) d x /s_i
+```
+with \$c_i\$ and \$s_i\$ the appropriate shift and scale factors, respectively.
+Otherwise, if called for any other coordinate elemental matrix `KJ` is the same as `LL`
+(see `get_LL_local()!`).
+"""
+function get_KJ_local!(QQ, ielement, lobatto, radau, coord)
+    scale_factor = coord.element_scale[ielement]
+    shift_factor = coord.element_shift[ielement]
+    if coord.name == "vperp" # assume integrals of form int^infty_0 (.) vperp d vperp
+        # extra scale and shift factors required because of vperp^2 in integral
+        if ielement > 1 || coord.irank > 0 # lobatto points
+            @. QQ = (lobatto.K0*((shift_factor^2)/scale_factor) +
+                     lobatto.K1*2.0*shift_factor +
+                     lobatto.K2*scale_factor)
+        else # radau points
+            @. QQ =  (radau.K0*((shift_factor^2)/scale_factor) +
+                      radau.K1*2.0*shift_factor +
+                      radau.K2*scale_factor)
+        end
+    else # assume integrals of form int^infty_-infty (.) d vpa
+        @. QQ = lobatto.K0/scale_factor
+    end
+    return nothing
+end
+
+"""
+If called for `coord.name = vperp` elemental matrix `LL` on the \$i^{th}\$ element is
+```math
+ L_{jk} = -\\int^{v_\\perp^U}_{v_\\perp^L} \\frac{\\partial\\varphi_j(v_\\perp)}{\\partial v_\\perp}\\frac{\\partial\\varphi_k(v_\\perp)}{\\partial v_\\perp} v_\\perp d v_\\perp
+ = -\\int^1_{-1} (c_i + x s_i)l_j^\\prime(x)l_k^\\prime(x) d x /s_i
+```
+with \$c_i\$ and \$s_i\$ the appropriate shift and scale factors, respectively.
+Otherwise, if called for any other coordinate elemental matrix `LL` is
+```math
+ L_{jk} = -\\int^{v_\\|^U}_{v_\\|^L}  \\frac{\\partial\\varphi_j(v_\\|)}{\\partial v_\\|}\\frac{\\partial\\varphi_k(v_\\|)}{\\partial v_\\|} d v_\\| =
+ -\\int^1_{-1} l_j^\\prime(x)l_k^\\prime(x) d x /s_i.
+```
+If `explicit_BC_terms = true`, boundary terms arising from integration by parts are
+included at the extreme boundary points.
+"""
+function get_LL_local!(QQ, ielement, lobatto, radau, coord; explicit_BC_terms=false)
+    nelement = coord.nelement_local
+    scale_factor = coord.element_scale[ielement]
+    shift_factor = coord.element_shift[ielement]
+    if coord.name == "vperp" # assume integrals of form int^infty_0 (.) vperp d vperp
+        # extra scale and shift factors required because of vperp in integral
+        #  (1/vperp) d ( vperp d (.) / d vperp)
+        if ielement > 1 || coord.irank > 0 # lobatto points
+            @. QQ =  (shift_factor/scale_factor)*lobatto.K0 + lobatto.K1
+            # boundary terms from integration by parts
+            if explicit_BC_terms && ielement == 1 && coord.irank == 0
+                imin = coord.imin[ielement] - 1
+                @. QQ[1,:] -= coord.grid[imin]*lobatto.Dmat[1,:]/scale_factor
+            end
+            if explicit_BC_terms && ielement == nelement && coord.irank == coord.nrank - 1
+                imax = coord.imax[ielement]
+                @. QQ[coord.ngrid,:] += coord.grid[imax]*lobatto.Dmat[coord.ngrid,:]/scale_factor
+            end
+        else # radau points
+            @. QQ =  (shift_factor/scale_factor)*radau.K0 + radau.K1
+            # boundary terms from integration by parts
+            if explicit_BC_terms && ielement == nelement && coord.irank == coord.nrank - 1
+                imax = coord.imax[ielement]
+                @. QQ[coord.ngrid,:] += coord.grid[imax]*radau.Dmat[coord.ngrid,:]/scale_factor
+            end
+        end
+    else # d^2 (.) d vpa^2 -- assume integrals of form int^infty_-infty (.) d vpa
+        @. QQ = lobatto.K0/scale_factor
+        if !coord.periodic
+            # boundary terms from integration by parts
+            if explicit_BC_terms && ielement == 1 && coord.irank == 0
+                @. QQ[1,:] -= lobatto.Dmat[1,:]/scale_factor
+            end
+            if explicit_BC_terms && ielement == nelement && coord.irank == coord.nrank - 1
+                @. QQ[coord.ngrid,:] += lobatto.Dmat[coord.ngrid,:]/scale_factor
+            end
+        end
+    end
+    return nothing
+end
+
+# Strong-form differentiation matrix
+function get_DD_local!(QQ, ielement, lobatto, radau, coord)
+    scale_factor = coord.element_scale[ielement]
+    if coord.name == "vperp" && ielement == 1 && coord.irank == 0
+        @. QQ = radau.Dmat / scale_factor
+    else
+        @. QQ = lobatto.Dmat / scale_factor
+    end
+    return nothing
+end
+
+"""
+If called for `coord.name = vperp` elemental matrix `MN` on the \$i^{th}\$ element is
+```math
+ (MN)_{jk} = \\int^{v_\\perp^U}_{v_\\perp^L}  \\varphi_j(v_\\perp)\\varphi_k(v_\\perp) d v_\\perp = \\int^1_{-1} l_j(x)l_k(x) s_i d x
+```
+with \$c_i\$ and \$s_i\$ the appropriate shift and scale factors, respectively.
+Otherwise, if called for any other coordinate elemental matrix `MN` is the same as `MM`
+(see `get_MM_local!()`).
+"""
+function get_MN_local!(QQ, ielement, lobatto, radau, coord)
+    scale_factor = coord.element_scale[ielement]
+    if coord.name == "vperp" # assume integrals of form int^infty_0 (.) vperp d vperp
+        # extra scale and shift factors required because of vperp in integral
+        if ielement > 1 || coord.irank > 0 # lobatto points
+            @. QQ =  lobatto.M0*scale_factor
+        else # radau points
+            @. QQ =  radau.M0*scale_factor
+        end
+    else # assume integrals of form int^infty_-infty (.) d vpa
+        @. QQ = lobatto.M0*scale_factor
+    end
+    return nothing
+end
+
+"""
+If called for `coord.name = vperp` elemental matrix `MR` on the \$i^{th}\$ element is
+```math
+ (MR)_{jk} = \\int^{v_\\perp^U}_{v_\\perp^L}  \\varphi_j(v_\\perp)\\varphi_k(v_\\perp) v_\\perp^2 d v_\\perp = \\int^1_{-1} (c_i + s_i x)^2 l_j(x)l_k(x) s_i d x
+```
+with \$c_i\$ and \$s_i\$ the appropriate shift and scale factors, respectively.
+Otherwise, if called for any other coordinate elemental matrix `MR` is the same as `MM`
+(see `get_MM_local!()`).
+"""
+function get_MR_local!(QQ, ielement, lobatto, radau, coord)
+    scale_factor = coord.element_scale[ielement]
+    shift_factor = coord.element_shift[ielement]
+    if coord.name == "vperp" # assume integrals of form int^infty_0 (.) vperp d vperp
+        # extra scale and shift factors required because of vperp in integral
+        if ielement > 1 || coord.irank > 0 # lobatto points
+            @. QQ =  (lobatto.M0*shift_factor^2 +
+                      lobatto.M1*2.0*shift_factor*scale_factor +
+                      lobatto.M2*scale_factor^2)*scale_factor
+        else # radau points
+            @. QQ =  (radau.M0*shift_factor^2 +
+                      radau.M1*2.0*shift_factor*scale_factor +
+                      radau.M2*scale_factor^2)*scale_factor
+        end
+    else # assume integrals of form int^infty_-infty (.) d vpa
+        @. QQ = lobatto.M0*scale_factor
+    end
+    return nothing
+end
+
+"""
+If called for `coord.name = vperp` elemental matrix `PP` on the \$i^{th}\$ element is
+```math
+ P_{jk} = \\int^{v_\\perp^U}_{v_\\perp^L}  \\varphi_j(v_\\perp)\\frac{\\partial\\varphi_k(v_\\perp)}{\\partial v_\\perp} v_\\perp d v_\\perp
+ = \\int^1_{-1} (c_i + x s_i)l_j(x)l_k^\\prime(x) d x
+```
+with \$c_i\$ and \$s_i\$ the appropriate shift and scale factors, respectively.
+Otherwise, if called for any other coordinate elemental matrix `PP` is
+```math
+ P_{jk} = \\int^{v_\\|^U}_{v_\\|^L}  \\varphi_j(v_\\|)\\frac{\\partial\\varphi_k(v_\\|)}{\\partial v_\\|} d v_\\| = \\int^1_{-1} l_j(x)l_k^\\prime(x) d x.
+```
+"""
+function get_PP_local!(QQ, ielement, lobatto, radau, coord)
+    scale_factor = coord.element_scale[ielement]
+    shift_factor = coord.element_shift[ielement]
+    if coord.name == "vperp" # assume integrals of form int^infty_0 (.) vperp d vperp
+        # extra scale and shift factors required because of vperp in integral
+        if ielement > 1 || coord.irank > 0 # lobatto points
+            @. QQ =  lobatto.P0*shift_factor + lobatto.P1*scale_factor
+        else # radau points
+            @. QQ =  radau.P0*shift_factor + radau.P1*scale_factor
+        end
+    else # assume integrals of form int^infty_-infty (.) d vpa
+        @. QQ = lobatto.P0
+    end
+    return nothing
+end
+
+"""
+If called for `coord.name = vperp` elemental matrix `PP` on the \$i^{th}\$ element is
+```math
+ (PU)_{jk} = \\int^{v_\\perp^U}_{v_\\perp^L}  \\varphi_j(v_\\perp)\\frac{\\partial\\varphi_k(v_\\perp)}{\\partial v_\\perp} v_\\perp^2 d v_\\perp
+ = \\int^1_{-1} (c_i + x s_i)^2l_j(x)l_k^\\prime(x) d x
+```
+with \$c_i\$ and \$s_i\$ the appropriate shift and scale factors, respectively.
+Otherwise, if called for any other coordinate elemental matrix `PU` is the same as `PP`
+see `get_PP_local!()`.
+"""
+function get_PU_local!(QQ, ielement, lobatto, radau, coord)
+    scale_factor = coord.element_scale[ielement]
+    shift_factor = coord.element_shift[ielement]
+    if coord.name == "vperp" # assume integrals of form int^infty_0 (.) vperp d vperp
+        # extra scale and shift factors required because of vperp in integral
+        if ielement > 1 || coord.irank > 0 # lobatto points
+            @. QQ =  (lobatto.P0*shift_factor^2 +
+                      lobatto.P1*2.0*shift_factor*scale_factor +
+                      lobatto.P2*scale_factor^2)
+        else # radau points
+            @. QQ =  (radau.P0*shift_factor^2 +
+                      radau.P1*2.0*shift_factor*scale_factor +
+                      radau.P2*scale_factor^2)
+        end
+    else # assume integrals of form int^infty_-infty (.) d vpa
+        @. QQ = lobatto.P0
+    end
+    return nothing
+end
+
+"""
+Construction function for nonlinear diffusion matrices, only used in the assembly of the
+collision operator
+"""
+function get_QQ_local!(QQ::AbstractArray{mk_float,3}, ielement, lobatto, radau, coord,
+                       option)
+
+    if option == "YY0" # mass-like matrix
+        get_YY0_local!(QQ,ielement,lobatto,radau,coord)
+    elseif option == "YY1" # first-derivative-like matrix
+        get_YY1_local!(QQ,ielement,lobatto,radau,coord)
+    elseif option == "YY2" # second-derivative-like matrix
+        get_YY2_local!(QQ,ielement,lobatto,radau,coord)
+    elseif option == "YY3" # first-derivative-like matrix
+        get_YY3_local!(QQ,ielement,lobatto,radau,coord)
+    end
+    return nothing
+end
+
+"""
+If called for `coord.name = vperp` elemental matrix `YY0` on the \$i^{th}\$ element is
+```math
+ (YY0)_{jkm} = \\int^{v_\\perp^U}_{v_\\perp^L}  \\varphi_j(v_\\perp)\\varphi_k(v_\\perp)\\varphi_m(v_\\perp) v_\\perp d v_\\perp
+ = \\int^1_{-1} (c_i + x s_i)l_j(x)l_k(x)l_m(x) s_i d x
+```
+with \$c_i\$ and \$s_i\$ the appropriate shift and scale factors, respectively.
+Otherwise, if called for any other coordinate elemental matrix `YY0` is
+```math
+ (YY0)_{jkm} = \\int^{v_\\|^U}_{v_\\|^L}  \\varphi_j(v_\\|)\\varphi_k(v_\\|)\\varphi_m(v_\\|) d v_\\|
+ = \\int^1_{-1} l_j(x)l_k(x)l_m(x) s_i d x.
+```
+"""
+function get_YY0_local!(QQ, ielement, lobatto, radau, coord)
+    scale_factor = coord.element_scale[ielement]
+    shift_factor = coord.element_shift[ielement]
+    if coord.name == "vperp" # assume integrals of form int^infty_0 (.) vperp d vperp
+        # extra scale and shift factors required because of vperp in integral
+        if ielement > 1 || coord.irank > 0 # lobatto points
+            @. QQ =  (shift_factor*lobatto.Y00 + scale_factor*lobatto.Y01)*scale_factor
+        else # radau points
+            @. QQ =  (shift_factor*radau.Y00 + scale_factor*radau.Y01)*scale_factor
+        end
+    else # assume integrals of form int^infty_-infty (.) d vpa
+        @. QQ = lobatto.Y00*scale_factor
+    end
+    return nothing
+end
+
+"""
+If called for `coord.name = vperp` elemental matrix `YY1` on the \$i^{th}\$ element is
+```math
+ (YY1)_{jkm} = \\int^{v_\\perp^U}_{v_\\perp^L}  \\varphi_j(v_\\perp)\\varphi_k(v_\\perp)\\frac{\\partial\\varphi_m(v_\\perp)}{\\partial v_\\perp} v_\\perp d v_\\perp
+ = \\int^1_{-1} (c_i + x s_i)l_j(x)l_k(x)l_m^\\prime(x) d x
+```
+with \$c_i\$ and \$s_i\$ the appropriate shift and scale factors, respectively.
+Otherwise, if called for any other coordinate elemental matrix `YY1` is
+```math
+ (YY1)_{jkm} = \\int^{v_\\|^U}_{v_\\|^L}  \\varphi_j(v_\\|)\\varphi_k(v_\\|)\\frac{\\partial\\varphi_m(v_\\|)}{\\partial v_\\|} d v_\\|
+ = \\int^1_{-1} l_j(x)l_k(x)l_m^\\prime(x) d x.
+```
+"""
+function get_YY1_local!(QQ, ielement, lobatto, radau, coord)
+    scale_factor = coord.element_scale[ielement]
+    shift_factor = coord.element_shift[ielement]
+    if coord.name == "vperp" # assume integrals of form int^infty_0 (.) vperp d vperp
+        # extra scale and shift factors required because of vperp in integral
+        if ielement > 1 || coord.irank > 0 # lobatto points
+            @. QQ =  shift_factor*lobatto.Y10 + scale_factor*lobatto.Y11
+        else # radau points
+            @. QQ =  shift_factor*radau.Y10 + scale_factor*radau.Y11
+        end
+    else # assume integrals of form int^infty_-infty (.) d vpa
+        @. QQ = lobatto.Y10
+    end
+    return nothing
+end
+
+"""
+If called for `coord.name = vperp` elemental matrix `YY2` on the \$i^{th}\$ element is
+```math
+ (YY2)_{jkm} = \\int^{v_\\perp^U}_{v_\\perp^L}  \\varphi_j(v_\\perp)\\frac{\\partial\\varphi_k(v_\\|)}{\\partial v_\\|}\\frac{\\partial\\varphi_m(v_\\perp)}{\\partial v_\\perp} v_\\perp d v_\\perp
+ = \\int^1_{-1} (c_i + x s_i)l_j(x)l_k^\\prime(x)l_m^\\prime(x) d x/s_i
+```
+with \$c_i\$ and \$s_i\$ the appropriate shift and scale factors, respectively.
+Otherwise, if called for any other coordinate elemental matrix `YY2` is
+```math
+ (YY2)_{jkm} = \\int^{v_\\|^U}_{v_\\|^L}  \\varphi_j(v_\\|)\\frac{\\partial\\varphi_k(v_\\|)}{\\partial v_\\|}\\frac{\\partial\\varphi_m(v_\\|)}{\\partial v_\\|} d v_\\|
+ = \\int^1_{-1} l_j(x)l_k^\\prime(x)l_m^\\prime(x) d x /s_i.
+```
+"""
+function get_YY2_local!(QQ, ielement, lobatto, radau, coord)
+    scale_factor = coord.element_scale[ielement]
+    shift_factor = coord.element_shift[ielement]
+    if coord.name == "vperp" # assume integrals of form int^infty_0 (.) vperp d vperp
+        # extra scale and shift factors required because of vperp in integral
+        if ielement > 1 || coord.irank > 0 # lobatto points
+            @. QQ =  (shift_factor/scale_factor)*lobatto.Y20 + lobatto.Y21
+        else # radau points
+            @. QQ =  (shift_factor/scale_factor)*radau.Y20 + radau.Y21
+        end
+    else # assume integrals of form int^infty_-infty (.) d vpa
+        @. QQ = lobatto.Y20/scale_factor
+    end
+    return nothing
+end
+
+"""
+If called for `coord.name = vperp` elemental matrix `YY3` on the \$i^{th}\$ element is
+```math
+ (YY3)_{jkm} = \\int^{v_\\perp^U}_{v_\\perp^L}  \\varphi_j(v_\\perp)\\frac{\\partial\\varphi_k(v_\\|)}{\\partial v_\\|}\\varphi_m(v_\\perp) v_\\perp d v_\\perp
+ = \\int^1_{-1} (c_i + x s_i)l_j(x)l_k^\\prime(x)l_m(x) d x
+```
+with \$c_i\$ and \$s_i\$ the appropriate shift and scale factors, respectively.
+Otherwise, if called for any other coordinate elemental matrix `YY3` is
+```math
+ (YY3)_{jkm} = \\int^{v_\\|^U}_{v_\\|^L}  \\varphi_j(v_\\|)\\frac{\\partial\\varphi_k(v_\\|)}{\\partial v_\\|}\\varphi_m(v_\\|) d v_\\|
+ = \\int^1_{-1} l_j(x)l_k^\\prime(x)l_m(x) d x.
+```
+"""
+function get_YY3_local!(QQ, ielement, lobatto, radau, coord)
+    scale_factor = coord.element_scale[ielement]
+    shift_factor = coord.element_shift[ielement]
+    if coord.name == "vperp" # assume integrals of form int^infty_0 (.) vperp d vperp
+        # extra scale and shift factors required because of vperp in integral
+        if ielement > 1 || coord.irank > 0 # lobatto points
+            @. QQ =  shift_factor*lobatto.Y30 + scale_factor*lobatto.Y31
+        else # radau points
+            @. QQ =  shift_factor*radau.Y30 + scale_factor*radau.Y31
+        end
+    else # assume integrals of form int^infty_-infty (.) d vpa
+        @. QQ = lobatto.Y30
+    end
+    return nothing
+end
+
 """
     mass_matrix_solve!(f, b, spectral::weak_discretization_info)
 
@@ -274,7 +863,11 @@ M.f = b
 for \$a\$, where \$M\$ is the mass matrix of a weak-form finite element method and \$b\$
 is an input.
 """
-function mass_matrix_solve! end
+function mass_matrix_solve!(f, b, spectral::weak_discretization_info)
+    # invert mass matrix system
+    ldiv!(f, spectral.mass_matrix_lu, b)
+    return nothing
+end
 
 function second_derivative!(d2f, f, coord, spectral::weak_discretization_info)
     # obtain the RHS of numerical weak-form of the equation 

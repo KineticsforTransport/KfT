@@ -8,7 +8,13 @@ their being scattered (and possibly duplicated) in other modules.
 """
 module lagrange_polynomials
 
-export lagrange_poly, lagrange_poly_optimised, lagrange_poly_derivative_optimised
+export lagrange_poly, lagrange_poly_optimised, lagrange_poly_derivative_optimised,
+       lagrange_weak_product_matrix
+
+import FastGaussQuadrature
+
+using ..array_allocation: allocate_float
+using ..type_definitions: mk_float
 
 """
 Lagrange polynomial
@@ -75,6 +81,162 @@ function lagrange_poly_derivative_optimised(other_nodes, one_over_denominator, x
     end
     result *= one_over_denominator
     return result
+end
+
+"""
+    lagrange_weak_product_matrix!(QQ::Array{mk_float,2}, ngrid,
+                                  lagrange_nodes::AbstractVector{mk_float},
+                                  lagrange_other_nodes::AbstractMatrix{mk_float},
+                                  lagrande_one_over_denominator::AbstractVector{mk_float},
+                                  option; radau=false)
+
+Assign abitrary weak inner product matrix `Q` on a 1D line with Jacobian equal to 1
+matrix `Q` acts on a single vector `x` such that `y = Q * x` is also a vector.
+
+We evaluate the degree-(ngrid-1) Lagrange polynomials on a Gaussian quadrature grid with
+ngrid points that can exactly integrate polynomials up to degree (2*ngrid-1), which is
+enough here as the maximum polynomial degree is 2*(ngrid-1)+1 (in M1).
+
+Note that the `lagrange_nodes` here should be defined on the range [-1,1], as this 'local
+matrix' will be scaled later to fit different elements. The `lagrange_other_nodes` and
+`lagrange_one_over_denominator` should have corresponding values.
+"""
+function lagrange_weak_product_matrix!(QQ::Array{mk_float,2}, ngrid,
+                                       lagrange_nodes::AbstractVector{mk_float},
+                                       lagrange_other_nodes::AbstractMatrix{mk_float},
+                                       lagrange_one_over_denominator::AbstractVector{mk_float},
+                                       option)
+    nquad = ngrid
+    quadgrid, quadweights = FastGaussQuadrature.gausslegendre(nquad)
+
+    if option == "M0"
+        # 'Mass matrix', ∫ L_i(x) L_j(x) dx
+
+        # Evaluate Lagrange polynomials corresponding to `lagrange_nodes` on quadrature
+        # grid.
+        poly_values = allocate_float(nquad, ngrid)
+        for igrid ∈ 1:ngrid, jquad ∈ 1:nquad
+            poly_values[jquad,igrid] =
+                @views lagrange_poly_optimised(lagrange_other_nodes[:,igrid],
+                                               lagrange_one_over_denominator[igrid],
+                                               quadgrid[jquad])
+        end
+
+        # Evaluate the integrals of pairs of polynomials using Gaussian quadrature.
+        for j ∈ 1:ngrid, i ∈ 1:j
+            # q = ∑_k L_i(x_k) L_j(x_k) w_k
+            # where x_k, w_k are the values in quadgrid and quadweights.
+            QQ[i,j] = @views mapreduce(*, +, poly_values[:,i], poly_values[:,j], quadweights)
+            if i != j
+                # The mass matrix is symmetric, so just copy (i,j) into (j,i)
+                QQ[j,i] = QQ[i,j]
+            end
+        end
+    elseif option == "M1"
+        # 'Mass matrix type 1', ∫ x L_i(x) L_j(x) dx
+
+        # Evaluate Lagrange polynomials corresponding to `lagrange_nodes` on quadrature
+        # grid.
+        poly_values = allocate_float(nquad, ngrid)
+        for igrid ∈ 1:ngrid, jquad ∈ 1:nquad
+            poly_values[jquad,igrid] =
+                @views lagrange_poly_optimised(lagrange_other_nodes[:,igrid],
+                                               lagrange_one_over_denominator[igrid],
+                                               quadgrid[jquad])
+        end
+
+        # Evaluate the integrals of pairs of polynomials using Gaussian quadrature.
+        for j ∈ 1:ngrid, i ∈ 1:j
+            # q = ∑_k L_i(x_k) L_j(x_k) w_k
+            # where x_k, w_k are the values in quadgrid and quadweights.
+            QQ[i,j] = @views mapreduce(*, +, quadgrid, poly_values[:,i], poly_values[:,j],
+                                       quadweights)
+            if i != j
+                # The mass matrix is symmetric, so just copy (i,j) into (j,i)
+                QQ[j,i] = QQ[i,j]
+            end
+        end
+    elseif option == "K0"
+        # 'Stiffness matrix', ∫ ∂L_i(x)/∂x ∂L_j(x)/∂x dx
+
+        # Evaluate Lagrange polynomials derivatives corresponding to `lagrange_nodes` on
+        # quadrature grid.
+        poly_derivative_values = allocate_float(nquad, ngrid)
+        for igrid ∈ 1:ngrid, jquad ∈ 1:nquad
+            poly_derivative_values[jquad,igrid] =
+                @views lagrange_poly_derivative_optimised(lagrange_other_nodes[:,igrid],
+                                                          lagrange_one_over_denominator[igrid],
+                                                          quadgrid[jquad])
+        end
+
+        # Evaluate the integrals of pairs of polynomials using Gaussian quadrature.
+        for j ∈ 1:ngrid, i ∈ 1:j
+            # q = ∑_k L_i(x_k) L_j(x_k) w_k
+            # where x_k, w_k are the values in quadgrid and quadweights.
+            QQ[i,j] = - @views mapreduce(*, +, poly_derivative_values[:,i],
+                                         poly_derivative_values[:,j], quadweights)
+            if i != j
+                # The mass matrix is symmetric, so just copy (i,j) into (j,i)
+                QQ[j,i] = QQ[i,j]
+            end
+        end
+    elseif option == "K1"
+        # 'Stiffness matrix type 1', ∫ x ∂L_i(x)/∂x ∂L_j(x)/∂x dx
+
+        # Evaluate Lagrange polynomials derivatives corresponding to `lagrange_nodes` on
+        # quadrature grid.
+        poly_derivative_values = allocate_float(nquad, ngrid)
+        for igrid ∈ 1:ngrid, jquad ∈ 1:nquad
+            poly_derivative_values[jquad,igrid] =
+                @views lagrange_poly_derivative_optimised(lagrange_other_nodes[:,igrid],
+                                                          lagrange_one_over_denominator[igrid],
+                                                          quadgrid[jquad])
+        end
+
+        # Evaluate the integrals of pairs of polynomials using Gaussian quadrature.
+        for j ∈ 1:ngrid, i ∈ 1:j
+            # q = ∑_k L_i(x_k) L_j(x_k) w_k
+            # where x_k, w_k are the values in quadgrid and quadweights.
+            QQ[i,j] = - @views mapreduce(*, +, quadgrid, poly_derivative_values[:,i],
+                                         poly_derivative_values[:,j], quadweights)
+            if i != j
+                # The mass matrix is symmetric, so just copy (i,j) into (j,i)
+                QQ[j,i] = QQ[i,j]
+            end
+        end
+    elseif option == "P0"
+        # 'Mixed matrix', ∫ L_i(x) ∂L_j(x)/∂x dx
+
+        # Evaluate Lagrange polynomials corresponding to `lagrange_nodes` on quadrature
+        # grid.
+        poly_values = allocate_float(nquad, ngrid)
+        for igrid ∈ 1:ngrid, jquad ∈ 1:nquad
+            poly_values[jquad,igrid] =
+                @views lagrange_poly_optimised(lagrange_other_nodes[:,igrid],
+                                               lagrange_one_over_denominator[igrid],
+                                               quadgrid[jquad])
+        end
+
+        # Evaluate Lagrange polynomials derivatives corresponding to `lagrange_nodes` on
+        # quadrature grid.
+        poly_derivative_values = allocate_float(nquad, ngrid)
+        for igrid ∈ 1:ngrid, jquad ∈ 1:nquad
+            poly_derivative_values[jquad,igrid] =
+                @views lagrange_poly_derivative_optimised(lagrange_other_nodes[:,igrid],
+                                                          lagrange_one_over_denominator[igrid],
+                                                          quadgrid[jquad])
+        end
+
+        # Evaluate the integrals of pairs of polynomials using Gaussian quadrature.
+        for j ∈ 1:ngrid, i ∈ 1:ngrid
+            # q = ∑_k L_i(x_k) L_j(x_k) w_k
+            # where x_k, w_k are the values in quadgrid and quadweights.
+            QQ[i,j] = - @views mapreduce(*, +, poly_values[:,i],
+                                         poly_derivative_values[:,j], quadweights)
+        end
+    else
+        error("Unsupported option=\"$option\".")
+    end
 end
 
 end

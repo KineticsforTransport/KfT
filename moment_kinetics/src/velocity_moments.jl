@@ -39,6 +39,7 @@ using LinearAlgebra: dot
 using ..type_definitions: mk_float
 using ..array_allocation: allocate_shared_float, allocate_bool, allocate_float
 using ..calculus: integral
+using ..chebyshev: chebyshev_info
 using ..communication
 using ..debugging
 using ..derivatives: derivative_z!, derivative_z_anyzv!, second_derivative_z!
@@ -93,6 +94,10 @@ function create_moments_ion(z, r, composition, evolve_density, evolve_upar,
     thermal_speed = allocate_shared_float(z, r, composition.ion_species_coord)
     chodura_integral_lower = allocate_shared_float(r, composition.ion_species_coord)
     chodura_integral_upper = allocate_shared_float(r, composition.ion_species_coord)
+    @serial_region begin
+        chodura_integral_lower .= 0.0
+        chodura_integral_upper .= 0.0
+    end
     if evolve_p
         v_norm_fac = thermal_speed
     else
@@ -1146,8 +1151,9 @@ end
 function apply_Neumann_z_bc_to_moment!(m::AbstractArray{mk_float,3}, z::coordinate,
                                        z_spectral, lower_boundary_value=0.0,
                                        upper_boundary_value=0.0)
-    if !isa(z_spectral, gausslegendre_info)
-        error("Neumann z boundary condition is only implemented for Gauss-Legendre discretization")
+    if !isa(z_spectral, Union{gausslegendre_info, chebyshev_info})
+        error("Neumann z boundary condition is only implemented for Gauss-Legendre and "
+              * "Chebyshev discretizations.")
     end
 
     # See comments in `create_r_section()` for Neumann bc for notes on implementation.
@@ -1196,8 +1202,8 @@ function calculate_ion_dqpar_dz_from_coll_krook!(dqpar_dz, density, upar, p, dp_
                                                  buffer_r_4)
     # Note that this is a braginskii heat flux for ions using the krook operator. The full Fokker-Planck operator
     # Braginskii heat flux is different! This also assumes one ion species, and so no friction between ions.
-    @debug_consistency_checks r.n == size(qpar, 2) || throw(BoundsError(qpar))
-    @debug_consistency_checks z.n == size(qpar, 1) || throw(BoundsError(qpar))
+    @debug_consistency_checks r.n == size(dqpar_dz, 2) || throw(BoundsError(dqpar_dz))
+    @debug_consistency_checks z.n == size(dqpar_dz, 1) || throw(BoundsError(dqpar_dz))
 
     if vperp.n == 1
         # For 1V need to use parallel temperature for Maxwellian in Krook
@@ -1600,6 +1606,7 @@ Pre-calculate spatial derivatives of the moments that will be needed for the tim
                                                     composition.T_e, dummy_zrs,
                                                     dummy_zrs_2, buffer_r_1, buffer_r_2,
                                                     buffer_r_3, buffer_r_4)
+            @begin_s_r_region()
         else
             @views derivative_z!(moments.ion.dqpar_dz, qpar, buffer_r_1,
                                  buffer_r_2, buffer_r_3, buffer_r_4, z_spectral, z)
@@ -1616,6 +1623,7 @@ Pre-calculate spatial derivatives of the moments that will be needed for the tim
     vEz = fields.vEz
     if moments.evolve_density
         # Upwinded with z-advection velocity, to be used in continuity equation
+        @begin_s_r_region()
         @loop_s_r_z is ir iz begin
             dummy_zrs[iz,ir,is] = (vEz[iz,ir] + bz[iz,ir] * upar[iz,ir,is])
         end
@@ -1628,6 +1636,7 @@ Pre-calculate spatial derivatives of the moments that will be needed for the tim
         # equation
         if !moments.evolve_density
             # If evolving density this was already calculated
+            @begin_s_r_region()
             @loop_s_r_z is ir iz begin
                 dummy_zrs[iz,ir,is] = (vEz[iz,ir] + bz[iz,ir] * upar[iz,ir,is])
             end
@@ -1640,6 +1649,7 @@ Pre-calculate spatial derivatives of the moments that will be needed for the tim
         # Upwinded using upar as advection velocity, to be used in energy equation
         if !(moments.evolve_density || moments.evolve_upar)
             # If evolving density or upar this was already calculated
+            @begin_s_r_region()
             @loop_s_r_z is ir iz begin
                 dummy_zrs[iz,ir,is] = (vEz[iz,ir] + bz[iz,ir] * upar[iz,ir,is])
             end

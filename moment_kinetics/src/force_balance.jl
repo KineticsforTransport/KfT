@@ -95,6 +95,7 @@ to update the parallel particle flux dens*upar for each species
     end
 
     if composition.ion_physics == coll_krook_ions
+        @begin_s_r_region()
         # boundary condition for fluid simulation on ion flow at wall is that flow must be at least sonic.
         if z.irank == 0 && (z.irank == z.nrank - 1)
             z_indices = (1, z.n)

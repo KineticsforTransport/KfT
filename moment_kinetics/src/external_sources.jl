@@ -137,8 +137,10 @@ function setup_external_sources!(input_dict, r, z, electron_physics,
                 PI_controller_amplitude = allocate_shared_float(:pi_controller_amplitude=>1)
                 controller_source_profile = allocate_shared_float(z, r)
             end
-            for ir ∈ 1:r.n, iz ∈ 1:z.n
-                controller_source_profile[iz,ir] = r_amplitude[ir] * z_amplitude[iz]
+            if block_rank[] == 0
+                for ir ∈ 1:r.n, iz ∈ 1:z.n
+                    controller_source_profile[iz,ir] = r_amplitude[ir] * z_amplitude[iz]
+                end
             end
 
             # Find the indices, and process rank of the point at r=0, z=0.
@@ -184,8 +186,10 @@ function setup_external_sources!(input_dict, r, z, electron_physics,
                 PI_controller_amplitude = allocate_shared_float(:pi_controller_amplitude=>1)
                 controller_source_profile = allocate_shared_float(z, r)
             end
-            for ir ∈ 1:r.n, iz ∈ 1:z.n
-                controller_source_profile[iz,ir] = r_amplitude[ir] * z_amplitude[iz]
+            if block_rank[] == 0
+                for ir ∈ 1:r.n, iz ∈ 1:z.n
+                    controller_source_profile[iz,ir] = r_amplitude[ir] * z_amplitude[iz]
+                end
             end
 
             # Find the indices, and process rank of the point at r=0, z=0.
@@ -332,8 +336,10 @@ function setup_external_sources!(input_dict, r, z, electron_physics,
                 PI_controller_amplitude = allocate_float(:pi_controller_amplitude=>1)
                 controller_source_profile = allocate_float(z, r)
             end
-            for ir ∈ 1:r.n, iz ∈ 1:z.n
-                controller_source_profile[iz,ir] = r_amplitude[ir] * z_amplitude[iz]
+            if block_rank[] == 0
+                for ir ∈ 1:r.n, iz ∈ 1:z.n
+                    controller_source_profile[iz,ir] = r_amplitude[ir] * z_amplitude[iz]
+                end
             end
 
             # Find the indices, and process rank of the point at r=0, z=0.
