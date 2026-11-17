@@ -46,21 +46,21 @@ struct scratch_pdf
     # ions
     pdf::MPISharedArray{mk_float, ndim_pdf_ion}
     density::MPISharedArray{mk_float, ndim_moment}
-    upar::MPISharedArray{mk_float, ndim_moment}
+    n_upar::MPISharedArray{mk_float, ndim_moment}
     p::MPISharedArray{mk_float, ndim_moment}
     ion_external_source_controller_integral::MPISharedArray{mk_float, 3}
     temp_z_s::MPISharedArray{mk_float, ndim_moment}
     # electrons
     pdf_electron::MPISharedArray{mk_float, ndim_pdf_electron}
     electron_density::MPISharedArray{mk_float, ndim_moment_electron}
-    electron_upar::MPISharedArray{mk_float, ndim_moment_electron}
+    electron_n_upar::MPISharedArray{mk_float, ndim_moment_electron}
     electron_p::MPISharedArray{mk_float, ndim_moment_electron}
     electron_temp::MPISharedArray{mk_float, ndim_moment_electron}
     #electron_external_source_controller_integral::MPISharedArray{mk_float, 3} # Not implemented yet
     # neutral particles 
     pdf_neutral::MPISharedArray{mk_float, ndim_pdf_neutral}
     density_neutral::MPISharedArray{mk_float, ndim_moment}
-    uz_neutral::MPISharedArray{mk_float, ndim_moment}
+    n_uz_neutral::MPISharedArray{mk_float, ndim_moment}
     p_neutral::MPISharedArray{mk_float, ndim_moment}
     neutral_external_source_controller_integral::MPISharedArray{mk_float, 3}
 end
@@ -103,6 +103,8 @@ end
 struct moments_ion_substruct{ndim_moment_wall}
     # this is the particle density
     dens::MPISharedArray{mk_float,ndim_moment}
+    # this is the parallel particle flux
+    n_upar::MPISharedArray{mk_float,ndim_moment}
     # this is the parallel flow
     upar::MPISharedArray{mk_float,ndim_moment}
     # this is the pressure
@@ -206,6 +208,8 @@ moments_electron_substruct is a struct that contains moment information for elec
 struct moments_electron_substruct{ndim_moment_electron_source}
     # this is the particle density
     dens::MPISharedArray{mk_float,ndim_moment_electron}
+    # this is the parallel particleflux
+    n_upar::MPISharedArray{mk_float,ndim_moment_electron}
     # this is the parallel flow
     upar::MPISharedArray{mk_float,ndim_moment_electron}
     # this is the pressure
@@ -279,11 +283,13 @@ end
 struct moments_neutral_substruct
     # this is the particle density
     dens::MPISharedArray{mk_float,ndim_moment}
-    # this is the particle mean velocity in z
+    # this is the particle flux in z
+    n_uz::MPISharedArray{mk_float,ndim_moment}
+    # this is the mean velocity in z
     uz::MPISharedArray{mk_float,ndim_moment}
-    # this is the particle mean velocity in r
+    # this is the mean velocity in r
     ur::MPISharedArray{mk_float,ndim_moment}
-    # this is the particle mean velocity in zeta
+    # this is the mean velocity in zeta
     uzeta::MPISharedArray{mk_float,ndim_moment}
     # this is the pressure
     p::MPISharedArray{mk_float,ndim_moment}
@@ -403,7 +409,7 @@ struct moments_struct{ndim_moment_wall, ndim_moment_electron_source}
     # flag that indicates if exact particle conservation should be enforced
     enforce_conservation::Bool
     # flag that indicates if the parallel flow should be evolved via force balance
-    evolve_upar::Bool
+    evolve_n_upar::Bool
     # flag that indicates if the parallel pressure should be evolved via the energy equation
     evolve_p::Bool
 end

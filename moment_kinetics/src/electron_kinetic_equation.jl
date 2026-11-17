@@ -2471,7 +2471,7 @@ to allow the outer r-loop to be parallelised.
     # kinetic electrons.
     calculate_electron_parallel_friction_force!(
         moments.electron.parallel_friction, fvec_out.electron_density,
-        fvec_out.electron_upar, fvec_out.upar, moments.electron.dT_dz,
+        fvec_out.electron_n_upar, fvec_out.n_upar, moments.electron.dT_dz,
         composition.me_over_mi, collisions.electron_fluid.nu_ei,
         composition.electron_physics)
 

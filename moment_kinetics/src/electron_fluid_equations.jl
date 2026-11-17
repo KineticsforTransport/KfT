@@ -1,7 +1,7 @@
 module electron_fluid_equations
 
 export calculate_electron_density!
-export calculate_electron_upar_from_charge_conservation!
+export calculate_electron_n_upar_from_charge_conservation!
 export calculate_electron_moments!
 export calculate_electron_moments_no_r!
 export electron_energy_equation!
@@ -62,30 +62,27 @@ use charge conservation equation to solve for the electron parallel flow density
     d/dz(sum_i n_i upar_i - n_e upar_e) = 0
     ==> {sum_i n_i upar_i}(z) - {sum_i n_i upar_i}(zbound) = {n_e upar_e}(z) - {n_e upar_e}(zbound)
 inputs: 
-    upar_e = should contain updated electron parallel flow at boundaries in zed
-    dens_e = electron particle density
-    upar_i = ion parallel flow density
-    dens_i = ion particle density
+    n_upar_e = should contain updated electron parallel particle flux at boundaries in zed
+    n_upar_i = ion parallel particle flu
 output:
     upar_e = contains the updated electron parallel flow
 """
-function calculate_electron_upar_from_charge_conservation!(upar_e, dens_e, upar_i, dens_i,
-                                                           electron_model, r, z)
+function calculate_electron_n_upar_from_charge_conservation!(n_upar_e, n_upar_i,
+                                                             electron_model, r, z)
     @begin_r_anyzv_region()
     @loop_r ir begin
-        @views calculate_electron_upar_from_charge_conservation_no_r!(
-                   upar_e[:,ir], dens_e[:,ir], upar_i[:,ir,:], dens_i[:,ir,:],
-                   electron_model, r, z, ir)
+        @views calculate_electron_n_upar_from_charge_conservation_no_r!(
+                   n_upar_e[:,ir], n_upar_i[:,ir,:], electron_model, r, z, ir)
     end
     return nothing
 end
-function calculate_electron_upar_from_charge_conservation_no_r!(upar_e, dens_e, upar_i,
-                                                                dens_i, electron_model, r,
-                                                                z, ir)
+function calculate_electron_n_upar_from_charge_conservation_no_r!(n_upar_e, n_upar_i,
+                                                                  electron_model, r, z,
+                                                                  ir)
     @begin_anyzv_z_region()
     # initialise the electron parallel flow density to zero
     @loop_z iz begin
-        upar_e[iz] = 0.0
+        n_upar_e[iz] = 0.0
     end
     # if using a simple logical sheath model, then the electron parallel current at the boundaries in zed
     # is equal and opposite to the ion parallel current
@@ -100,8 +97,8 @@ function calculate_electron_upar_from_charge_conservation_no_r!(upar_e, dens_e, 
                 boundary_flux[] = 0.0
                 boundary_ion_flux[] = 0.0
                 for is ∈ 1:size(dens_i, 2)
-                    boundary_flux[] += dens_i[1,is] * upar_i[1,is]
-                    boundary_ion_flux[] += dens_i[1,is] * upar_i[1,is]
+                    boundary_flux[] += n_upar_e[1,is]
+                    boundary_ion_flux[] += n_upar_i[1,is]
                 end
             end
             MPI.Bcast!(boundary_flux, 0, z.comm)
@@ -112,22 +109,19 @@ function calculate_electron_upar_from_charge_conservation_no_r!(upar_e, dens_e, 
         @begin_anyzv_z_region()
         @loop_z iz begin
             # initialise the electron particle flux to its value at the boundary in
-            # zed and subtract the ion boundary flux - we want to calculate upar_e =
-            # boundary_flux + (ion_flux - boundary_ion_flux) as at this intermediate
-            # point upar is actually the electron particle flux
-            upar_e[iz] = boundary_flux[] - boundary_ion_flux[]
+            # zed and subtract the ion boundary flux - we want to calculate n_upar_e =
+            # boundary_flux + (ion_flux - boundary_ion_flux).
+            n_upar_e[iz] = boundary_flux[] - boundary_ion_flux[]
             # add the contributions to the electron particle flux from the various ion species
             # particle fluxes
             @loop_s is begin
-                upar_e[iz] += dens_i[iz,is] * upar_i[iz,is]
+                n_upar_e[iz] += n_upar_i[iz,is]
             end
-            # convert from parallel particle flux to parallel particle density
-            upar_e[iz] /= dens_e[iz]
         end
     else
         @begin_anyzv_z_region()
         @loop_z iz begin
-            upar_e[iz] = upar_i[iz,1]
+            n_upar_e[iz] = n_upar_i[iz,1]
         end
     end
     return nothing
@@ -597,8 +591,9 @@ end
 
 """
 """
-function calculate_electron_parallel_friction_force!(friction, dens_e, upar_e, upar_i, dTe_dz,
-                                                     me_over_mi, nu_ei, electron_model)
+function calculate_electron_parallel_friction_force!(friction, dens_e, n_upar_e, n_upar_i,
+                                                     dTe_dz, me_over_mi, nu_ei,
+                                                     electron_model)
     @begin_r_z_region()
     if electron_model == braginskii_fluid
         @loop_r_z ir iz begin

@@ -213,7 +213,7 @@ function mk_input(input_dict=OptionsDict("output" => OptionsDict("run_name" => "
         converged_residual_value=-1.0,
         rtol=1.0e-5,
         atol=1.0e-12,
-        atol_upar=-1.0,
+        atol_n_upar=-1.0,
         step_update_prefactor=0.9,
         max_increase_factor=1.05,
         max_increase_factor_near_last_fail=Inf,
@@ -241,8 +241,8 @@ function mk_input(input_dict=OptionsDict("output" => OptionsDict("run_name" => "
     elseif timestepping_section["nwrite_dfns"] > timestepping_section["nstep"]
         timestepping_section["nwrite_dfns"] = timestepping_section["nstep"]
     end
-    if timestepping_section["atol_upar"] < 0.0
-        timestepping_section["atol_upar"] = 1.0e-2 * timestepping_section["rtol"]
+    if timestepping_section["atol_n_upar"] < 0.0
+        timestepping_section["atol_n_upar"] = 1.0e-2 * timestepping_section["rtol"]
     end
 
     # parameters related to electron time stepping
