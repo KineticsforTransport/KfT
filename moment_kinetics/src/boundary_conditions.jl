@@ -893,11 +893,13 @@ function enforce_boundary_conditions!(
              z, r, vpa_spectral, vperp_spectral, vpa_adv, vperp_adv, z_adv, r_adv,
              composition, geometry, scratch_dummy, r_diffusion, vpa_diffusion,
              vperp_diffusion)
-    enforce_boundary_conditions_f!(f, density, upar, p, fields, boundaries, moments, vpa,
-                                   vperp, z, r, vpa_spectral, vperp_spectral, vpa_adv,
-                                   vperp_adv, z_adv, r_adv, composition, geometry,
-                                   scratch_dummy, r_diffusion, vpa_diffusion,
-                                   vperp_diffusion)
+    if !(composition.ion_physics == coll_krook_ions)
+        enforce_boundary_conditions_f!(f, density, upar, p, fields, boundaries, moments,
+                                       vpa, vperp, z, r, vpa_spectral, vperp_spectral,
+                                       vpa_adv, vperp_adv, z_adv, r_adv, composition,
+                                       geometry, scratch_dummy, r_diffusion,
+                                       vpa_diffusion, vperp_diffusion)
+    end
     enforce_boundary_conditions_moments!(density, upar, p, fields, boundaries, moments, z,
                                          r, z_adv, r_adv, composition, geometry,
                                          r_diffusion)

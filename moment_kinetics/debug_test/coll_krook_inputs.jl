@@ -25,8 +25,8 @@ test_input = OptionsDict(
      "frequency_option" => "reference_parameters"
     ),
  "vpa" => OptionsDict(
-     "ngrid" => 1,
-     "nelement" => 1,
+     "ngrid" => 4,
+     "nelement" => 2,
     ),
  "z" => OptionsDict(
      "ngrid" => 4,
