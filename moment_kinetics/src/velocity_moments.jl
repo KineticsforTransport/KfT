@@ -1090,6 +1090,7 @@ function apply_Neumann_z_bc_to_moment!(m::AbstractArray{mk_float,3}, z::coordina
         error("Neumann z boundary condition is only implemented for Gauss-Legendre and "
               * "Chebyshev discretizations.")
     end
+    @debug_consistency_checks z.nelement_global > 1 || error("Neumann z-bc does not work for single element")
 
     # See comments in `create_r_section()` for Neumann bc for notes on implementation.
 

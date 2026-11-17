@@ -433,6 +433,11 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
             if :lobatto ∉ fieldnames(typeof(r_spectral)) || :Dmat ∉ fieldnames(typeof(r_spectral.lobatto))
                 error("$(typeof(r_spectral)) discretization does not support Neumann bc.")
             end
+            if r.nelement_global == 1
+                error("Neumann boundary condition cannot be applied for a single "
+                      * "r-element. For a single element the boundary condition would "
+                      * "have to be applied to both boundary points simultaneously.")
+            end
             if is_inner
                 Dmat_row = @view r_spectral.lobatto.Dmat[1,:]
                 derivative_coefficients = Dmat_row[2:end]
