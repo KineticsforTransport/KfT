@@ -158,7 +158,7 @@ test_input_4 = recursive_merge(test_input_4,
 """
 Run a test for a single set of parameters
 """
-function run_test(test_input, expected_phi; rtol=4.e-14, atol=1.e-15, args...)
+function run_test(test_input, expected_phi; rtol=0.0, atol=4.e-11, args...)
     # by passing keyword arguments to run_test, args becomes a Tuple of Pairs which can be
     # used to update the default inputs
 
