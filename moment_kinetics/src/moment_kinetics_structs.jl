@@ -103,36 +103,16 @@ end
 struct moments_ion_substruct{ndim_moment_wall}
     # this is the particle density
     dens::MPISharedArray{mk_float,ndim_moment}
-    # flag that keeps track of if the density needs updating before use
-    # Note: may not be set for all species on this process, but this process only ever
-    # sets/uses the value for the same subset of species. This means dens_update does
-    # not need to be a shared memory array.
-    dens_updated::Vector{Bool}
     # this is the parallel flow
     upar::MPISharedArray{mk_float,ndim_moment}
-    # flag that keeps track of whether or not upar needs updating before use
-    # Note: may not be set for all species on this process, but this process only ever
-    # sets/uses the value for the same subset of species. This means upar_update does
-    # not need to be a shared memory array.
-    upar_updated::Vector{Bool}
     # this is the pressure
     p::MPISharedArray{mk_float,ndim_moment}
-    # flag that keeps track of whether or not p needs updating before use
-    # Note: may not be set for all species on this process, but this process only ever
-    # sets/uses the value for the same subset of species. This means p_update does
-    # not need to be a shared memory array.
-    p_updated::Vector{Bool}
     # this is the parallel pressure
     ppar::MPISharedArray{mk_float,ndim_moment}
     # this is the perpendicular pressure
     pperp::MPISharedArray{mk_float,ndim_moment}
     # this is the parallel heat flux
     qpar::MPISharedArray{mk_float,ndim_moment}
-    # flag that keeps track of whether or not qpar needs updating before use
-    # Note: may not be set for all species on this process, but this process only ever
-    # sets/uses the value for the same subset of species. This means qpar_update does
-    # not need to be a shared memory array.
-    qpar_updated::Vector{Bool}
     # this is the thermal speed
     vth::MPISharedArray{mk_float,ndim_moment}
     # this is the temperature
@@ -226,28 +206,18 @@ moments_electron_substruct is a struct that contains moment information for elec
 struct moments_electron_substruct{ndim_moment_electron_source}
     # this is the particle density
     dens::MPISharedArray{mk_float,ndim_moment_electron}
-    # flag that keeps track of if the density needs updating before use
-    dens_updated::Base.RefValue{Bool}
     # this is the parallel flow
     upar::MPISharedArray{mk_float,ndim_moment_electron}
-    # flag that keeps track of whether or not upar needs updating before use
-    upar_updated::Base.RefValue{Bool}
     # this is the pressure
     p::MPISharedArray{mk_float,ndim_moment_electron}
-    # flag that keeps track of whether or not p needs updating before use
-    p_updated::Base.RefValue{Bool}
     # this is the parallel pressure
     ppar::MPISharedArray{mk_float,ndim_moment_electron}
     # this is the perpendicular pressure
     pperp::MPISharedArray{mk_float,ndim_moment_electron}
     # this is the temperature
     temp::MPISharedArray{mk_float,ndim_moment_electron}
-    # flag that keeps track of whether or not temp needs updating before use
-    temp_updated::Base.RefValue{Bool}
     # this is the parallel heat flux
     qpar::MPISharedArray{mk_float,ndim_moment_electron}
-    # flag that keeps track of whether or not qpar needs updating before use
-    qpar_updated::Base.RefValue{Bool}
     # this is the thermal speed
     vth::MPISharedArray{mk_float,ndim_moment_electron}
     # this is the parallel friction force between ions and electrons
@@ -309,43 +279,22 @@ end
 struct moments_neutral_substruct
     # this is the particle density
     dens::MPISharedArray{mk_float,ndim_moment}
-    # flag that keeps track of if the density needs updating before use
-    # Note: may not be set for all species on this process, but this process only ever
-    # sets/uses the value for the same subset of species. This means dens_update does
-    # not need to be a shared memory array.
-    dens_updated::Vector{Bool}
     # this is the particle mean velocity in z
     uz::MPISharedArray{mk_float,ndim_moment}
-    # flag that keeps track of if uz needs updating before use
-    uz_updated::Vector{Bool}
     # this is the particle mean velocity in r
     ur::MPISharedArray{mk_float,ndim_moment}
-    # flag that keeps track of if ur needs updating before use
-    ur_updated::Vector{Bool}
     # this is the particle mean velocity in zeta
     uzeta::MPISharedArray{mk_float,ndim_moment}
-    # flag that keeps track of if uzeta needs updating before use
-    uzeta_updated::Vector{Bool}
     # this is the pressure
     p::MPISharedArray{mk_float,ndim_moment}
-    # flag that keeps track of if p needs updating before use
-    p_updated::Vector{Bool}
     # this is the zz particle pressure tensor component
     pz::MPISharedArray{mk_float,ndim_moment}
-    # flag that keeps track of if pz needs updating before use
-    pz_updated::Vector{Bool}
     # this is the rr particle pressure tensor component
     pr::MPISharedArray{mk_float,ndim_moment}
-    # flag that keeps track of if pr needs updating before use
-    pr_updated::Vector{Bool}
     # this is the zetazeta particle pressure tensor component
     pzeta::MPISharedArray{mk_float,ndim_moment}
-    # flag that keeps track of if pzeta needs updating before use
-    pzeta_updated::Vector{Bool}
     # this is the heat flux along z
     qz::MPISharedArray{mk_float,ndim_moment}
-    # flag that keeps track of if qz needs updating before use
-    qz_updated::Vector{Bool}
     # this is the thermal speed based on the temperature T = ptot/dens: vth = sqrt(2*T/m)
     vth::MPISharedArray{mk_float,ndim_moment}
     # if evolve_ppar = true, then the velocity variable is (vz - uz)/vth, which introduces

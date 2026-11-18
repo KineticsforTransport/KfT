@@ -358,7 +358,6 @@ function update_electron_pdf_with_time_advance!(scratch, pdf, moments,
 
                 function update_derived_moments_and_derivatives(update_vth=false)
                     # update the electron heat flux
-                    moments.electron.qpar_updated[] = false
                     @views calculate_electron_qpar_from_pdf_no_r!(
                                moments.electron.qpar[:,ir], moments.electron.dens[:,ir],
                                moments.electron.vth[:,ir],
@@ -721,7 +720,6 @@ function electron_backward_euler_pseudotimestepping!(scratch, pdf, moments,
             if step_success
                 if !evolve_p
                     # update the electron heat flux
-                    moments.electron.qpar_updated[] = false
                     @views calculate_electron_qpar_from_pdf_no_r!(moments.electron.qpar[:,ir],
                                                                   moments.electron.dens[:,ir],
                                                                   moments.electron.vth[:,ir],
@@ -831,7 +829,6 @@ function electron_backward_euler_pseudotimestepping!(scratch, pdf, moments,
 
                 if !evolve_p
                     # update the electron heat flux
-                    moments.electron.qpar_updated[] = false
                     @views calculate_electron_qpar_from_pdf_no_r!(moments.electron.qpar[:,ir],
                                                                   moments.electron.dens[:,ir],
                                                                   moments.electron.vth[:,ir],
@@ -901,7 +898,6 @@ function electron_backward_euler_pseudotimestepping!(scratch, pdf, moments,
                     # Update the electron heat flux for output. This will be done anyway
                     # before using qpar in the next residual_func!() call, but there is no
                     # convenient way to include that calculation in this debug output.
-                    moments.electron.qpar_updated[] = false
                     @views calculate_electron_qpar_from_pdf_no_r!(moments.electron.qpar[:,ir],
                                                                   moments.electron.dens[:,ir],
                                                                   moments.electron.vth[:,ir],

@@ -23,11 +23,11 @@ using ..file_io: write_data_to_ascii, write_all_moments_data_to_binary,
 using ..initial_conditions: initialize_electrons!
 using ..looping
 using ..moment_kinetics_structs: scratch_pdf, scratch_electron_pdf
-using ..velocity_moments: update_moments!, update_moments_neutral!, reset_moments_status!, update_derived_moments!, update_derived_moments_neutral!
-using ..velocity_moments: update_density!, update_upar!, update_ppar!, update_pperp!, update_ion_qpar!, update_vth!, update_derived_ion_moment_time_derivatives!
-using ..velocity_moments: update_neutral_density!, update_neutral_qz!
-using ..velocity_moments: update_neutral_uzeta!, update_neutral_uz!, update_neutral_ur!
-using ..velocity_moments: update_neutral_pzeta!, update_neutral_pz!, update_neutral_pr!, update_derived_neutral_moment_time_derivatives!
+using ..velocity_moments: update_moments!, update_moments_neutral!, update_derived_moments!, update_derived_moments_neutral!
+using ..velocity_moments: update_derived_ion_moment_time_derivatives!
+using ..velocity_moments: update_neutral_qz!
+using ..velocity_moments: update_neutral_uzeta!, update_neutral_ur!
+using ..velocity_moments: update_neutral_pzeta!, update_neutral_pr!, update_derived_neutral_moment_time_derivatives!
 using ..velocity_moments: calculate_ion_moment_derivatives!, calculate_neutral_moment_derivatives!
 using ..velocity_moments: calculate_electron_moment_derivatives!, update_derived_electron_moment_time_derivatives!
 using ..velocity_grid_transforms: vzvrvzeta_to_vpavperp!, vpavperp_to_vzvrvzeta!
@@ -1354,7 +1354,6 @@ function _setup_time_advance_internal!(pdf, fields, vz, vr, vzeta, vpa, vperp, z
 
         # update moments in case they were affected by applying boundary conditions or
         # constraints to the pdf
-        reset_moments_status!(moments)
         update_moments!(moments, pdf.ion.norm, gyroavs, vpa, vperp, z, r, composition,
            r_spectral,geometry,scratch_dummy,z_advect, collisions)
         # enforce boundary conditions in r and z on the neutral particle distribution function
@@ -1392,24 +1391,23 @@ function _setup_time_advance_internal!(pdf, fields, vz, vr, vzeta, vpa, vperp, z
         # update the electron density, parallel flow and parallel pressure (and temperature)
         # in case the corresponding ion quantities have been changed by applying
         # constraints to the ion pdf
-        calculate_electron_density!(moments.electron.dens, moments.electron.dens_updated, moments.ion.dens)
-        calculate_electron_upar_from_charge_conservation!(moments.electron.upar, moments.electron.upar_updated,
-                                                          moments.electron.dens, moments.ion.upar, moments.ion.dens,
-                                                          composition.electron_physics, r, z)
+        calculate_electron_density!(moments.electron.dens, moments.ion.dens)
+        calculate_electron_upar_from_charge_conservation!(moments.electron.upar,
+                                                          moments.electron.dens,
+                                                          moments.ion.upar,
+                                                          moments.ion.dens,
+                                                          composition.electron_physics, r,
+                                                          z)
         @begin_serial_region()
         # compute the updated electron temperature
         # NB: not currently necessary, as initial vth is not directly dependent on ion quantities
         @serial_region begin
             @. moments.electron.temp = 0.5 * composition.me_over_mi * moments.electron.vth^2
         end
-        # as the electron temperature has now been updated, set the appropriate flag
-        moments.electron.temp_updated[] = true
         # compute the updated electron parallel pressure
         @serial_region begin
             @. moments.electron.p = moments.electron.dens * moments.electron.temp
         end
-        # as the electron p has now been updated, set the appropriate flag
-        moments.electron.p_updated[] = true
         # calculate the zed derivative of the initial electron temperature, potentially
         # needed in the following calculation of the electron parallel friction force and
         # parallel heat flux
@@ -3041,11 +3039,10 @@ moments and moment derivatives
         end
 
         # update the parallel heat flux
-        update_neutral_qz!(moments.neutral.qz, moments.neutral.qz_updated,
-                           this_scratch.density_neutral, this_scratch.uz_neutral,
-                           moments.neutral.vth, this_scratch.pdf_neutral, vz, vr, vzeta, z,
-                           r, composition, moments.evolve_density, moments.evolve_upar,
-                           moments.evolve_p)
+        update_neutral_qz!(moments.neutral.qz, this_scratch.density_neutral,
+                           this_scratch.uz_neutral, moments.neutral.vth,
+                           this_scratch.pdf_neutral, vz, vr, vzeta, z, r, composition,
+                           moments.evolve_density, moments.evolve_upar, moments.evolve_p)
 
         calculate_neutral_moment_derivatives!(moments, this_scratch, scratch_dummy, z,
                                               z_spectral,
@@ -3500,24 +3497,22 @@ appropriate.
             end
             # for now update moments.neutral object directly for diagnostic moments
             # that are not used in Runga-Kutta steps
-            update_neutral_ur!(moments.neutral.ur, moments.neutral.ur_updated,
-                               moments.neutral.dens, moments.neutral.vth,
-                               pdf.neutral.norm, vz, vr, vzeta, z, r, composition,
-                               moments.evolve_density, moments.evolve_p)
-            update_neutral_uzeta!(moments.neutral.uzeta, moments.neutral.uzeta_updated,
-                                  moments.neutral.dens, moments.neutral.vth,
-                                  pdf.neutral.norm, vz, vr, vzeta, z, r, composition,
-                                  moments.evolve_density, moments.evolve_p)
-            update_neutral_pr!(moments.neutral.pr, moments.neutral.pr_updated,
-                               moments.neutral.dens, moments.neutral.ur,
+            update_neutral_ur!(moments.neutral.ur, moments.neutral.dens,
                                moments.neutral.vth, pdf.neutral.norm, vz, vr, vzeta, z, r,
-                               composition, moments.evolve_density, moments.evolve_upar,
-                               moments.evolve_p)
-            update_neutral_pzeta!(moments.neutral.pzeta, moments.neutral.pzeta_updated,
-                                  moments.neutral.dens, moments.neutral.uzeta,
+                               composition, moments.evolve_density, moments.evolve_p)
+            update_neutral_uzeta!(moments.neutral.uzeta, moments.neutral.dens,
                                   moments.neutral.vth, pdf.neutral.norm, vz, vr, vzeta, z,
                                   r, composition, moments.evolve_density,
-                                  moments.evolve_upar, moments.evolve_p)
+                                  moments.evolve_p)
+            update_neutral_pr!(moments.neutral.pr, moments.neutral.dens,
+                               moments.neutral.ur, moments.neutral.vth, pdf.neutral.norm,
+                               vz, vr, vzeta, z, r, composition, moments.evolve_density,
+                               moments.evolve_upar, moments.evolve_p)
+            update_neutral_pzeta!(moments.neutral.pzeta, moments.neutral.dens,
+                                  moments.neutral.uzeta, moments.neutral.vth,
+                                  pdf.neutral.norm, vz, vr, vzeta, z, r, composition,
+                                  moments.evolve_density, moments.evolve_upar,
+                                  moments.evolve_p)
             # pz can be calculated from p, pzeta, and pr
             @loop_sn_r_z isn ir iz begin
                 moments.neutral.pz[iz,ir,isn] = (3.0 * moments.neutral.p[iz,ir,isn] - moments.neutral.pr[iz,ir,isn] - moments.neutral.pzeta[iz,ir,isn])
@@ -3880,24 +3875,22 @@ end
             end
             # for now update moments.neutral object directly for diagnostic moments
             # that are not used in Runga-Kutta steps
-            update_neutral_ur!(moments.neutral.ur, moments.neutral.ur_updated,
-                               moments.neutral.dens, moments.neutral.vth,
-                               pdf.neutral.norm, vz, vr, vzeta, z, r, composition,
-                               moments.evolve_density, moments.evolve_p)
-            update_neutral_uzeta!(moments.neutral.uzeta, moments.neutral.uzeta_updated,
-                                  moments.neutral.dens, moments.neutral.vth,
-                                  pdf.neutral.norm, vz, vr, vzeta, z, r, composition,
-                                  moments.evolve_density, moments.evolve_p)
-            update_neutral_pr!(moments.neutral.pr, moments.neutral.pr_updated,
-                               moments.neutral.dens, moments.neutral.ur,
+            update_neutral_ur!(moments.neutral.ur, moments.neutral.dens,
                                moments.neutral.vth, pdf.neutral.norm, vz, vr, vzeta, z, r,
-                               composition, moments.evolve_density, moments.evolve_upar,
-                               moments.evolve_p)
-            update_neutral_pzeta!(moments.neutral.pzeta, moments.neutral.pzeta_updated,
-                                  moments.neutral.dens, moments.neutral.uzeta,
+                               composition, moments.evolve_density, moments.evolve_p)
+            update_neutral_uzeta!(moments.neutral.uzeta, moments.neutral.dens,
                                   moments.neutral.vth, pdf.neutral.norm, vz, vr, vzeta, z,
                                   r, composition, moments.evolve_density,
-                                  moments.evolve_upar, moments.evolve_p)
+                                  moments.evolve_p)
+            update_neutral_pr!(moments.neutral.pr, moments.neutral.dens,
+                               moments.neutral.ur, moments.neutral.vth, pdf.neutral.norm,
+                               vz, vr, vzeta, z, r, composition, moments.evolve_density,
+                               moments.evolve_upar, moments.evolve_p)
+            update_neutral_pzeta!(moments.neutral.pzeta, moments.neutral.dens,
+                                  moments.neutral.uzeta, moments.neutral.vth,
+                                  pdf.neutral.norm, vz, vr, vzeta, z, r, composition,
+                                  moments.evolve_density, moments.evolve_upar,
+                                  moments.evolve_p)
         end
         @begin_serial_region()
         @serial_region begin
@@ -4301,10 +4294,6 @@ implementation), a call needs to be made with `dt` scaled by some coefficient.
         end
     end
     # End of advance for distribution function
-
-    # reset "xx.updated" flags to false since ff has been updated
-    # and the corresponding moments have not
-    reset_moments_status!(moments)
     return nothing
 end
 
