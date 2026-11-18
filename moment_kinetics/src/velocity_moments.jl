@@ -1727,11 +1727,12 @@ Calculate spatial derivatives of the electron moments.
 This version, for use in implicit solvers for electrons, works with a single point in `r`,
 given by `ir`.
 """
-function calculate_electron_moment_derivatives_no_r!(moments, dens, upar, p,
-                                                     scratch_dummy, z, z_spectral,
-                                                     electron_mom_diss_coeff, ir)
+function calculate_electron_moment_derivatives_no_r!(moments, dens, p, scratch_dummy, z,
+                                                     z_spectral, electron_mom_diss_coeff,
+                                                     ir)
     @begin_anyzv_region()
 
+    upar = @view moments.electron.upar[:,ir]
     ppar = @view moments.electron.ppar[:,ir]
     qpar = @view moments.electron.qpar[:,ir]
     vth = @view moments.electron.vth[:,ir]
@@ -1742,7 +1743,7 @@ function calculate_electron_moment_derivatives_no_r!(moments, dens, upar, p,
     buffer_3 = @view scratch_dummy.buffer_rs_3[ir,1]
     buffer_4 = @view scratch_dummy.buffer_rs_4[ir,1]
 
-    @views derivative_z_anyzv!(moments.electron.dupar_dz[:,ir], upar, buffer_1, buffer_2,
+    @views derivative_z_anyzv!(moments.electron.dupar_dz[:,ir], buffer_1, buffer_2,
                                buffer_3, buffer_4, z_spectral, z)
 
     @views derivative_z_anyzv!(moments.electron.ddens_dz[:,ir], dens, buffer_1, buffer_2,

@@ -1219,7 +1219,7 @@ function _setup_time_advance_internal!(pdf, fields, vz, vr, vzeta, vpa, vperp, z
                                            electron_mom_diss_coeff, composition.electron_physics)
     # calculate the electron-ion parallel friction force
     calculate_electron_parallel_friction_force!(moments.electron.parallel_friction,
-        moments.electron.dens, moments.electron.n_upar, moments.ion.n_upar,
+        moments.electron.dens, moments.electron.upar, moments.ion.upar,
         moments.electron.dT_dz, composition.me_over_mi, collisions.electron_fluid.nu_ei,
         composition.electron_physics)
     # initialize the electrostatic potential
@@ -1453,7 +1453,7 @@ function _setup_time_advance_internal!(pdf, fields, vz, vr, vzeta, vpa, vperp, z
 
     # calculate the electron-ion parallel friction force
     calculate_electron_parallel_friction_force!(moments.electron.parallel_friction,
-        moments.electron.dens, moments.electron.n_upar, moments.ion.n_upar,
+        moments.electron.dens, moments.electron.upar, moments.ion.upar,
         moments.electron.dT_dz, composition.me_over_mi, collisions.electron_fluid.nu_ei,
         composition.electron_physics)
 
@@ -2841,7 +2841,7 @@ moments and moment derivatives
             # update the electron parallel friction force
             calculate_electron_parallel_friction_force!(
                 moments.electron.parallel_friction, this_scratch.electron_density,
-                this_scratch.electron_n_upar, this_scratch.n_upar, moments.electron.dT_dz,
+                moments.electron.upar, moments.ion.upar, moments.electron.dT_dz,
                 composition.me_over_mi, collisions.electron_fluid.nu_ei,
                 composition.electron_physics)
 
@@ -2913,7 +2913,7 @@ moments and moment derivatives
             # update the electron parallel friction force
             calculate_electron_parallel_friction_force!(
                 moments.electron.parallel_friction, this_scratch.electron_density,
-                this_scratch.electron_n_upar, this_scratch.n_upar, moments.electron.dT_dz,
+                moments.electron.upar, moments.ion.upar, moments.electron.dT_dz,
                 composition.me_over_mi, collisions.electron_fluid.nu_ei,
                 composition.electron_physics)
 
@@ -2963,7 +2963,7 @@ moments and moment derivatives
         # update the electron parallel friction force
         calculate_electron_parallel_friction_force!(
             moments.electron.parallel_friction, this_scratch.electron_density,
-            this_scratch.electron_n_upar, this_scratch.n_upar, moments.electron.dT_dz,
+            moments.electron.upar, moments.ion.upar, moments.electron.dT_dz,
             composition.me_over_mi, collisions.electron_fluid.nu_ei,
             composition.electron_physics)
         # This should only ever be Boltzmann for coll_krook_ions

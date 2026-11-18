@@ -58,14 +58,14 @@ function calculate_electron_density_no_r!(dens_e, dens_i, ir)
 end
 
 """
-use charge conservation equation to solve for the electron parallel flow density:
+use charge conservation equation to solve for the electron parallel particle flux:
     d/dz(sum_i n_i upar_i - n_e upar_e) = 0
     ==> {sum_i n_i upar_i}(z) - {sum_i n_i upar_i}(zbound) = {n_e upar_e}(z) - {n_e upar_e}(zbound)
 inputs: 
     n_upar_e = should contain updated electron parallel particle flux at boundaries in zed
     n_upar_i = ion parallel particle flu
 output:
-    upar_e = contains the updated electron parallel flow
+    n_upar_e = contains the updated electron parallel flow
 """
 function calculate_electron_n_upar_from_charge_conservation!(n_upar_e, n_upar_i,
                                                              electron_model, r, z)
@@ -127,6 +127,14 @@ function calculate_electron_n_upar_from_charge_conservation_no_r!(n_upar_e, n_up
     return nothing
 end
 
+function calculate_electron_upar_no_r!(electron_upar, electron_density, electron_n_upar)
+    @begin_anyzv_z_region()
+    @loop_z iz begin
+        electron_upar[iz] = electron_n_upar[iz] / electron_density[iz]
+    end
+    return nothing
+end
+
 @timeit_debug global_timer calculate_electron_moments!(scratch, pdf, moments, composition,
                                                        collisions, r, z, vperp,
                                                        vpa) = begin
@@ -147,10 +155,10 @@ end
             this_pdf = @view pdf_electron[:,:,:,ir]
         end
         @views calculate_electron_moments_no_r!(this_pdf, scratch.electron_density[:,ir],
-                                                scratch.electron_upar[:,ir],
+                                                scratch.electron_n_upar[:,ir],
                                                 scratch.electron_p[:,ir],
                                                 scratch.density[:,ir,:],
-                                                scratch.upar[:,ir,:], moments,
+                                                scratch.n_upar[:,ir,:], moments,
                                                 composition, collisions, r, z, vperp, vpa,
                                                 ir)
     end
@@ -158,20 +166,22 @@ end
     # The anyzv loop over r above skips points in r that are duplicated (i.e. one of the
     # copies of the element boundary points at sub-domain or periodic boundaries). Now
     # fill in the duplicate points.
-    halo_swap!(r, z, scratch.electron_density, scratch.electron_upar, scratch.electron_p,
-               moments.electron.vth, moments.electron.temp, moments.electron.ppar,
-               moments.electron.qpar)
+    halo_swap!(r, z, scratch.electron_density, scratch.electron_n_upar,
+               scratch.electron_upar, scratch.electron_p, moments.electron.vth,
+               moments.electron.temp, moments.electron.ppar, moments.electron.qpar)
 
     return nothing
 end
 
-function calculate_electron_moments_no_r!(pdf_electron, electron_density, electron_upar,
-                                          electron_p, ion_density, ion_upar, moments,
+function calculate_electron_moments_no_r!(pdf_electron, electron_density, electron_n_upar,
+                                          electron_p, ion_density, ion_n_upar, moments,
                                           composition, collisions, r, z, vperp, vpa, ir)
     calculate_electron_density_no_r!(electron_density, ion_density, ir)
-    calculate_electron_upar_from_charge_conservation_no_r!(
-        electron_upar, electron_density, ion_upar, ion_density,
+    calculate_electron_n_upar_from_charge_conservation_no_r!(
+        electron_n_upar, electron_density, ion_n_upar, ion_density,
         composition.electron_physics, r, z, ir)
+    @views calculate_electron_upar_no_r!(moments.electron.upar[:,ir], electron_density,
+                                         electron_n_upar)
     if composition.electron_physics ∉ (braginskii_fluid, kinetic_electrons,
                                        kinetic_electrons_with_temperature_equation)
         @begin_anyzv_z_region()
@@ -184,16 +194,20 @@ function calculate_electron_moments_no_r!(pdf_electron, electron_density, electr
                                                  moments.electron.temp[:,ir], electron_p,
                                                  electron_density, composition)
     @views calculate_electron_ppar_no_r!(moments.electron.ppar[:,ir], electron_density,
-                                         electron_upar, electron_p,
+                                         moments.electron.upar[:,ir], electron_p,
                                          moments.electron.vth[:,ir], pdf_electron, vpa,
                                          vperp, z, composition.me_over_mi)
-    calculate_electron_qpar_no_r!(moments.electron, pdf_electron, electron_p,
-                                  electron_density, electron_upar, ion_upar,
-                                  collisions.electron_fluid.nu_ei, composition.me_over_mi,
-                                  composition.electron_physics, vperp, vpa, ir)
+    @views calculate_electron_qpar_no_r!(moments.electron, pdf_electron, electron_p,
+                                         electron_density, moments.electron.upar[:,ir],
+                                         moments.ion.upar[:,ir],
+                                         collisions.electron_fluid.nu_ei,
+                                         composition.me_over_mi,
+                                         composition.electron_physics, vperp, vpa, ir)
     if composition.electron_physics == braginskii_fluid
-        electron_fluid_qpar_boundary_condition!(electron_p, electron_upar,
-                                                electron_density, moments.electron, z)
+        @views electron_fluid_qpar_boundary_condition!(electron_p,
+                                                       moments.electron.upar[:,ir],
+                                                       electron_density, moments.electron,
+                                                       z)
     end
     return nothing
 end
@@ -501,8 +515,8 @@ end
         p_out = @view fvec_out.electron_p[:,ir]
         p_in = @view fvec_in.electron_p[:,ir]
         dens = @view fvec_in.electron_density[:,ir]
-        upar_e = @view fvec_in.electron_upar[:,ir]
-        upar_i = @view fvec_in.upar[:,ir]
+        upar_e = @view moments.electron.upar[:,ir]
+        upar_i = @view moments.ion.upar[:,ir,1]
 
         # Explicit timestep to give initial guess for implicit solve
         electron_braginskii_conduction!(p_out, p_in, dens, upar_e, upar_i,
@@ -591,7 +605,7 @@ end
 
 """
 """
-function calculate_electron_parallel_friction_force!(friction, dens_e, n_upar_e, n_upar_i,
+function calculate_electron_parallel_friction_force!(friction, dens_e, upar_e, upar_i,
                                                      dTe_dz, me_over_mi, nu_ei,
                                                      electron_model)
     @begin_r_z_region()
@@ -621,7 +635,7 @@ function calculate_electron_ppar_no_r!(ppar, density, upar, p, vth, ff, vpa, vpe
 
     # Only moment-kinetic electrons supported
     evolve_density = true
-    evolve_upar = true
+    evolve_n_upar = true
     evolve_p = true
 
     if evolve_p
@@ -645,7 +659,7 @@ function calculate_electron_ppar_no_r!(ppar, density, upar, p, vth, ff, vpa, vpe
                 ppar[iz] = p[iz]
             end
         end
-    elseif evolve_upar
+    elseif evolve_n_upar
         # this is the case where the parallel flow and density are evolved separately
         # from the normalized pdf; the vpa coordinate is <v_∥ - upar_s) / c_ref> and so we
         # set upar = 0 in the call to get_vpa2_moment because the mean flow of the

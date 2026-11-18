@@ -203,7 +203,7 @@ function update_electron_pdf_with_time_advance!(scratch, pdf, moments,
     end
     calculate_electron_moment_derivatives!(moments,
                                            (electron_density=moments.electron.dens,
-                                            electron_upar=moments.electron.upar,
+                                            electron_n_upar=moments.electron.n_upar,
                                             electron_p=moments.electron.p),
                                            scratch_dummy, z, z_spectral,
                                            num_diss_params.electron.moment_dissipation_coefficient,
@@ -366,14 +366,13 @@ function update_electron_pdf_with_time_advance!(scratch, pdf, moments,
 
                     if evolve_p
                         this_dens = @view moments.electron.dens[:,ir]
-                        this_upar = @view moments.electron.upar[:,ir]
                         this_p = @view scratch[istage+1].electron_p[:,ir]
                         if update_vth
                             update_electron_vth_temperature!(moments, this_p, this_dens,
                                                              composition, ir)
                         end
                         calculate_electron_moment_derivatives_no_r!(
-                            moments, this_dens, this_upar, this_p, scratch_dummy, z,
+                            moments, this_dens, this_p, scratch_dummy, z,
                             z_spectral,
                             num_diss_params.electron.moment_dissipation_coefficient, ir)
                     else
@@ -505,12 +504,14 @@ function update_electron_pdf_with_time_advance!(scratch, pdf, moments,
         # the copies of the element boundary points at sub-domain or periodic boundaries).
         # Now fill in the duplicate points.
         halo_swap!(r, z, pdf, moments.electron.ppar, moments.electron.qpar, moments_p,
-                   moments.electron.upar, moments.electron.vth, moments.electron.temp)
+                   moments.electron.n_upar, moments.electron.upar, moments.electron.vth,
+                   moments.electron.temp)
     else
         # The anyzv loop over r above skips points in r that are duplicated (i.e. one of
         # the copies of the element boundary points at sub-domain or periodic boundaries).
         # Now fill in the duplicate points.
-        halo_swap!(r, z, pdf, moments.electron.ppar, moments.electron.qpar)
+        halo_swap!(r, z, pdf, moments.electron.ppar, moments.electron.qpar,
+                   moments.electron.n_upar, moments.electron.upar)
     end
     if !all(all_electron_pdf_converged)
         success = "kinetic-electrons"
@@ -548,14 +549,14 @@ function electron_backward_euler_pseudotimestepping!(scratch, pdf, moments,
     end
     calculate_electron_moments!((density=moments.ion.dens, upar=moments.ion.upar,
                                  electron_density=moments.electron.dens,
-                                 electron_upar=moments.electron.upar,
+                                 electron_n_upar=moments.electron.n_upar,
                                  electron_p=moments.electron.p,
                                  pdf_electron=scratch[t_params.n_rk_stages+1].pdf_electron),
                                 nothing, moments, composition, collisions, r, z, vperp,
                                 vpa)
     calculate_electron_moment_derivatives!(moments,
                                            (electron_density=moments.electron.dens,
-                                            electron_upar=moments.electron.upar,
+                                            electron_n_upar=moments.electron.n_upar,
                                             electron_p=moments.electron.p),
                                            scratch_dummy, z, z_spectral,
                                            num_diss_params.electron.moment_dissipation_coefficient,
@@ -581,14 +582,14 @@ function electron_backward_euler_pseudotimestepping!(scratch, pdf, moments,
 
         calculate_electron_moments!((density=moments.ion.dens, upar=moments.ion.upar,
                                      electron_density=moments.electron.dens,
-                                     electron_upar=moments.electron.upar,
+                                     electron_n_upar=moments.electron.n_upar,
                                      electron_p=p_guess,
                                      pdf_electron=scratch[t_params.n_rk_stages+1].pdf_electron),
                                     nothing, moments, composition, collisions, r, z,
                                     vperp, vpa)
         calculate_electron_moment_derivatives!(moments,
                                                (electron_density=moments.electron.dens,
-                                                electron_upar=moments.electron.upar,
+                                                electron_n_upar=moments.electron.n_upar,
                                                 electron_p=p_guess),
                                                scratch_dummy, z, z_spectral,
                                                num_diss_params.electron.moment_dissipation_coefficient,
@@ -1435,7 +1436,7 @@ end
 
 function get_electron_lu_preconditioner(nl_solver_params, f_electron_new, electron_p_new,
                                         buffer_1, buffer_2, buffer_3, buffer_4,
-                                        electron_density, electron_upar, this_phi,
+                                        electron_density, electron_n_upar, this_phi,
                                         moments, collisions, composition, z, vperp, vpa,
                                         z_spectral, vperp_spectral, vpa_spectral,
                                         z_advect, vperp_advect, vpa_advect, scratch_dummy,
@@ -1469,7 +1470,7 @@ end
     buffer_3
     buffer_4
     electron_density
-    electron_upar
+    electron_n_upar
     this_phi
     moments
     collisions
@@ -1502,7 +1503,7 @@ function (recalc_adi::kinetic_electron_recalculate_adi!)()
     buffer_3 = recalc_adi.buffer_3
     buffer_4 = recalc_adi.buffer_4
     electron_density = recalc_adi.electron_density
-    electron_upar = recalc_adi.electron_upar
+    electron_n_upar = recalc_adi.electron_n_upar
     this_phi = recalc_adi.this_phi
     moments = recalc_adi.moments
     collisions = recalc_adi.collisions
@@ -1551,7 +1552,7 @@ global_rank[] == 0 && println("recalculating precon")
     vperp_speed = @view vperp_advect[:,:,:,ir]
 
     dpdf_dz = @view scratch_dummy.buffer_vpavperpzr_1[:,:,:,ir]
-    update_electron_speed_z!(z_speed, electron_upar, vth, vpa.grid)
+    @views update_electron_speed_z!(z_speed, moments.electron.upar[:,ir], vth, vpa.grid)
     @begin_anyzv_vperp_vpa_region()
     #calculate the upwind derivative
     @views derivative_z_pdf_vpavperpz!(dpdf_dz, f_electron_new, z_speed,
@@ -1564,9 +1565,10 @@ global_rank[] == 0 && println("recalculating precon")
                                        z_spectral, z)
 
     dpdf_dvpa = @view scratch_dummy.buffer_vpavperpzr_2[:,:,:,ir]
-    update_electron_speed_vpa!(vpa_advect, electron_density, electron_upar,
-                               electron_p_new, moments, composition.me_over_mi,
-                               vpa.grid, external_source_settings.electron, ir)
+    @views update_electron_speed_vpa!(vpa_advect, electron_density,
+                                      moments.electron.upar[:,ir], electron_p_new,
+                                      moments, composition.me_over_mi, vpa.grid,
+                                      external_source_settings.electron, ir)
     @begin_anyzv_z_vperp_region()
     #calculate the upwind derivative of the electron pdf w.r.t. wpa
     @loop_z_vperp iz ivperp begin
@@ -1969,7 +1971,7 @@ end
 
 function get_electron_adi_preconditioner(nl_solver_params, f_electron_new, electron_p_new,
                                          buffer_1, buffer_2, buffer_3, buffer_4,
-                                         electron_density, electron_upar, this_phi,
+                                         electron_density, electron_n_upar, this_phi,
                                          moments, collisions, composition, z, vperp, vpa,
                                          z_spectral, vperp_spectral, vpa_spectral,
                                          z_advect, vperp_advect, vpa_advect,
@@ -1979,7 +1981,7 @@ function get_electron_adi_preconditioner(nl_solver_params, f_electron_new, elect
     recalculate_adi_preconditioner! = kinetic_electron_recalculate_adi!(
                                           nl_solver_params, f_electron_new,
                                           electron_p_new, buffer_1, buffer_2, buffer_3,
-                                          buffer_4, electron_density, electron_upar,
+                                          buffer_4, electron_density, electron_n_upar,
                                           this_phi, moments, collisions, composition, z,
                                           vperp, vpa, z_spectral, vperp_spectral,
                                           vpa_spectral, z_advect, vperp_advect,
@@ -1999,7 +2001,7 @@ end
 
 function get_electron_preconditioner(nl_solver_params, f_electron_new, electron_p_new,
                                      buffer_1, buffer_2, buffer_3, buffer_4,
-                                     electron_density, electron_upar, this_phi, moments,
+                                     electron_density, electron_n_upar, this_phi, moments,
                                      collisions, composition, z, vperp, vpa, z_spectral,
                                      vperp_spectral, vpa_spectral, z_advect, vperp_advect,
                                      vpa_advect, scratch_dummy, external_source_settings,
@@ -2012,7 +2014,7 @@ function get_electron_preconditioner(nl_solver_params, f_electron_new, electron_
         return get_electron_lu_preconditioner(nl_solver_params, f_electron_new,
                                               electron_p_new, buffer_1, buffer_2,
                                               buffer_3, buffer_4, electron_density,
-                                              electron_upar, this_phi, moments,
+                                              electron_n_upar, this_phi, moments,
                                               collisions, composition, z, vperp, vpa,
                                               z_spectral, vperp_spectral, vpa_spectral,
                                               z_advect, vperp_advect, vpa_advect,
@@ -2023,7 +2025,7 @@ function get_electron_preconditioner(nl_solver_params, f_electron_new, electron_
         return get_electron_adi_preconditioner(nl_solver_params, f_electron_new,
                                                electron_p_new, buffer_1, buffer_2,
                                                buffer_3, buffer_4, electron_density,
-                                               electron_upar, this_phi, moments,
+                                               electron_n_upar, this_phi, moments,
                                                collisions, composition, z, vperp, vpa,
                                                z_spectral, vperp_spectral, vpa_spectral,
                                                z_advect, vperp_advect, vpa_advect,
@@ -2056,7 +2058,7 @@ end
     scratch_dummy
     this_phi
     electron_density
-    electron_upar
+    electron_n_upar
     ion_density
     ion_upar
     r
@@ -2086,7 +2088,7 @@ function (res::kinetic_electron_residual!)(this_residual, new_variables; krylov=
     scratch_dummy = res.scratch_dummy
     this_phi = res.this_phi
     electron_density = res.electron_density
-    electron_upar = res.electron_upar
+    electron_n_upar = res.electron_n_upar
     ion_density = res.ion_density
     ion_upar = res.ion_upar
     r = res.r
@@ -2118,19 +2120,19 @@ function (res::kinetic_electron_residual!)(this_residual, new_variables; krylov=
 
     # enforce the boundary condition(s) on the electron pdf
     @views enforce_boundary_condition_on_electron_pdf!(
-               f_electron_newvar, this_phi, moments.electron.vth[:,ir], electron_upar,
-               z, vperp, vpa, vperp_spectral, vpa_spectral, vpa_advect, moments,
-               num_diss_params.electron.vpa_dissipation_coefficient > 0.0,
-               composition.me_over_mi, ir; bc_constraints=false, update_vcut=!krylov)
+               f_electron_newvar, this_phi, moments.electron.vth[:,ir],
+               moments.electron.upar[:,ir], z, vperp, vpa, vperp_spectral, vpa_spectral,
+               vpa_advect, moments, num_diss_params.electron.vpa_dissipation_coefficient >
+               0.0, composition.me_over_mi, ir; bc_constraints=false, update_vcut=!krylov)
 
     # Calculate derived moments and derivatives using new_variables
     calculate_electron_moments_no_r!(f_electron_newvar, electron_density,
-                                     electron_upar, electron_p_newvar, ion_density,
-                                     ion_upar, moments, composition, collisions, r, z,
+                                     electron_n_upar, electron_p_newvar, ion_density,
+                                     ion_n_upar, moments, composition, collisions, r, z,
                                      vperp, vpa, ir)
     calculate_electron_moment_derivatives_no_r!(
-        moments, electron_density, electron_upar, electron_p_newvar, scratch_dummy, z,
-        z_spectral, num_diss_params.electron.moment_dissipation_coefficient, ir)
+        moments, electron_density, electron_p_newvar, scratch_dummy, z, z_spectral,
+        num_diss_params.electron.moment_dissipation_coefficient, ir)
 
     if steady_state_f === Val(false)
         if evolve_p
@@ -2260,29 +2262,29 @@ pressure \$p_{e∥}\$.
 
     if isa(old_scratch, scratch_electron_pdf)
         electron_density = @view moments.electron.dens[:,ir]
-        electron_upar = @view moments.electron.upar[:,ir]
+        electron_n_upar = @view moments.electron.n_upar[:,ir]
         ion_density = @view moments.ion.dens[:,ir,:]
         ion_upar = @view moments.ion.upar[:,ir,:]
     else
         electron_density = @view old_scratch.electron_density[:,ir]
-        electron_upar = @view old_scratch.electron_upar[:,ir]
+        electron_n_upar = @view old_scratch.electron_n_upar[:,ir]
         ion_density = @view old_scratch.density[:,ir,:]
         ion_upar = @view old_scratch.upar[:,ir,:]
     end
 
     # Calculate derived moments and derivatives using updated f_electron
     @views calculate_electron_moments_no_r!(f_electron_new, electron_density,
-                                            electron_upar, electron_p_new, ion_density,
-                                            ion_upar, moments, composition, collisions, r,
-                                            z, vperp, vpa, ir)
+                                            electron_p_new, ion_density, ion_upar,
+                                            moments, composition, collisions, r, z, vperp,
+                                            vpa, ir)
     @views calculate_electron_moment_derivatives_no_r!(
-               moments, electron_density, electron_upar, electron_p_new, scratch_dummy, z,
-               z_spectral, num_diss_params.electron.moment_dissipation_coefficient, ir)
+               moments, electron_density, electron_p_new, scratch_dummy, z, z_spectral,
+               num_diss_params.electron.moment_dissipation_coefficient, ir)
 
     left_preconditioner, right_preconditioner, recalculate_preconditioner! =
         get_electron_preconditioner(nl_solver_params, f_electron_new, electron_p_new,
                                     buffer_1, buffer_2, buffer_3, buffer_4,
-                                    electron_density, electron_upar, this_phi, moments,
+                                    electron_density, electron_n_upar, this_phi, moments,
                                     collisions, composition, z, vperp, vpa, z_spectral,
                                     vperp_spectral, vpa_spectral, z_advect, vperp_advect,
                                     vpa_advect, scratch_dummy, external_source_settings,
@@ -2306,7 +2308,7 @@ pressure \$p_{e∥}\$.
                                                 evolve_p, moments, composition,
                                                 collisions, external_source_settings,
                                                 t_params, ion_dt, scratch_dummy, this_phi,
-                                                electron_density, electron_upar,
+                                                electron_density, electron_n_upar,
                                                 ion_density, ion_upar, r, z, vperp, vpa,
                                                 z_spectral, vperp_spectral, vpa_spectral,
                                                 z_advect, vpa_advect, num_diss_params, ir)
@@ -2336,13 +2338,6 @@ end
 Do an implicit solve which finds: the steady-state electron shape function \$g_e\$; the
 backward-Euler advanced electron pressure which is updated using \$g_e\$ at the new
 time-level.
-
-The r-dimension is not parallelised. For 1D runs this makes no difference. In 2D it might
-or might not be necessary. If r-dimension parallelisation is needed, it would need some
-work. The simplest option would be a non-parallelised outer loop over r, with each
-nonlinear solve being parallelised over {z,vperp,vpa}. More efficient might be to add an
-equivalent to the 'anysv' parallelisation used for the collision operator (e.g. 'anyzv'?)
-to allow the outer r-loop to be parallelised.
 """
 @timeit global_timer implicit_electron_advance!(
                          fvec_out, fvec_in, pdf, scratch_electron, moments, fields,
@@ -2351,6 +2346,8 @@ to allow the outer r-loop to be parallelised.
                          vpa::coordinate, r_spectral, z_spectral, vperp_spectral,
                          vpa_spectral, z_advect, vpa_advect, gyroavs, scratch_dummy,
                          t_params, ion_dt, nl_solver_params) = begin
+    error("implicit_electron_advance! has not been consistently updated, and needs some "
+          * "work before being tested again...")
 
     electron_p_out = fvec_out.electron_p
     # Store the solved-for pdf in n_rk_stages+1, because this was the version that gets
@@ -2373,11 +2370,12 @@ to allow the outer r-loop to be parallelised.
                                            num_diss_params.electron.moment_dissipation_coefficient,
                                            composition.electron_physics)
     electron_energy_equation!(electron_p_out, fvec_in.density, fvec_in.electron_p,
-                              fvec_in.density, fvec_in.electron_upar, fvec_in.density,
-                              fvec_in.upar, fvec_in.p, fvec_in.density_neutral,
-                              fvec_in.uz_neutral, fvec_in.pz_neutral, moments.electron,
-                              collisions, ion_dt, composition,
-                              external_source_settings.electron, num_diss_params, r, z)
+                              fvec_in.density, moments.electron.electron_upar,
+                              fvec_in.density, fvec_in.upar, fvec_in.p,
+                              fvec_in.density_neutral, fvec_in.uz_neutral,
+                              fvec_in.pz_neutral, moments.electron, collisions, ion_dt,
+                              composition, external_source_settings.electron,
+                              num_diss_params, r, z)
 
     newton_success = false
     @begin_r_anyzv_region()
@@ -2424,7 +2422,7 @@ to allow the outer r-loop to be parallelised.
                                                     collisions, external_source_settings,
                                                     t_params, ion_dt, scratch_dummy,
                                                     this_phi, electron_density,
-                                                    electron_upar, ion_density, ion_upar,
+                                                    electron_n_upar, ion_density, ion_upar,
                                                     r, z, vperp, vpa, z_spectral,
                                                     vperp_spectral, vpa_spectral,
                                                     z_advect, vpa_advect, num_diss_params,
@@ -2471,7 +2469,7 @@ to allow the outer r-loop to be parallelised.
     # kinetic electrons.
     calculate_electron_parallel_friction_force!(
         moments.electron.parallel_friction, fvec_out.electron_density,
-        fvec_out.electron_n_upar, fvec_out.n_upar, moments.electron.dT_dz,
+        moments.electron.upar, moments.ion.upar, moments.electron.dT_dz,
         composition.me_over_mi, collisions.electron_fluid.nu_ei,
         composition.electron_physics)
 
