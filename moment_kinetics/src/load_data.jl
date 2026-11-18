@@ -67,11 +67,12 @@ const timestep_diagnostic_variables = ("time_for_run", "step_counter", "dt",
                                        "electron_failure_caused_by_per_output",
                                        "electron_average_successful_dt")
 const em_variables = ("phi", "Er", "Ez", "vEr", "vEz")
-const ion_moment_variables = ("density", "parallel_flow", "pressure", "parallel_pressure",
-                              "perpendicular_pressure", "thermal_speed", "temperature",
-                              "parallel_temperature", "perpendicular_temperature",
-                              "parallel_heat_flux", "collision_frequency_ii", "sound_speed",
-                              "mach_number", "total_energy", "total_energy_flux")
+const ion_moment_variables = ("density", "parallel_particle_flux", "parallel_flow",
+                              "pressure", "parallel_pressure", "perpendicular_pressure",
+                              "thermal_speed", "temperature", "parallel_temperature",
+                              "perpendicular_temperature", "parallel_heat_flux",
+                              "collision_frequency_ii", "sound_speed", "mach_number",
+                              "total_energy", "total_energy_flux")
 const ion_moment_gradient_variables = ("ddens_dr", "ddens_dr_upwind", "ddens_dz",
                                        "ddens_dz_upwind", "dupar_dr", "dupar_dr_upwind",
                                        "dupar_dz", "dupar_dz_upwind", "dp_dr_upwind",
@@ -79,17 +80,17 @@ const ion_moment_gradient_variables = ("ddens_dr", "ddens_dr_upwind", "ddens_dz"
                                        "dppar_dz_upwind", "dvth_dr", "dvth_dz", "dT_dz",
                                        "dqpar_dz")
 const ion_moment_ddt_variables = ("ddens_dt", "dnupar_dt", "dupar_dt", "dp_dt", "dvth_dt")
-const electron_moment_variables = ("electron_density", "electron_parallel_flow",
-                                   "electron_pressure", "electron_parallel_pressure",
-                                   "electron_thermal_speed", "electron_temperature",
-                                   "electron_parallel_heat_flux",
+const electron_moment_variables = ("electron_density", "electron_parallel_particle_flux",
+                                   "electron_parallel_flow", "electron_pressure",
+                                   "electron_parallel_pressure", "electron_thermal_speed",
+                                   "electron_temperature", "electron_parallel_heat_flux",
                                    "collision_frequency_ee", "collision_frequency_ei")
 const electron_moment_ddt_variables = ("electron_dp_dt", "electron_dvth_dt")
 const electron_moment_gradient_variables = ("electron_ddens_dz", "electron_dupar_dz",
                                             "electron_dp_dz", "electron_dvth_dz",
                                             "electron_dT_dz", "electron_dqpar_dz")
-const neutral_moment_variables = ("density_neutral", "uz_neutral", "p_neutral",
-                                  "pz_neutral", "thermal_speed_neutral",
+const neutral_moment_variables = ("density_neutral", "n_uz_neutral", "uz_neutral",
+                                  "p_neutral", "pz_neutral", "thermal_speed_neutral",
                                   "temperature_neutral", "qz_neutral",
                                   "total_energy_neutral", "total_energy_flux_neutral")
 const neutral_moment_gradient_variables = ("neutral_ddens_dz", "neutral_ddens_dz_upwind",
@@ -445,7 +446,7 @@ function load_mk_options(fid)
     overview = get_group(fid, "overview")
 
     evolve_density = load_variable(overview, "evolve_density")
-    evolve_upar = load_variable(overview, "evolve_upar")
+    evolve_n_upar = load_variable(overview, "evolve_n_upar")
     if "evolve_p" ∈ keys(overview)
         evolve_p = load_variable(overview, "evolve_p")
     else
@@ -453,7 +454,7 @@ function load_mk_options(fid)
         evolve_p = load_variable(overview, "evolve_ppar")
     end
 
-    return evolve_density, evolve_upar, evolve_p
+    return evolve_density, evolve_n_upar, evolve_p
 end
 
 """
@@ -719,7 +720,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
             if time_index < 0
                 time_index, _, _ = load_time_data(fid)
             end
-            restart_evolve_density, restart_evolve_upar, restart_evolve_p =
+            restart_evolve_density, restart_evolve_n_upar, restart_evolve_p =
                 load_mk_options(fid)
 
             restart_input = load_input(fid)
@@ -761,9 +762,10 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
             moments.ion.dens .= reload_moment("density", dynamic, time_index, coords,
                                               reload_ranges, restart_coords,
                                               interpolation_needed)
-            moments.ion.upar .= reload_moment("parallel_flow", dynamic, time_index, coords,
-                                              reload_ranges, restart_coords,
-                                              interpolation_needed)
+            moments.ion.n_upar .= reload_moment("parallel_particle_flux", dynamic,
+                                                time_index, coords, reload_ranges,
+                                                restart_coords, interpolation_needed)
+            moments.ion.upar .= moments.ion.n_upar ./ moments.ion.dens
             moments.ion.p .= reload_moment("pressure", dynamic, time_index, coords,
                                            reload_ranges, restart_coords,
                                            interpolation_needed)
@@ -783,7 +785,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
             moments.ion.dSdt .= reload_moment("entropy_production", dynamic, time_index,
                                               coords, reload_ranges, restart_coords,
                                               interpolation_needed)
-            if moments.evolve_density || moments.evolve_upar || moments.evolve_p
+            if moments.evolve_density || moments.evolve_n_upar || moments.evolve_p
                 if "ion_constraints_A_coefficient" ∈ keys(dynamic)
                     moments.ion.constraints_A_coefficient .=
                         reload_moment("ion_constraints_A_coefficient", dynamic,
@@ -836,16 +838,18 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
             pdf.ion.norm .= reload_ion_pdf(dynamic, time_index, moments, coords,
                                            reload_ranges, restart_coords,
                                            interpolation_needed, restart_evolve_density,
-                                           restart_evolve_upar, restart_evolve_p)
+                                           restart_evolve_n_upar, restart_evolve_p)
 
             moments.electron.dens .= reload_electron_moment("electron_density", dynamic,
                                                             time_index, coords,
                                                             reload_ranges, restart_coords,
                                                             interpolation_needed)
-            moments.electron.upar .= reload_electron_moment("electron_parallel_flow",
-                                                            dynamic, time_index, coords,
-                                                            reload_ranges, restart_coords,
-                                                            interpolation_needed)
+            moments.electron.n_upar .= reload_electron_moment("electron_parallel_particle_flux",
+                                                              dynamic, time_index, coords,
+                                                              reload_ranges,
+                                                              restart_coords,
+                                                              interpolation_needed)
+            moments.electron.upar .= moments.electron.n_upar ./ moments.electron.dens
             moments.electron.p .= reload_electron_moment("electron_pressure",
                                                          dynamic, time_index, coords,
                                                          reload_ranges, restart_coords,
@@ -888,9 +892,9 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
             end
 
             # For now, electrons are always fully moment_kinetic
-            restart_electron_evolve_density, restart_electron_evolve_upar,
+            restart_electron_evolve_density, restart_electron_evolve_n_upar,
                 restart_electron_evolve_p = true, true, true
-            electron_evolve_density, electron_evolve_upar, electron_evolve_p =
+            electron_evolve_density, electron_evolve_n_upar, electron_evolve_p =
                 true, true, true
             # Input is written to output files with all defaults filled in, and
             # restart_input is read from a previous output file.
@@ -906,7 +910,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                     reload_electron_pdf(dynamic, time_index, moments, coords,
                                         reload_ranges, restart_coords,
                                         interpolation_needed, restart_evolve_density,
-                                        restart_evolve_upar, restart_evolve_p)
+                                        restart_evolve_n_upar, restart_evolve_p)
             elseif pdf.electron !== nothing
                 # The electron distribution function will be initialized later
                 pdf.electron.norm .= 0.0
@@ -933,9 +937,11 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                                                       time_index, coords, reload_ranges,
                                                       restart_coords,
                                                       interpolation_needed)
-                moments.neutral.uz .= reload_moment("uz_neutral", dynamic, time_index,
-                                                    coords, reload_ranges, restart_coords,
-                                                    interpolation_needed)
+                moments.neutral.n_uz .= reload_moment("n_uz_neutral", dynamic, time_index,
+                                                      coords, reload_ranges,
+                                                      restart_coords,
+                                                      interpolation_needed)
+                moments.neutral.uz .= moments.neutral.n_uz ./ moments.neutral.dens
                 moments.neutral.p .= reload_moment("p_neutral", dynamic, time_index,
                                                    coords, reload_ranges, restart_coords,
                                                    interpolation_needed)
@@ -948,7 +954,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                 moments.neutral.vth .= reload_moment("thermal_speed_neutral", dynamic,
                                                      time_index, coords, reload_ranges,
                                                      restart_coords, interpolation_needed)
-                if moments.evolve_density || moments.evolve_upar || moments.evolve_p
+                if moments.evolve_density || moments.evolve_n_upar || moments.evolve_p
                     if "neutral_constraints_A_coefficient" ∈ keys(dynamic)
                         moments.neutral.constraints_A_coefficient .=
                             reload_moment("neutral_constraints_A_coefficient", dynamic,
@@ -992,7 +998,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
                     reload_neutral_pdf(dynamic, time_index, moments, coords,
                                        reload_ranges, restart_coords,
                                        interpolation_needed, restart_evolve_density,
-                                       restart_evolve_upar, restart_evolve_p)
+                                       restart_evolve_n_upar, restart_evolve_p)
 
                 if (vzeta.n > 1 || vr.n > 1) && (restart_coords.vzeta.n == 1 || restart_coords.vr.n == 1)
                     # In the new 3V run, we set T_⟂=T_∥, so the new vth is sqrt(3) times
@@ -1081,12 +1087,12 @@ function reload_electron_data!(pdf, moments, phi, t_params, restart_prefix_ibloc
             if time_index < 0
                 time_index, _, _ = load_time_data(fid)
             end
-            #restart_evolve_density, restart_evolve_upar, restart_evolve_p =
+            #restart_evolve_density, restart_evolve_n_upar, restart_evolve_p =
             #    load_mk_options(fid)
             # For now, electrons are always fully moment_kinetic
-            restart_evolve_density, restart_evolve_upar, restart_evolve_p = true, true,
-                                                                               true
-            evolve_density, evolve_upar, evolve_p = true, true, true
+            restart_evolve_density, restart_evolve_n_upar, restart_evolve_p = true, true,
+                                                                              true
+            evolve_density, evolve_n_upar, evolve_p = true, true, true
 
             previous_runs_info = load_run_info_history(fid)
 
@@ -1128,7 +1134,7 @@ function reload_electron_data!(pdf, moments, phi, t_params, restart_prefix_ibloc
             pdf.electron.norm .=
                 reload_electron_pdf(dynamic, time_index, moments, coords, reload_ranges,
                                     restart_coords, interpolation_needed,
-                                    restart_evolve_density, restart_evolve_upar,
+                                    restart_evolve_density, restart_evolve_n_upar,
                                     restart_evolve_p)
 
             moments.electron.constraints_A_coefficient .=
@@ -1396,18 +1402,18 @@ end
 
 function reload_ion_pdf(dynamic, time_index, moments, coords, reload_ranges,
                         restart_coords, interpolation_needed, restart_evolve_density,
-                        restart_evolve_upar, restart_evolve_p)
+                        restart_evolve_n_upar, restart_evolve_p)
 
     this_pdf = load_slice(dynamic, "f", reload_ranges.vpa_range,
                           reload_ranges.vperp_range, reload_ranges.z_range,
                           reload_ranges.r_range, :, time_index)
 
     return regrid_ion_pdf(this_pdf, coords, restart_coords, interpolation_needed, moments,
-                          restart_evolve_density, restart_evolve_upar, restart_evolve_p)
+                          restart_evolve_density, restart_evolve_n_upar, restart_evolve_p)
 end
 
 function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, moments,
-                        old_evolve_density, old_evolve_upar, old_evolve_p)
+                        old_evolve_density, old_evolve_n_upar, old_evolve_p)
     z = new_coords.z
     r = new_coords.r
     vperp = new_coords.vperp
@@ -1510,15 +1516,15 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
             # should be handled above.
             error("Unsupported combination of moment-kinetic options:"
                   * " evolve_density=", moments.evolve_density
-                  * " evolve_upar=", moments.evolve_upar
+                  * " evolve_n_upar=", moments.evolve_n_upar
                   * " evolve_p=", moments.evolve_p
                   * " old_evolve_density=", old_evolve_density
-                  * " old_evolve_upar=", old_evolve_upar
+                  * " old_evolve_n_upar=", old_evolve_n_upar
                   * " old_evolve_p=", old_evolve_p)
         end
     end
 
-    if (moments.evolve_upar == old_evolve_upar && moments.evolve_p == old_evolve_p)
+    if (moments.evolve_n_upar == old_evolve_n_upar && moments.evolve_p == old_evolve_p)
         # No chages to velocity-space coordinates, so just interpolate from
         # one grid to the other
         if interpolation_needed["vpa"] || (moments.evolve_p && (interp_1V_to_2V || interp_2V_to_1V))
@@ -1543,7 +1549,7 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
             end
             this_pdf = new_pdf
         end
-    elseif (!moments.evolve_upar && !moments.evolve_p && old_evolve_upar && !old_evolve_p)
+    elseif (!moments.evolve_n_upar && !moments.evolve_p && old_evolve_n_upar && !old_evolve_p)
         # vpa = new_wpa = old_wpa + upar
         # => old_wpa = new_wpa - upar
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n, nspecies)
@@ -1554,7 +1560,7 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
                        this_pdf[:,ivperp,iz,ir,is], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && !moments.evolve_p && !old_evolve_upar && old_evolve_p)
+    elseif (!moments.evolve_n_upar && !moments.evolve_p && !old_evolve_n_upar && old_evolve_p)
         # vpa = new_wpa = old_wpa*vth
         # => old_wpa = new_wpa/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n, nspecies)
@@ -1565,7 +1571,7 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
                        this_pdf[:,ivperp,iz,ir,is], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && !moments.evolve_p && old_evolve_upar && old_evolve_p)
+    elseif (!moments.evolve_n_upar && !moments.evolve_p && old_evolve_n_upar && old_evolve_p)
         # vpa = new_wpa = old_wpa*vth + upar
         # => old_wpa = (new_wpa - upar)/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n, nspecies)
@@ -1577,7 +1583,7 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
                        this_pdf[:,ivperp,iz,ir,is], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && !moments.evolve_p && !old_evolve_upar && !old_evolve_p)
+    elseif (moments.evolve_n_upar && !moments.evolve_p && !old_evolve_n_upar && !old_evolve_p)
         # vpa = new_wpa + upar = old_wpa
         # => old_wpa = new_wpa + upar
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n, nspecies)
@@ -1588,7 +1594,7 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
                        this_pdf[:,ivperp,iz,ir,is], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && !moments.evolve_p && !old_evolve_upar && old_evolve_p)
+    elseif (moments.evolve_n_upar && !moments.evolve_p && !old_evolve_n_upar && old_evolve_p)
         # vpa = new_wpa + upar = old_wpa*vth
         # => old_wpa = (new_wpa + upar)/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n, nspecies)
@@ -1600,7 +1606,7 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
                        this_pdf[:,ivperp,iz,ir,is], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && !moments.evolve_p && old_evolve_upar && old_evolve_p)
+    elseif (moments.evolve_n_upar && !moments.evolve_p && old_evolve_n_upar && old_evolve_p)
         # vpa = new_wpa + upar = old_wpa*vth + upar
         # => old_wpa = new_wpa/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n, nspecies)
@@ -1611,7 +1617,7 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
                        this_pdf[:,ivperp,iz,ir,is], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && moments.evolve_p && !old_evolve_upar && !old_evolve_p)
+    elseif (!moments.evolve_n_upar && moments.evolve_p && !old_evolve_n_upar && !old_evolve_p)
         # vpa = new_wpa*vth = old_wpa
         # => old_wpa = new_wpa*vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n, nspecies)
@@ -1633,7 +1639,7 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
                        this_pdf[:,ivperp,iz,ir,is], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && moments.evolve_p && old_evolve_upar && !old_evolve_p)
+    elseif (!moments.evolve_n_upar && moments.evolve_p && old_evolve_n_upar && !old_evolve_p)
         # vpa = new_wpa*vth = old_wpa + upar
         # => old_wpa = new_wpa*vth - upar/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n, nspecies)
@@ -1655,7 +1661,7 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
                        this_pdf[:,ivperp,iz,ir,is], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && moments.evolve_p && old_evolve_upar && old_evolve_p)
+    elseif (!moments.evolve_n_upar && moments.evolve_p && old_evolve_n_upar && old_evolve_p)
         # vpa = new_wpa*vth = old_wpa*vth + upar
         # => old_wpa = new_wpa - upar/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n, nspecies)
@@ -1680,7 +1686,7 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
                        this_pdf[:,ivperp,iz,ir,is], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && moments.evolve_p && !old_evolve_upar && !old_evolve_p)
+    elseif (moments.evolve_n_upar && moments.evolve_p && !old_evolve_n_upar && !old_evolve_p)
         # vpa = new_wpa*vth + upar = old_wpa
         # => old_wpa = new_wpa*vth + upar
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n, nspecies)
@@ -1702,7 +1708,7 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
                        this_pdf[:,ivperp,iz,ir,is], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && moments.evolve_p && old_evolve_upar && !old_evolve_p)
+    elseif (moments.evolve_n_upar && moments.evolve_p && old_evolve_n_upar && !old_evolve_p)
         # vpa = new_wpa*vth + upar = old_wpa + upar
         # => old_wpa = new_wpa*vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n, nspecies)
@@ -1724,7 +1730,7 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
                        this_pdf[:,ivperp,iz,ir,is], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && moments.evolve_p && !old_evolve_upar && old_evolve_p)
+    elseif (moments.evolve_n_upar && moments.evolve_p && !old_evolve_n_upar && old_evolve_p)
         # vpa = new_wpa*vth + upar = old_wpa*vth
         # => old_wpa = new_wpa + upar/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n, nspecies)
@@ -1754,10 +1760,10 @@ function regrid_ion_pdf(this_pdf, new_coords, old_coords, interpolation_needed, 
         # should be handled above.
         error("Unsupported combination of moment-kinetic options:"
               * " evolve_density=$(moments.evolve_density)"
-              * " evolve_upar=$(moments.evolve_upar)"
+              * " evolve_n_upar=$(moments.evolve_n_upar)"
               * " evolve_p=$(moments.evolve_p)"
               * " old_evolve_density=$(old_evolve_density)"
-              * " old_evolve_upar=$(old_evolve_upar)"
+              * " old_evolve_n_upar=$(old_evolve_n_upar)"
               * " old_evolve_p=$(old_evolve_p)")
     end
     if moments.evolve_density && !old_evolve_density
@@ -1832,33 +1838,33 @@ end
 
 function reload_electron_pdf(dynamic, time_index, moments, coords, reload_ranges,
                              restart_coords, interpolation_needed, restart_evolve_density,
-                             restart_evolve_upar, restart_evolve_p)
+                             restart_evolve_n_upar, restart_evolve_p)
 
     this_pdf = load_slice(dynamic, "f_electron", reload_ranges.vpa_range,
                           reload_ranges.vperp_range, reload_ranges.z_range,
                           reload_ranges.r_range, time_index)
 
     return regrid_electron_pdf(this_pdf, coords, restart_coords, interpolation_needed,
-                               moments, restart_evolve_density, restart_evolve_upar,
+                               moments, restart_evolve_density, restart_evolve_n_upar,
                                restart_evolve_p)
 end
 
 function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_needed,
-                             moments, old_evolve_density, old_evolve_upar, old_evolve_p;
+                             moments, old_evolve_density, old_evolve_n_upar, old_evolve_p;
                              allow_unsupported_options=false)
     # allow_unsupported_options allows tests to check branches that are not currently
     # supported in the main code.
     if !allow_unsupported_options
         # Currently, electrons are always fully moment-kinetic
         evolve_density = true
-        evolve_upar = true
+        evolve_n_upar = true
         evolve_p = true
         old_evolve_density = true
-        old_evolve_upar = true
+        old_evolve_n_upar = true
         old_evolve_p = true
     else
         evolve_density = moments.evolve_density
-        evolve_upar = moments.evolve_density
+        evolve_n_upar = moments.evolve_density
         evolve_p = moments.evolve_density
     end
 
@@ -1964,15 +1970,15 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
             # should be handled above.
             error("Unsupported combination of moment-kinetic options:"
                   * " evolve_density=", moments.evolve_density
-                  * " evolve_upar=", moments.evolve_upar
+                  * " evolve_n_upar=", moments.evolve_n_upar
                   * " evolve_p=", moments.evolve_p
                   * " old_evolve_density=", old_evolve_density
-                  * " old_evolve_upar=", old_evolve_upar
+                  * " old_evolve_n_upar=", old_evolve_n_upar
                   * " old_evolve_p=", old_evolve_p)
         end
     end
 
-    if (moments.evolve_upar == old_evolve_upar && moments.evolve_p == old_evolve_p)
+    if (moments.evolve_n_upar == old_evolve_n_upar && moments.evolve_p == old_evolve_p)
         # No chages to velocity-space coordinates, so just interpolate from
         # one grid to the other
         if interpolation_needed["vpa"] || (moments.evolve_p && (interp_1V_to_2V || interp_2V_to_1V))
@@ -1997,7 +2003,7 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
             end
             this_pdf = new_pdf
         end
-    elseif (!moments.evolve_upar && !moments.evolve_p && old_evolve_upar && !old_evolve_p)
+    elseif (!moments.evolve_n_upar && !moments.evolve_p && old_evolve_n_upar && !old_evolve_p)
         # vpa = new_wpa = old_wpa + upar
         # => old_wpa = new_wpa - upar
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n)
@@ -2008,7 +2014,7 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
                        this_pdf[:,ivperp,iz,ir], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && !moments.evolve_p && !old_evolve_upar && old_evolve_p)
+    elseif (!moments.evolve_n_upar && !moments.evolve_p && !old_evolve_n_upar && old_evolve_p)
         # vpa = new_wpa = old_wpa*vth
         # => old_wpa = new_wpa/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n)
@@ -2019,7 +2025,7 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
                        this_pdf[:,ivperp,iz,ir], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && !moments.evolve_p && old_evolve_upar && old_evolve_p)
+    elseif (!moments.evolve_n_upar && !moments.evolve_p && old_evolve_n_upar && old_evolve_p)
         # vpa = new_wpa = old_wpa*vth + upar
         # => old_wpa = (new_wpa - upar)/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n)
@@ -2031,7 +2037,7 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
                        this_pdf[:,ivperp,iz,ir], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && !moments.evolve_p && !old_evolve_upar && !old_evolve_p)
+    elseif (moments.evolve_n_upar && !moments.evolve_p && !old_evolve_n_upar && !old_evolve_p)
         # vpa = new_wpa + upar = old_wpa
         # => old_wpa = new_wpa + upar
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n)
@@ -2042,7 +2048,7 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
                        this_pdf[:,ivperp,iz,ir], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && !moments.evolve_p && !old_evolve_upar && old_evolve_p)
+    elseif (moments.evolve_n_upar && !moments.evolve_p && !old_evolve_n_upar && old_evolve_p)
         # vpa = new_wpa + upar = old_wpa*vth
         # => old_wpa = (new_wpa + upar)/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n)
@@ -2054,7 +2060,7 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
                        this_pdf[:,ivperp,iz,ir], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && !moments.evolve_p && old_evolve_upar && old_evolve_p)
+    elseif (moments.evolve_n_upar && !moments.evolve_p && old_evolve_n_upar && old_evolve_p)
         # vpa = new_wpa + upar = old_wpa*vth + upar
         # => old_wpa = new_wpa/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n)
@@ -2065,7 +2071,7 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
                        this_pdf[:,ivperp,iz,ir], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && moments.evolve_p && !old_evolve_upar && !old_evolve_p)
+    elseif (!moments.evolve_n_upar && moments.evolve_p && !old_evolve_n_upar && !old_evolve_p)
         # vpa = new_wpa*vth = old_wpa
         # => old_wpa = new_wpa*vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n)
@@ -2087,7 +2093,7 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
                        this_pdf[:,ivperp,iz,ir], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && moments.evolve_p && old_evolve_upar && !old_evolve_p)
+    elseif (!moments.evolve_n_upar && moments.evolve_p && old_evolve_n_upar && !old_evolve_p)
         # vpa = new_wpa*vth = old_wpa + upar
         # => old_wpa = new_wpa*vth - upar/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n)
@@ -2109,7 +2115,7 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
                        this_pdf[:,ivperp,iz,ir], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && moments.evolve_p && old_evolve_upar && old_evolve_p)
+    elseif (!moments.evolve_n_upar && moments.evolve_p && old_evolve_n_upar && old_evolve_p)
         # vpa = new_wpa*vth = old_wpa*vth + upar
         # => old_wpa = new_wpa - upar/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n)
@@ -2134,7 +2140,7 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
                        this_pdf[:,ivperp,iz,ir], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && moments.evolve_p && !old_evolve_upar && !old_evolve_p)
+    elseif (moments.evolve_n_upar && moments.evolve_p && !old_evolve_n_upar && !old_evolve_p)
         # vpa = new_wpa*vth + upar = old_wpa
         # => old_wpa = new_wpa*vth + upar
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n)
@@ -2156,7 +2162,7 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
                        this_pdf[:,ivperp,iz,ir], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && moments.evolve_p && old_evolve_upar && !old_evolve_p)
+    elseif (moments.evolve_n_upar && moments.evolve_p && old_evolve_n_upar && !old_evolve_p)
         # vpa = new_wpa*vth + upar = old_wpa + upar
         # => old_wpa = new_wpa*vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n)
@@ -2178,7 +2184,7 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
                        this_pdf[:,ivperp,iz,ir], old_vpa, old_vpa_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && moments.evolve_p && !old_evolve_upar && old_evolve_p)
+    elseif (moments.evolve_n_upar && moments.evolve_p && !old_evolve_n_upar && old_evolve_p)
         # vpa = new_wpa*vth + upar = old_wpa*vth
         # => old_wpa = new_wpa + upar/vth
         new_pdf = allocate_float(vpa.n, vperp.n, z.n, r.n)
@@ -2208,10 +2214,10 @@ function regrid_electron_pdf(this_pdf, new_coords, old_coords, interpolation_nee
         # should be handled above.
         error("Unsupported combination of moment-kinetic options:"
               * " evolve_density=$(moments.evolve_density)"
-              * " evolve_upar=$(moments.evolve_upar)"
+              * " evolve_n_upar=$(moments.evolve_n_upar)"
               * " evolve_p=$(moments.evolve_p)"
               * " old_evolve_density=$(old_evolve_density)"
-              * " old_evolve_upar=$(old_evolve_upar)"
+              * " old_evolve_n_upar=$(old_evolve_n_upar)"
               * " old_evolve_p=$(old_evolve_p)")
     end
     if moments.evolve_density && !old_evolve_density
@@ -2286,17 +2292,17 @@ end
 
 function reload_neutral_pdf(dynamic, time_index, moments, coords, reload_ranges,
                             restart_coords, interpolation_needed, restart_evolve_density,
-                            restart_evolve_upar, restart_evolve_p)
+                            restart_evolve_n_upar, restart_evolve_p)
     this_pdf = load_slice(dynamic, "f_neutral", reload_ranges.vz_range,
                           reload_ranges.vr_range, reload_ranges.vzeta_range,
                           reload_ranges.z_range, reload_ranges.r_range, :, time_index)
     return regrid_neutral_pdf(this_pdf, coords, restart_coords, interpolation_needed,
-                              moments, restart_evolve_density, restart_evolve_upar,
+                              moments, restart_evolve_density, restart_evolve_n_upar,
                               restart_evolve_p)
 end
 
 function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_needed,
-                            moments, old_evolve_density, old_evolve_upar, old_evolve_p)
+                            moments, old_evolve_density, old_evolve_n_upar, old_evolve_p)
     z = new_coords.z
     r = new_coords.r
     vzeta = new_coords.vzeta
@@ -2405,10 +2411,10 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
             # should be handled above.
             error("Unsupported combination of moment-kinetic options:"
                   * " evolve_density=", moments.evolve_density
-                  * " evolve_upar=", moments.evolve_upar
+                  * " evolve_n_upar=", moments.evolve_n_upar
                   * " evolve_p=", moments.evolve_p
                   * " old_evolve_density=", old_evolve_density
-                  * " old_evolve_upar=", old_evolve_upar
+                  * " old_evolve_n_upar=", old_evolve_n_upar
                   * " old_evolve_p=", old_evolve_p)
         end
     end
@@ -2478,15 +2484,15 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
             # should be handled above.
             error("Unsupported combination of moment-kinetic options:"
                   * " evolve_density=", moments.evolve_density
-                  * " evolve_upar=", moments.evolve_upar
+                  * " evolve_n_upar=", moments.evolve_n_upar
                   * " evolve_p=", moments.evolve_p
                   * " old_evolve_density=", old_evolve_density
-                  * " old_evolve_upar=", old_evolve_upar
+                  * " old_evolve_n_upar=", old_evolve_n_upar
                   * " old_evolve_p=", old_evolve_p)
         end
     end
 
-    if (moments.evolve_upar == old_evolve_upar && moments.evolve_p == old_evolve_p)
+    if (moments.evolve_n_upar == old_evolve_n_upar && moments.evolve_p == old_evolve_p)
         # No chages to velocity-space coordinates, so just interpolate from
         # one grid to the other
         if interpolation_needed["vz"] || (moments.evolve_p && (interp_1V_to_3V || interp_3V_to_1V))
@@ -2511,7 +2517,7 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
             end
             this_pdf = new_pdf
         end
-    elseif (!moments.evolve_upar && !moments.evolve_p && old_evolve_upar && !old_evolve_p)
+    elseif (!moments.evolve_n_upar && !moments.evolve_p && old_evolve_n_upar && !old_evolve_p)
         # vz = new_wz = old_wz + uz
         # => old_wz = new_wz - uz
         new_pdf = allocate_float(vz.n, vr.n, vzeta.n, z.n, r.n, nspecies)
@@ -2522,7 +2528,7 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
                        this_pdf[:,ivr,ivzeta,iz,ir,is], old_vz, old_vz_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && !moments.evolve_p && !old_evolve_upar && old_evolve_p)
+    elseif (!moments.evolve_n_upar && !moments.evolve_p && !old_evolve_n_upar && old_evolve_p)
         # vz = new_wz = old_wz*vth
         # => old_wz = new_wz/vth
         new_pdf = allocate_float(vz.n, vr.n, vzeta.n, z.n, r.n, nspecies)
@@ -2533,7 +2539,7 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
                        this_pdf[:,ivr,ivzeta,iz,ir,is], old_vz, old_vz_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && !moments.evolve_p && old_evolve_upar && old_evolve_p)
+    elseif (!moments.evolve_n_upar && !moments.evolve_p && old_evolve_n_upar && old_evolve_p)
         # vz = new_wz = old_wz*vth + uz
         # => old_wz = (new_wz - uz)/vth
         new_pdf = allocate_float(vz.n, vr.n, vzeta.n, z.n, r.n, nspecies)
@@ -2545,7 +2551,7 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
                        this_pdf[:,ivr,ivzeta,iz,ir,is], old_vz, old_vz_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && !moments.evolve_p && !old_evolve_upar && !old_evolve_p)
+    elseif (moments.evolve_n_upar && !moments.evolve_p && !old_evolve_n_upar && !old_evolve_p)
         # vz = new_wz + uz = old_wz
         # => old_wz = new_wz + uz
         new_pdf = allocate_float(vz.n, vr.n, vzeta.n, z.n, r.n, nspecies)
@@ -2556,7 +2562,7 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
                        this_pdf[:,ivr,ivzeta,iz,ir,is], old_vz, old_vz_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && !moments.evolve_p && !old_evolve_upar && old_evolve_p)
+    elseif (moments.evolve_n_upar && !moments.evolve_p && !old_evolve_n_upar && old_evolve_p)
         # vz = new_wz + uz = old_wz*vth
         # => old_wz = (new_wz + uz)/vth
         new_pdf = allocate_float(vz.n, vr.n, vzeta.n, z.n, r.n, nspecies)
@@ -2568,7 +2574,7 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
                        this_pdf[:,ivr,ivzeta,iz,ir,is], old_vz, old_vz_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && !moments.evolve_p && old_evolve_upar && old_evolve_p)
+    elseif (moments.evolve_n_upar && !moments.evolve_p && old_evolve_n_upar && old_evolve_p)
         # vz = new_wz + uz = old_wz*vth + uz
         # => old_wz = new_wz/vth
         new_pdf = allocate_float(vz.n, vr.n, vzeta.n, z.n, r.n, nspecies)
@@ -2579,7 +2585,7 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
                        this_pdf[:,ivr,ivzeta,iz,ir,is], old_vz, old_vz_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && moments.evolve_p && !old_evolve_upar && !old_evolve_p)
+    elseif (!moments.evolve_n_upar && moments.evolve_p && !old_evolve_n_upar && !old_evolve_p)
         # vz = new_wz*vth = old_wz
         # => old_wz = new_wz*vth
         new_pdf = allocate_float(vz.n, vr.n, vzeta.n, z.n, r.n, nspecies)
@@ -2601,7 +2607,7 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
                        this_pdf[:,ivr,ivzeta,iz,ir,is], old_vz, old_vz_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && moments.evolve_p && old_evolve_upar && !old_evolve_p)
+    elseif (!moments.evolve_n_upar && moments.evolve_p && old_evolve_n_upar && !old_evolve_p)
         # vz = new_wz*vth = old_wz + uz
         # => old_wz = new_wz*vth - uz/vth
         new_pdf = allocate_float(vz.n, vr.n, vzeta.n, z.n, r.n, nspecies)
@@ -2623,7 +2629,7 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
                        this_pdf[:,ivr,ivzeta,iz,ir,is], old_vz, old_vz_spectral)
         end
         this_pdf = new_pdf
-    elseif (!moments.evolve_upar && moments.evolve_p && old_evolve_upar && old_evolve_p)
+    elseif (!moments.evolve_n_upar && moments.evolve_p && old_evolve_n_upar && old_evolve_p)
         # vz = new_wz*vth = old_wz*vth + uz
         # => old_wz = new_wz - uz/vth
         new_pdf = allocate_float(vz.n, vr.n, vzeta.n, z.n, r.n, nspecies)
@@ -2648,7 +2654,7 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
                        this_pdf[:,ivr,ivzeta,iz,ir,is], old_vz, old_vz_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && moments.evolve_p && !old_evolve_upar && !old_evolve_p)
+    elseif (moments.evolve_n_upar && moments.evolve_p && !old_evolve_n_upar && !old_evolve_p)
         # vz = new_wz*vth + uz = old_wz
         # => old_wz = new_wz*vth + uz
         new_pdf = allocate_float(vz.n, vr.n, vzeta.n, z.n, r.n, nspecies)
@@ -2670,7 +2676,7 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
                        this_pdf[:,ivr,ivzeta,iz,ir,is], old_vz, old_vz_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && moments.evolve_p && old_evolve_upar && !old_evolve_p)
+    elseif (moments.evolve_n_upar && moments.evolve_p && old_evolve_n_upar && !old_evolve_p)
         # vz = new_wz*vth + uz = old_wz + uz
         # => old_wz = new_wz*vth
         new_pdf = allocate_float(vz.n, vr.n, vzeta.n, z.n, r.n, nspecies)
@@ -2692,7 +2698,7 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
                        this_pdf[:,ivr,ivzeta,iz,ir,is], old_vz, old_vz_spectral)
         end
         this_pdf = new_pdf
-    elseif (moments.evolve_upar && moments.evolve_p && !old_evolve_upar && old_evolve_p)
+    elseif (moments.evolve_n_upar && moments.evolve_p && !old_evolve_n_upar && old_evolve_p)
         # vz = new_wz*vth + uz = old_wz*vth
         # => old_wz = new_wz + uz/vth
         new_pdf = allocate_float(vz.n, vr.n, vzeta.n, z.n, r.n, nspecies)
@@ -2722,10 +2728,10 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
         # should be handled above.
         error("Unsupported combination of moment-kinetic options:"
               * " evolve_density=$(moments.evolve_density)"
-              * " evolve_upar=$(moments.evolve_upar)"
+              * " evolve_n_upar=$(moments.evolve_n_upar)"
               * " evolve_p=$(moments.evolve_p)"
               * " old_evolve_density=$(old_evolve_density)"
-              * " old_evolve_upar=$(old_evolve_upar)"
+              * " old_evolve_n_upar=$(old_evolve_n_upar)"
               * " old_evolve_p=$(old_evolve_p)")
     end
     if moments.evolve_density && !old_evolve_density
@@ -2799,7 +2805,7 @@ function regrid_neutral_pdf(this_pdf, new_coords, old_coords, interpolation_need
 end
 
 function regrid_variable(variable::AbstractArray{T,N}, new_coords, old_coords, moments,
-                         old_evolve_density, old_evolve_upar, old_evolve_p) where {T,N}
+                         old_evolve_density, old_evolve_n_upar, old_evolve_p) where {T,N}
     # Test whether any interpolation is needed
     interpolation_needed = OrderedDict(
         new_x.name => (old_coords[key] !== nothing
@@ -2815,13 +2821,13 @@ function regrid_variable(variable::AbstractArray{T,N}, new_coords, old_coords, m
         result = regrid_moment(variable, new_coords, old_coords, interpolation_needed)
     elseif N == 4
         regrid_electron_pdf(variable, new_coords, old_coords, interpolation_needed,
-                            moments, old_evolve_density, old_evolve_upar, old_evolve_p)
+                            moments, old_evolve_density, old_evolve_n_upar, old_evolve_p)
     elseif N == 5
         regrid_ion_pdf(variable, new_coords, old_coords, interpolation_needed, moments,
-                       old_evolve_density, old_evolve_upar, old_evolve_p)
+                       old_evolve_density, old_evolve_n_upar, old_evolve_p)
     elseif N == 6
         regrid_neutral_pdf(variable, new_coords, old_coords, interpolation_needed,
-                           moments, old_evolve_density, old_evolve_upar, old_evolve_p)
+                           moments, old_evolve_density, old_evolve_n_upar, old_evolve_p)
     else
         error("Unrecognised number of dimensions, `ndims(variable)=$N`")
     end
@@ -3669,7 +3675,7 @@ function get_run_info_no_setup(run_dir::Union{AbstractString,Tuple{AbstractStrin
                                                        ignore_MPI=true)
 
     n_ion_species, n_neutral_species = load_species_data(file_final_restart)
-    evolve_density, evolve_upar, evolve_p = load_mk_options(file_final_restart)
+    evolve_density, evolve_n_upar, evolve_p = load_mk_options(file_final_restart)
 
     z_local, z_local_spectral, z_chunk_size =
         load_coordinate_data(file_final_restart, "z"; warn_unexpected=true)
@@ -3718,8 +3724,8 @@ function get_run_info_no_setup(run_dir::Union{AbstractString,Tuple{AbstractStrin
         if evolve_density
             push!(evolving_variables, "density")
         end
-        if evolve_upar
-            push!(evolving_variables, "parallel_flow")
+        if evolve_n_upar
+            push!(evolving_variables, "parallel_particle_flux")
         end
         if evolve_p
             push!(evolving_variables, "pressure")
@@ -3737,8 +3743,8 @@ function get_run_info_no_setup(run_dir::Union{AbstractString,Tuple{AbstractStrin
             if evolve_density
                 push!(evolving_variables, "density_neutral")
             end
-            if evolve_upar
-                push!(evolving_variables, "uz_neutral")
+            if evolve_n_upar
+                push!(evolving_variables, "n_uz_neutral")
             end
             if evolve_p
                 push!(evolving_variables, "p_neutral")
@@ -3780,20 +3786,20 @@ function get_run_info_no_setup(run_dir::Union{AbstractString,Tuple{AbstractStrin
                 boundaries=boundaries, drive_input=drive_input,
                 num_diss_params=num_diss_params,
                 external_source_settings=external_source_settings,
-                evolve_density=evolve_density, evolve_upar=evolve_upar, evolve_p=evolve_p,
-                manufactured_solns_input=manufactured_solns_input, nt=nt,
-                nt_unskipped=nt_unskipped, restarts_nt=restarts_nt, itime_min=itime_min,
-                itime_skip=itime_skip, itime_max=itime_max, time=time, r=r, z=z,
-                vperp=vperp, vpa=vpa, vzeta=vzeta, vr=vr, vz=vz, r_local=r_local,
-                z_local=z_local, r_spectral=r_spectral, z_spectral=z_spectral,
-                vperp_spectral=vperp_spectral, vpa_spectral=vpa_spectral,
-                vzeta_spectral=vzeta_spectral, vr_spectral=vr_spectral,
-                vz_spectral=vz_spectral, nrank=nrank, block_size=loaded_block_size,
-                r_chunk_size=r_chunk_size, z_chunk_size=z_chunk_size,
-                vperp_chunk_size=vperp_chunk_size, vpa_chunk_size=vpa_chunk_size,
-                vzeta_chunk_size=vzeta_chunk_size, vr_chunk_size=vr_chunk_size,
-                vz_chunk_size=vz_chunk_size, variable_names=variable_names,
-                evolving_variables=evolving_variables,
+                evolve_density=evolve_density, evolve_n_upar=evolve_n_upar,
+                evolve_p=evolve_p, manufactured_solns_input=manufactured_solns_input,
+                nt=nt, nt_unskipped=nt_unskipped, restarts_nt=restarts_nt,
+                itime_min=itime_min, itime_skip=itime_skip, itime_max=itime_max,
+                time=time, r=r, z=z, vperp=vperp, vpa=vpa, vzeta=vzeta, vr=vr, vz=vz,
+                r_local=r_local, z_local=z_local, r_spectral=r_spectral,
+                z_spectral=z_spectral, vperp_spectral=vperp_spectral,
+                vpa_spectral=vpa_spectral, vzeta_spectral=vzeta_spectral,
+                vr_spectral=vr_spectral, vz_spectral=vz_spectral, nrank=nrank,
+                block_size=loaded_block_size, r_chunk_size=r_chunk_size,
+                z_chunk_size=z_chunk_size, vperp_chunk_size=vperp_chunk_size,
+                vpa_chunk_size=vpa_chunk_size, vzeta_chunk_size=vzeta_chunk_size,
+                vr_chunk_size=vr_chunk_size, vz_chunk_size=vz_chunk_size,
+                variable_names=variable_names, evolving_variables=evolving_variables,
                 timing_variable_names=timing_variable_names,
                 provenance_tracking=provenance_tracking, dfns=dfns)
 
@@ -4216,11 +4222,11 @@ function _get_fake_moments_fields_scratch(all_moments, it; ion_extra::Tuple=(),
                   )...)
     end
 
-    ion_moments = make_struct(; dens="density", upar="parallel_flow",
-        p="pressure", ppar="parallel_pressure", pperp="perpendicular_pressure",
-        qpar="parallel_heat_flux", vth="thermal_speed", temp="temperature",
-        ddens_dr="ddens_dr", ddens_dr_upwind="ddens_dr_upwind", ddens_dz="ddens_dz",
-        ddens_dz_upwind="ddens_dz_upwind", dupar_dr="dupar_dr",
+    ion_moments = make_struct(; dens="density", n_upar="parallel_particle_flux",
+        upar="parallel_flow", p="pressure", ppar="parallel_pressure",
+        pperp="perpendicular_pressure", qpar="parallel_heat_flux", vth="thermal_speed",
+        temp="temperature", ddens_dr="ddens_dr", ddens_dr_upwind="ddens_dr_upwind",
+        ddens_dz="ddens_dz", ddens_dz_upwind="ddens_dz_upwind", dupar_dr="dupar_dr",
         dupar_dr_upwind="dupar_dr_upwind", dupar_dz="dupar_dz",
         dupar_dz_upwind="dupar_dz_upwind", dp_dr_upwind="dp_dr_upwind", dp_dz="dp_dz",
         dp_dz_upwind="dp_dz_upwind", dppar_dz="dppar_dz",
@@ -4234,12 +4240,13 @@ function _get_fake_moments_fields_scratch(all_moments, it; ion_extra::Tuple=(),
         ion_extra...)
 
     electron_moments = make_struct(; dens="electron_density",
-        upar="electron_parallel_flow", p="electron_pressure",
-        ppar="electron_parallel_pressure", qpar="electron_parallel_heat_flux",
-        vth="electron_thermal_speed", temp="electron_temperature",
-        ddens_dz="electron_ddens_dz", dupar_dz="electron_dupar_dz",
-        dp_dz="electron_dp_dz", dppar_dz="electron_dppar_dz", dvth_dz="electron_dvth_dz",
-        dT_dz="electron_dT_dz", dqpar_dz="electron_dqpar_dz",
+        n_upar="electron_parallel_particle_flux", upar="electron_parallel_flow",
+        p="electron_pressure", ppar="electron_parallel_pressure",
+        qpar="electron_parallel_heat_flux", vth="electron_thermal_speed",
+        temp="electron_temperature", ddens_dz="electron_ddens_dz",
+        dupar_dz="electron_dupar_dz", dp_dz="electron_dp_dz",
+        dppar_dz="electron_dppar_dz", dvth_dz="electron_dvth_dz", dT_dz="electron_dT_dz",
+        dqpar_dz="electron_dqpar_dz",
         external_source_amplitude="external_source_electron_amplitude",
         external_source_density_amplitude="external_source_electron_density_amplitude",
         external_source_momentum_amplitude="external_source_electron_momentum_amplitude",
@@ -4247,13 +4254,14 @@ function _get_fake_moments_fields_scratch(all_moments, it; ion_extra::Tuple=(),
         external_source_controller_integral="external_electron_source_controller_integral",
         electron_extra...)
 
-    neutral_moments = make_struct(; dens="density_neutral", uz="uz_neutral",
-        p="p_neutral", pz="pz_neutral", qz="qz_neutral", vth="thermal_speed_neutral",
-        temp="temperature_neutral", ddens_dz="neutral_ddens_dz",
-        ddens_dz_upwind="neutral_ddens_dz_upwind", duz_dz="neutral_duz_dz",
-        duz_dz_upwind="neutral_duz_dz_upwind", dp_dz="neutral_dp_dz",
-        dp_dz_upwind="neutral_dp_dz_upwind", dpz_dz="neutral_dpz_dz",
-        dvth_dz="neutral_dvth_dz", dT_dz="neutral_dT_dz", dqz_dz="neutral_dqz_dz",
+    neutral_moments = make_struct(; dens="density_neutral", n_uz="n_uz_neutral",
+        uz="uz_neutral", p="p_neutral", pz="pz_neutral", qz="qz_neutral",
+        vth="thermal_speed_neutral", temp="temperature_neutral",
+        ddens_dz="neutral_ddens_dz", ddens_dz_upwind="neutral_ddens_dz_upwind",
+        duz_dz="neutral_duz_dz", duz_dz_upwind="neutral_duz_dz_upwind",
+        dp_dz="neutral_dp_dz", dp_dz_upwind="neutral_dp_dz_upwind",
+        dpz_dz="neutral_dpz_dz", dvth_dz="neutral_dvth_dz", dT_dz="neutral_dT_dz",
+        dqz_dz="neutral_dqz_dz",
         external_source_amplitude="external_source_neutral_amplitude",
         external_source_density_amplitude="external_source_neutral_density_amplitude",
         external_source_momentum_amplitude="external_source_neutral_momentum_amplitude",
@@ -4265,10 +4273,11 @@ function _get_fake_moments_fields_scratch(all_moments, it; ion_extra::Tuple=(),
 
     fields = make_struct(; phi="phi", Er="Er", Ez="Ez", vEr="vEr", vEz="vEz")
 
-    fvec = make_struct(; density="density", upar="parallel_flow", p="pressure",
-        electron_density="electron_density", electron_upar="electron_parallel_flow",
-        electron_p="electron_pressure", electron_temp="electron_temperature",
-        density_neutral="density_neutral", uz_neutral="uz_neutral", p_neutral="p_neutral")
+    fvec = make_struct(; density="density", n_upar="parallel_particle_flux", p="pressure",
+        electron_density="electron_density",
+        electron_n_upar="electron_parallel_particle_flux", electron_p="electron_pressure",
+        electron_temp="electron_temperature", density_neutral="density_neutral",
+        n_uz_neutral="n_uz_neutral", p_neutral="p_neutral")
 
     return moments, fields, fvec
 end
@@ -4582,6 +4591,26 @@ function prepend_dims_to_variable(v, dims...; kwargs...)
 end
 
 const get_variable_funcs = Dict{String,Any}(
+    "parallel_particle_flux" => (run_info; kwargs...) -> begin
+            if "parallel_particle_flux" ∈ run_info.variable_names
+                return postproc_load_variable(run_info, "parallel_particle_flux"; kwargs...)
+            else
+                n = get_variable(run_info, "density"; kwargs...)
+                upar = get_variable(run_info, "parallel_flow"; kwargs...)
+                variable = @. n * upar
+                return variable
+            end
+        end,
+    "parallel_flow" => (run_info; kwargs...) -> begin
+            if "parallel_particle_flux" ∈ run_info.variable_names
+                n_upar = postproc_load_variable(run_info, "parallel_particle_flux"; kwargs...)
+                n = get_variable(run_info, "density"; kwargs...)
+                variable = @. n_upar / n
+                return variable
+            else
+                return postproc_load_variable(run_info, "parallel_flow"; kwargs...)
+            end
+        end,
     "temperature" => (run_info; kwargs...) -> begin
             vth = get_variable(run_info, "thermal_speed"; kwargs...)
             variable = @. 0.5 * vth^2
@@ -4670,7 +4699,7 @@ const get_variable_funcs = Dict{String,Any}(
                 vth = append_dims_to_variable(get_variable(run_info, "thermal_speed"; kwargs...), :ivpa, :ivperp; kwargs...)
                 variable = variable .* vth
             end
-            if run_info.evolve_upar
+            if run_info.evolve_n_upar
                 u = append_dims_to_variable(get_variable(run_info, "parallel_flow"; kwargs...), :ivpa, :ivperp; kwargs...)
                 variable = variable .+ u
             end
@@ -4699,7 +4728,7 @@ const get_variable_funcs = Dict{String,Any}(
                 vth = append_dims_to_variable(get_variable(run_info, "electron_thermal_speed"; kwargs...), :ivpa, :ivperp; kwargs...)
                 variable = variable .* vth
             end
-            if run_info.evolve_upar
+            if run_info.evolve_n_upar
                 u = append_dims_to_variable(get_variable(run_info, "electron_parallel_flow"; kwargs...), :ivpa, :ivperp; kwargs...)
                 variable = variable .+ u
             end
@@ -4741,7 +4770,7 @@ const get_variable_funcs = Dict{String,Any}(
                 vth = append_dims_to_variable(get_variable(run_info, "neutral_thermal_speed"; kwargs...), :ivz, :ivr, :ivzeta; kwargs...)
                 variable = variable .* vth
             end
-            if run_info.evolve_upar
+            if run_info.evolve_n_upar
                 u = append_dims_to_variable(get_variable(run_info, "neutral_uz"; kwargs...), :ivz, :ivr, :ivzeta; kwargs...)
                 variable = variable .+ u
             end
@@ -5089,8 +5118,8 @@ const get_variable_funcs = Dict{String,Any}(
             return variable
         end,
     "neutral_dnuz_dt" => (run_info; kwargs...) -> begin
-            if !run_info.evolve_upar
-                throw(KeyError("evolve_upar=false, so do not calculate neutral_dnuz_dt"))
+            if !run_info.evolve_n_upar
+                throw(KeyError("evolve_n_upar=false, so do not calculate neutral_dnuz_dt"))
             end
             all_moments = _get_all_moment_variables(run_info)
             if "uz_neutral" ∉ keys(all_moments)
@@ -5120,8 +5149,8 @@ const get_variable_funcs = Dict{String,Any}(
             return variable
         end,
     "neutral_duz_dt" => (run_info; kwargs...) -> begin
-            if !run_info.evolve_upar
-                throw(KeyError("evolve_upar=false, so do not calculate neutral_duz_dt"))
+            if !run_info.evolve_n_upar
+                throw(KeyError("evolve_n_upar=false, so do not calculate neutral_duz_dt"))
             end
             dn_dt = get_variable(run_info, "neutral_ddens_dt"; kwargs...)
             dnuz_dt = get_variable(run_info, "neutral_dnuz_dt"; kwargs...)
@@ -5275,10 +5304,51 @@ const get_variable_funcs = Dict{String,Any}(
             variable = get_collision_frequency_ei(run_info.collisions, n, vth)
             return variable
         end,
+    "electron_parallel_particle_flux" => (run_info; kwargs...) -> begin
+            if "electron_parallel_particle_flux" ∈ run_info.variable_names
+                return postproc_load_variable(run_info, "electron_parallel_particle_flux";
+                                              kwargs...)
+            else
+                n = get_variable(run_info, "electron_density"; kwargs...)
+                upar = get_variable(run_info, "electron_parallel_flow"; kwargs...)
+                variable = @. n * upar
+                return variable
+            end
+        end,
+    "electron_parallel_flow" => (run_info; kwargs...) -> begin
+            if "electron_parallel_particle_flux" ∈ run_info.variable_names
+                n_upar = postproc_load_variable(run_info, "electron_parallel_particle_flux"; kwargs...)
+                n = get_variable(run_info, "electron_density"; kwargs...)
+                variable = @. n_upar / n
+                return variable
+            else
+                return postproc_load_variable(run_info, "electron_parallel_flow"; kwargs...)
+            end
+        end,
     "electron_temperature" => (run_info; kwargs...) -> begin
             vth = get_variable(run_info, "electron_thermal_speed"; kwargs...)
             variable = 0.5 * run_info.composition.me_over_mi .* vth.^2
             return variable
+        end,
+    "n_uz_neutral" => (run_info; kwargs...) -> begin
+            if "n_uz_neutral" ∈ run_info.variable_names
+                return postproc_load_variable(run_info, "n_uz_neutral"; kwargs...)
+            else
+                n = get_variable(run_info, "density_neutral"; kwargs...)
+                uz = get_variable(run_info, "uz_neutral"; kwargs...)
+                variable = @. n * uz
+                return variable
+            end
+        end,
+    "uz_neutral" => (run_info; kwargs...) -> begin
+            if "n_uz_neutral" ∈ run_info.variable_names
+                n_uz = postproc_load_variable(run_info, "n_uz_neutral"; kwargs...)
+                n = get_variable(run_info, "density_neutra"; kwargs...)
+                variable = @. n_uz / n
+                return variable
+            else
+                return postproc_load_variable(run_info, "uz_neutral"; kwargs...)
+            end
         end,
     "temperature_neutral" => (run_info; kwargs...) -> begin
             vth = get_variable(run_info, "thermal_speed_neutral"; kwargs...)
@@ -5304,20 +5374,18 @@ const get_variable_funcs = Dict{String,Any}(
         end,
     "total_energy" => (run_info; kwargs...) -> begin
             p = get_variable(run_info, "pressure"; kwargs...)
-            upar = get_variable(run_info, "parallel_flow"; kwargs...)
-            n = get_variable(run_info, "density"; kwargs...)
+            n_upar = get_variable(run_info, "parallel_particle_flux"; kwargs...)
 
-            variable = @. 1.5 * p + 0.5*n*upar^2
+            variable = @. 1.5 * p + 0.5*n_upar^2
             return variable
         end,
     "total_energy_neutral" => (run_info; kwargs...) -> begin
             p = get_variable(run_info, "p_neutral"; kwargs...)
-            upar = get_variable(run_info, "uz_neutral"; kwargs...)
-            n = get_variable(run_info, "density_neutral"; kwargs...)
+            n_upar = get_variable(run_info, "n_uz_neutral"; kwargs...)
 
             # Factor of 3/2 in front of 1/2*n*vth^2*upar because this in 1V - would be 5/2
             # for 2V/3V cases.
-            variable = @. 1.5 * p + 0.5*n*upar^2
+            variable = @. 1.5 * p + 0.5*n_upar^2
             return variable
         end,
     "total_energy_flux" => (run_info; kwargs...) -> begin
@@ -5401,7 +5469,7 @@ const get_variable_funcs = Dict{String,Any}(
                 # Only need Er
                 fields = (gEz=@view(gEz[:,:,:,:,it]), vEr=@view(vEr[:,:,it]))
                 @views update_speed_r!(advect, fields, run_info.evolve_density,
-                                       run_info.evolve_upar, run_info.evolve_p,
+                                       run_info.evolve_n_upar, run_info.evolve_p,
                                        run_info.vpa, run_info.vperp, run_info.z,
                                        run_info.r, run_info.geometry)
             end
@@ -5437,7 +5505,7 @@ const get_variable_funcs = Dict{String,Any}(
                 advect = @view speed[:,:,:,:,:,it]
                 # Only need Er
                 fields = (gEr=@view(gEr[:,:,:,:,it]), vEz=@view(vEz[:,:,it]))
-                @views update_speed_alpha!(advect, run_info.evolve_upar,
+                @views update_speed_alpha!(advect, run_info.evolve_n_upar,
                                            run_info.evolve_p, fields, run_info.vpa,
                                            run_info.vperp, run_info.z, run_info.r,
                                            run_info.geometry)
@@ -5476,6 +5544,7 @@ const get_variable_funcs = Dict{String,Any}(
         end,
     "vpa_advect_speed" => (run_info; kwargs...) -> begin
             density = get_variable(run_info, "density"; kwargs...)
+            n_upar = get_variable(run_info, "parallel_particle_flux"; kwargs...)
             upar = get_variable(run_info, "parallel_flow"; kwargs...)
             p = get_variable(run_info, "pressure"; kwargs...)
             vth = get_variable(run_info, "thermal_speed"; kwargs...)
@@ -5495,7 +5564,7 @@ const get_variable_funcs = Dict{String,Any}(
                 else
                     external_source_density_amplitude = zeros(0,0,n_sources,run_info.nt)
                 end
-                if run_info.evolve_upar
+                if run_info.evolve_n_upar
                     external_source_momentum_amplitude = get_variable(run_info, "external_source_momentum_amplitude")
                 else
                     external_source_momentum_amplitude = zeros(0,0,n_sources,run_info.nt)
@@ -5566,18 +5635,18 @@ const get_variable_funcs = Dict{String,Any}(
                                        external_source_momentum_amplitude=external_source_momentum_amplitude[:,:,:,it],
                                        external_source_pressure_amplitude=external_source_pressure_amplitude[:,:,:,it]),
                                  evolve_density=run_info.evolve_density,
-                                 evolve_upar=run_info.evolve_upar,
+                                 evolve_n_upar=run_info.evolve_n_upar,
                                  evolve_p=run_info.evolve_p)
                 if run_info.n_neutral_species != 0
                     @views fvec = (density=density[:,:,:,it],
-                                   upar=upar[:,:,:,it],
+                                   n_upar=n_upar[:,:,:,it],
                                    p=p[:,:,:,it],
                                    density_neutral=density_neutral[:,:,:,it],
                                    uz_neutral=uz_neutral[:,:,:,it],
                                    p_neutral=p_neutral[:,:,:,it])
                 else
                     @views fvec = (density=density[:,:,:,it],
-                                   upar=upar[:,:,:,it],
+                                   n_upar=n_upar[:,:,:,it],
                                    p=p[:,:,:,it])
                 end
                 @views update_speed_vpa!(advect, fields, fvec, moments, r_advect,
@@ -5705,7 +5774,7 @@ const get_variable_funcs = Dict{String,Any}(
                 # Only need some struct with a 'speed' variable
                 advect = @view speed[:,:,:,:,:,isn,it]
                 @views update_speed_neutral_z!(advect, uz[:,:,:,it], vth[:,:,:,it],
-                                               run_info.evolve_upar, run_info.evolve_p,
+                                               run_info.evolve_n_upar, run_info.evolve_p,
                                                run_info.vz, run_info.vr, run_info.vzeta,
                                                run_info.z, run_info.r, run_info.time[it])
             end
@@ -5719,9 +5788,10 @@ const get_variable_funcs = Dict{String,Any}(
             # result.
             Ez = get_variable(run_info, "Ez"; kwargs...)
             density = get_variable(run_info, "density"; kwargs...)
-            upar = get_variable(run_info, "parallel_flow"; kwargs...)
+            n_upar = get_variable(run_info, "parallel_particle_flux"; kwargs...)
             p = get_variable(run_info, "pressure"; kwargs...)
             density_neutral = get_variable(run_info, "density_neutral"; kwargs...)
+            n_uz_neutral = get_variable(run_info, "n_uz_neutral"; kwargs...)
             uz_neutral = get_variable(run_info, "uz_neutral"; kwargs...)
             p_neutral = get_variable(run_info, "p_neutral"; kwargs...)
             vth = get_variable(run_info, "thermal_speed_neutral"; kwargs...)
@@ -5740,7 +5810,7 @@ const get_variable_funcs = Dict{String,Any}(
                 else
                     external_source_density_amplitude = zeros(0,0,n_sources,run_info.nt)
                 end
-                if run_info.evolve_upar
+                if run_info.evolve_n_upar
                     external_source_momentum_amplitude = get_variable(run_info, "external_source_neutral_momentum_amplitude"; kwargs...)
                 else
                     external_source_momentum_amplitude = zeros(0,0,n_sources,run_info.nt)
@@ -5774,10 +5844,10 @@ const get_variable_funcs = Dict{String,Any}(
                 # Don't actually use `fields` at the moment
                 fields = nothing
                 @views fvec = (density=density[:,:,:,it],
-                               upar=upar[:,:,:,it],
+                               n_upar=n_upar[:,:,:,it],
                                p=p[:,:,:,it],
                                density_neutral=density_neutral[:,:,:,it],
-                               uz_neutral=uz_neutral[:,:,:,it],
+                               n_uz_neutral=n_uz_neutral[:,:,:,it],
                                p_neutral=p_neutral[:,:,:,it])
                 @views moments = (neutral=(dp_dz=dp_dz[:,:,:,it],
                                            duz_dz=duz_dz[:,:,:,it],
@@ -5792,7 +5862,7 @@ const get_variable_funcs = Dict{String,Any}(
                                            external_source_momentum_amplitude=external_source_momentum_amplitude[:,:,:,it],
                                            external_source_pressure_amplitude=external_source_pressure_amplitude[:,:,:,it]),
                                  evolve_density=run_info.evolve_density,
-                                 evolve_upar=run_info.evolve_upar,
+                                 evolve_n_upar=run_info.evolve_n_upar,
                                  evolve_p=run_info.evolve_p)
                 @views update_speed_neutral_vz!(advect, fields, fvec, moments,
                                                 run_info.vz, run_info.vr, run_info.vzeta,

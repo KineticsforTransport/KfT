@@ -1786,12 +1786,15 @@ function update_moments_neutral!(moments, pdf, vz, vr, vzeta, z, r, composition)
             # because moments.neutral.pz isn only needed if evolve_p=true, in which
             # case it will not be updated because it is not calculated from the
             # distribution function.
-            @views update_neutral_uz_species!(moments.neutral.uz[:,:,isn],
-                                              moments.neutral.dens[:,:,isn],
-                                              moments.neutral.pz[:,:,isn],
-                                              pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
-                                              moments.evolve_density, moments.evolve_p)
+            @views update_neutral_n_uz_species!(moments.neutral.n_uz[:,:,isn],
+                                                moments.neutral.dens[:,:,isn],
+                                                moments.neutral.pz[:,:,isn],
+                                                pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
+                                                moments.evolve_density, moments.evolve_p)
         end
+        @views update_neutral_uz_species!(moments.neutral.uz[:,:,isn],
+                                          moments.neutral.dens[:,:,isn],
+                                          moments.neutral.n_uz[:,:,isn])
         @views update_neutral_ur_species!(moments.neutral.ur[:,:,isn],
                                           moments.neutral.dens[:,:,isn],
                                           moments.neutral.vth[:,:,isn],
@@ -1882,72 +1885,88 @@ function get_neutral_density(ff, vz, vr, vzeta)
 end
 
 
-function update_neutral_uz!(uz, density, vth, pdf, vz, vr, vzeta, z, r, composition,
-                            evolve_density, evolve_p)
+function update_neutral_n_uz!(n_uz, density, vth, pdf, vz, vr, vzeta, z, r, composition,
+                              evolve_density, evolve_p)
     
     @begin_r_z_region()
     @debug_consistency_checks composition.n_neutral_species == size(pdf, 6) || throw(BoundsError(pdf))
     @debug_consistency_checks composition.n_neutral_species == size(uz, 3) || throw(BoundsError(uz))
     @loop_sn isn begin
-        @views update_neutral_uz_species!(uz[:,:,isn], density[:,:,isn], vth[:,:,isn],
-                                          pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
-                                          evolve_density, evolve_p)
+        @views update_neutral_n_uz_species!(n_uz[:,:,isn], density[:,:,isn], vth[:,:,isn],
+                                            pdf[:,:,:,:,:,isn], vz, vr, vzeta, z, r,
+                                            evolve_density, evolve_p)
     end
 end
 
 """
-calculate the updated uz (mean velocity in z) for a given species
+calculate the updated n_uz (particle flux in z) for a given species
 """
-function update_neutral_uz_species!(uz, density, vth, ff, vz, vr, vzeta, z, r,
-                                    evolve_density, evolve_p)
+function update_neutral_n_uz_species!(n_uz, density, vth, ff, vz, vr, vzeta, z, r,
+                                      evolve_density, evolve_p)
     @debug_consistency_checks vz.n == size(ff, 1) || throw(BoundsError(ff))
     @debug_consistency_checks vr.n == size(ff, 2) || throw(BoundsError(ff))
     @debug_consistency_checks vzeta.n == size(ff, 3) || throw(BoundsError(ff))
     @debug_consistency_checks z.n == size(ff, 4) || throw(BoundsError(ff))
     @debug_consistency_checks r.n == size(ff, 5) || throw(BoundsError(ff))
-    @debug_consistency_checks z.n == size(uz, 1) || throw(BoundsError(uz))
-    @debug_consistency_checks r.n == size(uz, 2) || throw(BoundsError(uz))
+    @debug_consistency_checks z.n == size(n_uz, 1) || throw(BoundsError(n_uz))
+    @debug_consistency_checks r.n == size(n_uz, 2) || throw(BoundsError(n_uz))
     if evolve_density && evolve_p
         # this is the case where the density and parallel pressure are evolved
-        # separately from the normalized pdf, g_s = (√π f_s vth_s / n_s); the vz
-        # coordinate is (dz/dt) / vth_s.
+        # separately from the normalized pdf, g_s = (f_s vth_s / n_s); the vz
+        # coordinate is vz / vth_s.
         # Integrating calculates
-        # (upar_s / vth_s) = (1/√π)∫d(vz/vth_s) * (vz/vth_s) * (√π f_s vth_s / n_s)
-        # so convert from upar_s / vth_s to upar_s / c_s
+        # (uz_s / vth_s) = ∫d(v/vth_s)^p * (vz/vth_s) * (f_s vth_s / n_s)
+        # (where p=3 for 2V and p=1 for 1V)
+        # so convert from uz_s / vth_s to n_s * uz_s
         @loop_r_z ir iz begin
-            uz[iz,ir] = integral(@view(ff[:,:,:,iz,ir]), vz.grid, 1, vz.wgts, vr.grid, 0,
-                                 vr.wgts, vzeta.grid, 0, vzeta.wgts) * vth[iz,ir]
+            n_uz[iz,ir] = integral(@view(ff[:,:,:,iz,ir]), vz.grid, 1, vz.wgts, vr.grid, 0,
+                                   vr.wgts, vzeta.grid, 0, vzeta.wgts) * vth[iz,ir] * density[iz,ir]
         end
     elseif evolve_density
         # corresponds to case where only the density is evolved separately from the
-        # normalised pdf, given by g_s = (√π f_s c_s / n_s); the vz coordinate is
-        # (dz/dt) / c_s.
+        # normalised pdf, given by g_s = (f_s / n_s); the vz coordinate is vz.
         # Integrating calculates
-        # (upar_s / c_s) = (1/√π)∫d(vz/c_s) * (vz/c_s) * (√π f_s c_s / n_s)
+        # uz_s = ∫dv^p * vz * (f_s / n_s)
+        # so convert from uz_s to n_s * uz_s
         @loop_r_z ir iz begin
-            uz[iz,ir] = integral(@view(ff[:,:,:,iz,ir]), vz.grid, 1, vz.wgts, vr.grid, 0,
-                                 vr.wgts, vzeta.grid, 0, vzeta.wgts)
+            n_uz[iz,ir] = integral(@view(ff[:,:,:,iz,ir]), vz.grid, 1, vz.wgts, vr.grid,
+                                   0, vr.wgts, vzeta.grid, 0, vzeta.wgts) * density[iz,ir]
         end
     else
         # When evolve_density = false, the evolved pdf is the 'true' pdf,
-        # and the vz coordinate is (dz/dt) / c_s.
+        # and the vz coordinate is vz.
         # Integrating calculates
-        # (n_s / N_e) * (uz / c_s) = (1/√π)∫d(vz/c_s) * (vz/c_s) * (√π f_s c_s / N_e)
+        # n_s * uz_s = ∫dv^p * vz * f_s
         @loop_r_z ir iz begin
-            uz[iz,ir] = integral(@view(ff[:,:,:,iz,ir]), vz.grid, 1, vz.wgts, vr.grid, 0,
-                                 vr.wgts, vzeta.grid, 0, vzeta.wgts) / density[iz,ir]
+            n_uz[iz,ir] = integral(@view(ff[:,:,:,iz,ir]), vz.grid, 1, vz.wgts, vr.grid,
+                                   0, vr.wgts, vzeta.grid, 0, vzeta.wgts)
         end
     end
     return nothing
 end
 
-function get_neutral_uz(ff, density, vz, vr, vzeta, evolve_density)
-    upar = integral(ff, vz.grid, 1, vz.wgts, vr.grid, 0, vr.wgts, vzeta.grid, 0,
+function get_neutral_n_uz(ff, density, vz, vr, vzeta, evolve_density)
+    n_uz = integral(ff, vz.grid, 1, vz.wgts, vr.grid, 0, vr.wgts, vzeta.grid, 0,
                     vzeta.wgts)
-    if !evolve_density
-        upar /= density
+    if evolve_density
+        n_uz *= density
     end
-    return upar
+    return n_uz
+end
+
+function update_neutral_uz!(uz, density, n_uz)
+    @begin_r_z_region()
+    @loop_sn isn begin
+        @views update_neutral_uz_species(uz[:,:,isn], density[:,:,isn], n_uz[:,:,isn])
+    end
+    return nothing
+end
+
+function update_neutral_uz_species!(uz, density, n_uz)
+    @loop_r_z ir iz begin
+        uz[iz,ir] = n_uz[iz,ir] / density[iz,ir]
+    end
+    return nothing
 end
 
 function update_neutral_ur!(ur, density, vth, pdf, vz, vr, vzeta, z, r, composition,
@@ -2071,8 +2090,7 @@ function update_neutral_p_species!(p, density, uz, ur, uzeta, vth, ff, vz, vr, v
         error("update_neutral_p_species!() should not be called when evolve_p=true")
     elseif evolve_upar
         # this is the case where the parallel flow and density are evolved separately
-        # from the normalized pdf; the vz coordinate is
-        # <(vz - uz_s) / cref>.
+        # from the normalized pdf; the vz coordinate is (vz - uz_s).
         # Integrating calculates p_s/n_s + m_s/3*uzeta_s^2 + m_/3s*ur_s^2 = ∫d^3w w^2/3 * g_s
         @loop_r_z ir iz begin
             p[iz,ir] = 1.0/3.0 * (integral((vzeta,vr,vz)->(vz^2 + vzeta^2 + vr^2),
@@ -2082,9 +2100,9 @@ function update_neutral_p_species!(p, density, uz, ur, uzeta, vth, ff, vz, vr, v
         end
     elseif evolve_density
         # corresponds to case where only the density is evolved separately from the
-        # normalised pdf; the vz coordinate is <vz / c_s>.
+        # normalised pdf; the vz coordinate is vz.
         # Integrating calculates
-        # p_s/n_s + m_s/3*uz_s^2 + m_s/3 u*eta_s^2 + m_s/3*ur_s^2 = ∫d^3v v^2/3 * f_s
+        # p_s/n_s + m_s/3*uz_s^2 + m_s/3 uzeta_s^2 + m_s/3*ur_s^2 = ∫d^3v v^2/3 * f_s
         # so subtract off u^2 and multiply by density to get the internal energy density
         # (aka pressure)
         @loop_r_z ir iz begin
@@ -2095,7 +2113,7 @@ function update_neutral_p_species!(p, density, uz, ur, uzeta, vth, ff, vz, vr, v
         end
     else
         # When evolve_density = false, the evolved pdf is the 'true' pdf,
-        # and the vz coordinate is <vz / cref>.
+        # and the vz coordinate is vz.
         # Integrating calculates
         # p_s + m_s/3*n_s*uz_s^2 + m_s/3*n_s*uzeta_s^2 + m_s/3*n_s*ur_s^2 = ∫d^3v v^2/3 * f_s
         # so subtract off twice the mean kinetic energy density to get the
@@ -2429,7 +2447,7 @@ advance
     @begin_sn_r_region()
 
     density = scratch.density_neutral
-    uz = scratch.uz_neutral
+    uz = moments.neutral.uz
     p = scratch.p_neutral
     pz = moments.neutral.pz
     qz = moments.neutral.qz
@@ -2520,18 +2538,18 @@ update velocity moments that are calculable from the evolved ion pdf
     if !moments.evolve_density
         update_density!(new_scratch.density, ff, vpa, vperp, z, r, composition)
     end
-    if !moments.evolve_upar
-        update_upar!(new_scratch.upar, new_scratch.density, moments.ion.vth, ff, vpa,
-                     vperp, z, r, composition, moments.evolve_density, moments.evolve_p)
+    if !moments.evolve_n_upar
+        update_n_upar!(new_scratch.n_upar, new_scratch.density, moments.ion.vth, ff, vpa,
+                       vperp, z, r, composition, moments.evolve_density, moments.evolve_p)
     end
+    update_upar!(moments.ion.upar, new_scratch.density, new_scratch.n_upar)
     if !moments.evolve_p
-        # update_ppar! calculates (p_parallel/m_s N_e c_s^2) + (n_s/N_e)*(upar_s/c_s)^2 = (1/√π)∫d(vpa/c_s) (vpa/c_s)^2 * (√π f_s c_s / N_e)
-        update_p!(new_scratch.p, new_scratch.density, new_scratch.upar, ff, vpa, vperp, z,
-                  r, composition, moments.evolve_density, moments.evolve_upar)
+        update_p!(new_scratch.p, new_scratch.density, moments.ion.upar, ff, vpa, vperp, z,
+                  r, composition, moments.evolve_density, moments.evolve_n_upar)
     end
-    update_ppar!(moments.ion.ppar, new_scratch.density, new_scratch.upar, moments.ion.vth,
+    update_ppar!(moments.ion.ppar, new_scratch.density, moments.ion.upar, moments.ion.vth,
                  new_scratch.p, ff, vpa, vperp, z, r, composition, moments.evolve_density,
-                 moments.evolve_upar, moments.evolve_p)
+                 moments.evolve_n_upar, moments.evolve_p)
     update_pperp!(moments.ion.pperp, new_scratch.p, moments.ion.ppar, vperp, z, r,
                   composition)
 
@@ -2547,10 +2565,10 @@ update velocity moments that are calculable from the evolved ion pdf
     update_vth!(moments.ion.vth, moments.ion.temp, new_scratch.p, new_scratch.density, z,
                 r, composition)
     # update the parallel heat flux
-    update_ion_qpar!(moments.ion.qpar, new_scratch.density, new_scratch.upar,
+    update_ion_qpar!(moments.ion.qpar, new_scratch.density, moments.ion.upar,
                      moments.ion.vth, moments.ion.dT_dz, ff, vpa, vperp, z, r,
                      composition, composition.ion_physics, collisions,
-                     moments.evolve_density, moments.evolve_upar, moments.evolve_p)
+                     moments.evolve_density, moments.evolve_n_upar, moments.evolve_p)
     # add further moments to be computed here
 
     return nothing
@@ -2567,11 +2585,13 @@ update velocity moments that are calculable from the evolved neutral pdf
         update_neutral_density!(new_scratch.density_neutral, new_scratch.pdf_neutral, vz,
                                 vr, vzeta, z, r, composition)
     end
-    if !moments.evolve_upar
-        update_neutral_uz!(new_scratch.uz_neutral, new_scratch.density_neutral,
-                           moments.neutral.vth, new_scratch.pdf_neutral, vz, vr, vzeta, z,
-                           r, composition, moments.evolve_density, moments.evolve_p)
+    if !moments.evolve_n_upar
+        update_neutral_n_uz!(new_scratch.n_uz_neutral, new_scratch.density_neutral,
+                             moments.neutral.vth, new_scratch.pdf_neutral, vz, vr, vzeta,
+                             z, r, composition, moments.evolve_density, moments.evolve_p)
     end
+    update_neutral_uz!(moments.neutral.uz, new_scratch.density_neutral,
+                       new_scratch.n_uz_neutral)
     if !moments.evolve_p
         update_neutral_uzeta!(moments.neutral.uzeta, new_scratch.density_neutral,
                               moments.neutral.vth, new_scratch.pdf_neutral, vz, vr, vzeta,
@@ -2580,17 +2600,17 @@ update velocity moments that are calculable from the evolved neutral pdf
                            moments.neutral.vth, new_scratch.pdf_neutral, vz, vr, vzeta, z,
                            r, composition, moments.evolve_density, moments.evolve_p)
         update_neutral_p!(new_scratch.p_neutral, new_scratch.density_neutral,
-                          new_scratch.uz_neutral, moments.neutral.ur,
-                          moments.neutral.uzeta, moments.neutral.vth,
-                          new_scratch.pdf_neutral, vz, vr, vzeta, z, r, composition,
-                          moments.evolve_density, moments.evolve_upar, moments.evolve_p)
+                          moments.neutral.uz, moments.neutral.ur, moments.neutral.uzeta,
+                          moments.neutral.vth, new_scratch.pdf_neutral, vz, vr, vzeta, z,
+                          r, composition, moments.evolve_density, moments.evolve_n_upar,
+                          moments.evolve_p)
     end
     # pz is needed for the neutral parallel momentum equation if evolving uz and the
     # neutral pressure equation if evolving p.
     update_neutral_pz!(moments.neutral.pz, new_scratch.density_neutral,
-                       new_scratch.uz_neutral, new_scratch.p_neutral, moments.neutral.vth,
+                       moments.neutral.uz, new_scratch.p_neutral, moments.neutral.vth,
                        new_scratch.pdf_neutral, vz, vr, vzeta, z, r, composition,
-                       moments.evolve_density, moments.evolve_upar, moments.evolve_p)
+                       moments.evolve_density, moments.evolve_n_upar, moments.evolve_p)
     update_neutral_vth!(moments.neutral.vth, new_scratch.p_neutral,
                         new_scratch.density_neutral, z, r, composition)
 end

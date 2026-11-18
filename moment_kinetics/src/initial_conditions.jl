@@ -33,14 +33,13 @@ using ..moment_kinetics_structs: scratch_pdf, pdf_substruct, electron_pdf_substr
 using ..nonlinear_solvers: nl_solver_info
 using ..velocity_moments: integrate_over_positive_vz, integrate_over_negative_vz
 using ..velocity_moments: create_moments_ion, create_moments_electron, create_moments_neutral
-using ..velocity_moments: get_density, get_upar, get_p, get_neutral_density, get_neutral_uz, get_neutral_p
 using ..velocity_moments: update_ion_qpar!
 using ..velocity_moments: update_neutral_density!, update_neutral_pz!, update_neutral_pr!, update_neutral_pzeta!, update_neutral_p!
-using ..velocity_moments: update_neutral_uz!, update_neutral_ur!, update_neutral_uzeta!, update_neutral_qz!
-using ..velocity_moments: update_p!, update_ppar!, update_upar!, update_density!,
+using ..velocity_moments: update_neutral_n_uz!, update_neutral_ur!, update_neutral_uzeta!, update_neutral_qz!
+using ..velocity_moments: update_p!, update_ppar!, update_n_upar!, update_density!,
                           update_pperp!, update_vth!
 using ..electron_fluid_equations: calculate_electron_density!, calculate_electron_density_no_r!
-using ..electron_fluid_equations: calculate_electron_upar_from_charge_conservation!
+using ..electron_fluid_equations: calculate_electron_n_upar_from_charge_conservation!
 using ..electron_fluid_equations: calculate_electron_qpar!, electron_fluid_qpar_boundary_condition!
 using ..electron_fluid_equations: calculate_electron_parallel_friction_force!
 using ..electron_kinetic_equation: update_electron_pdf!, enforce_boundary_condition_on_electron_pdf!
@@ -150,6 +149,7 @@ function init_pdf_and_moments!(pdf, moments, fields, geometry, composition, r, z
             init_density!(moments.ion.dens, z, r, species.ion, n_ion_species)
             # initialise the ion parallel flow profile
             init_upar!(moments.ion.upar, z, r, species.ion, n_ion_species)
+            @. moments.ion.n_upar = moments.ion.dens * moments.ion.upar
             # initialise the ion parallel thermal speed profile
             init_vth!(moments.ion.vth, z, r, species.ion, n_ion_species)
             @. moments.ion.temp = 0.5 * moments.ion.vth^2
@@ -163,7 +163,7 @@ function init_pdf_and_moments!(pdf, moments, fields, geometry, composition, r, z
                 @. moments.ion.ppar = moments.ion.p
                 @. moments.ion.pperp = moments.ion.p
             end
-            if moments.evolve_density || moments.evolve_upar || moments.evolve_p
+            if moments.evolve_density || moments.evolve_n_upar || moments.evolve_p
                 @. moments.ion.constraints_A_coefficient = 1.0
                 @. moments.ion.constraints_B_coefficient = 0.0
                 @. moments.ion.constraints_C_coefficient = 0.0
@@ -173,6 +173,7 @@ function init_pdf_and_moments!(pdf, moments, fields, geometry, composition, r, z
                 init_density!(moments.neutral.dens, z, r, species.neutral, n_neutral_species)
                 # initialise the z-component of the neutral flow
                 init_uz!(moments.neutral.uz, z, r, species.neutral, n_neutral_species)
+                @. moments.neutral.n_uz = moments.neutral.dens * moments.neutral.uz
                 # initialise the r-component of the neutral flow
                 init_ur!(moments.neutral.ur, z, r, species.neutral, n_neutral_species)
                 # initialise the zeta-component of the neutral flow
@@ -190,7 +191,7 @@ function init_pdf_and_moments!(pdf, moments, fields, geometry, composition, r, z
                     @. moments.neutral.pr = moments.neutral.p
                     @. moments.neutral.pzeta = moments.neutral.p
                 end
-                if moments.evolve_density || moments.evolve_upar || moments.evolve_p
+                if moments.evolve_density || moments.evolve_n_upar || moments.evolve_p
                     @. moments.neutral.constraints_A_coefficient = 1.0
                     @. moments.neutral.constraints_B_coefficient = 0.0
                     @. moments.neutral.constraints_C_coefficient = 0.0
@@ -212,7 +213,7 @@ function init_pdf_and_moments!(pdf, moments, fields, geometry, composition, r, z
         update_ion_qpar!(moments.ion.qpar, moments.ion.dens, moments.ion.upar,
                          moments.ion.vth, moments.ion.dT_dz, pdf.ion.norm, vpa, vperp, z,
                          r, composition, drift_kinetic_ions, collisions,
-                         moments.evolve_density, moments.evolve_upar, moments.evolve_p)
+                         moments.evolve_density, moments.evolve_n_upar, moments.evolve_p)
 
         @begin_serial_region()
         @serial_region begin
@@ -220,6 +221,7 @@ function init_pdf_and_moments!(pdf, moments, fields, geometry, composition, r, z
             # we only set the values to avoid false positives from the debug checks
             # (when @debug_track_initialized is active).
             moments.electron.dens .= 0.0
+            moments.electron.n_upar .= 0.0
             moments.electron.upar .= 0.0
             moments.electron.p .= 0.0
             moments.electron.ppar .= 0.0
@@ -244,20 +246,20 @@ function init_pdf_and_moments!(pdf, moments, fields, geometry, composition, r, z
             update_neutral_qz!(moments.neutral.qz, moments.neutral.dens,
                                moments.neutral.uz, moments.neutral.vth, pdf.neutral.norm,
                                vz, vr, vzeta, z, r, composition, moments.evolve_density,
-                               moments.evolve_upar, moments.evolve_p)
+                               moments.evolve_n_upar, moments.evolve_p)
             update_neutral_pz!(moments.neutral.pz, moments.neutral.dens,
                                moments.neutral.uz, moments.neutral.p, moments.neutral.vth,
                                pdf.neutral.norm, vz, vr, vzeta, z, r, composition,
-                               moments.evolve_density, moments.evolve_upar,
+                               moments.evolve_density, moments.evolve_n_upar,
                                moments.evolve_p)
             update_neutral_pr!(moments.neutral.pr, moments.neutral.dens,
                                moments.neutral.ur, moments.neutral.vth, pdf.neutral.norm,
                                vz, vr, vzeta, z, r, composition, moments.evolve_density,
-                               moments.evolve_upar, moments.evolve_p)
+                               moments.evolve_n_upar, moments.evolve_p)
             update_neutral_pzeta!(moments.neutral.pzeta, moments.neutral.dens,
                                   moments.neutral.uzeta, moments.neutral.vth,
                                   pdf.neutral.norm, vz, vr, vzeta, z, r, composition,
-                                  moments.evolve_density, moments.evolve_upar,
+                                  moments.evolve_density, moments.evolve_n_upar,
                                   moments.evolve_p)
         end
     end
@@ -285,6 +287,10 @@ function initialize_electrons!(pdf, moments, fields, geometry, composition, r, z
     # initialise the electron parallel flow profile
     init_electron_upar!(moments.electron.upar, moments.electron.dens, moments.ion.upar,
                         moments.ion.dens, composition.electron_physics, r, z)
+    @begin_r_z_region()
+    @loop_r_z ir iz begin
+        moments.electron.n_upar[iz,ir] = moments.electron.dens[iz,ir] * moments.electron.upar[iz,ir]
+    end
     # different choices for initialization of electron temperature/pressure/vth depending on whether
     # we are restarting from a previous simulation with Boltzmann electrons or not
     if restart_electron_physics === nothing
@@ -472,11 +478,11 @@ function initialize_electrons!(pdf, moments, fields, geometry, composition, r, z
     @begin_serial_region()
     @serial_region begin
         scratch[1].electron_density .= moments.electron.dens
-        scratch[1].electron_upar .= moments.electron.upar
+        scratch[1].electron_n_upar .= moments.electron.n_upar
         scratch[1].electron_p .= moments.electron.p
         n_rk_stages = t_params.n_rk_stages
         scratch[n_rk_stages+1].electron_density .= moments.electron.dens
-        scratch[n_rk_stages+1].electron_upar .= moments.electron.upar
+        scratch[n_rk_stages+1].electron_n_upar .= moments.electron.n_upar
         scratch[n_rk_stages+1].electron_p .= moments.electron.p
     end
     if scratch_electron !== nothing
@@ -524,7 +530,7 @@ function initialize_pdf!(pdf, moments, composition, r, z, vperp, vpa, vzeta, vr,
                     moments.ion.upar[:,ir,is], moments.ion.p[:,ir,is],
                     moments.ion.ppar[:,ir,is], moments.ion.vth[:,ir,is],
                     moments.ion.v_norm_fac[:,ir,is], moments.evolve_density,
-                    moments.evolve_upar, moments.evolve_p)
+                    moments.evolve_n_upar, moments.evolve_p)
             end
             @views wall_flux_0[ir,is] = -(moments.ion.dens[1,ir,is] *
                                           moments.ion.upar[1,ir,is])
@@ -532,6 +538,7 @@ function initialize_pdf!(pdf, moments, composition, r, z, vperp, vpa, vzeta, vr,
                                         moments.ion.upar[end,ir,is]
 
             @loop_z iz begin
+                moments.ion.n_upar[iz,ir,is] = moments.ion.dens[iz,ir,is] * moments.ion.upar[iz,ir,is]
                 if moments.evolve_density == false
                     @. pdf.ion.norm[:,:,iz,ir,is] *= moments.ion.dens[iz,ir,is]
                 end
@@ -550,10 +557,11 @@ function initialize_pdf!(pdf, moments, composition, r, z, vperp, vpa, vzeta, vr,
                 moments.neutral.dens[:,ir,isn], moments.neutral.uz[:,ir,isn],
                 moments.neutral.p[:,ir,isn], moments.neutral.vth[:,ir,isn],
                 moments.neutral.v_norm_fac[:,ir,isn], moments.evolve_density,
-                moments.evolve_upar, moments.evolve_p,
+                moments.evolve_n_upar, moments.evolve_p,
                 wall_flux_0[ir,min(isn,composition.n_ion_species)],
                 wall_flux_L[ir,min(isn,composition.n_ion_species)])
             @loop_z iz begin
+                moments.neutral.n_uz[iz,ir,is] = moments.neutral.dens[iz,ir,is] * moments.neutral.uz[iz,ir,is]
                 if moments.evolve_density == false
                     @. pdf.neutral.norm[:,:,:,iz,ir,isn] *= moments.neutral.dens[iz,ir,isn]
                 end
@@ -672,7 +680,7 @@ function initialize_electron_pdf!(scratch, scratch_electron, pdf, moments, field
                 for ir ∈ 1:r.n
                     setup_electron_io(t_params.electron.debug_io[1], vpa, vperp, z, r,
                                       composition, collisions, moments.evolve_density,
-                                      moments.evolve_upar, moments.evolve_p,
+                                      moments.evolve_n_upar, moments.evolve_p,
                                       external_source_settings, t_params.electron,
                                       t_params.electron.debug_io[2], -1, (),
                                       "electron_debug"; ir=ir)
@@ -687,7 +695,7 @@ function initialize_electron_pdf!(scratch, scratch_electron, pdf, moments, field
             io_initial_electron = setup_electron_io(io_input, vpa, vperp, z, r,
                                                     composition, collisions,
                                                     moments.evolve_density,
-                                                    moments.evolve_upar,
+                                                    moments.evolve_n_upar,
                                                     moments.evolve_p,
                                                     external_source_settings,
                                                     t_params.electron, input_dict,
@@ -1128,7 +1136,7 @@ end
 """
 function init_ion_pdf_over_density!(pdf, spec, composition, vpa, vperp, z,
         vperp_spectral, vpa_spectral, density, upar, p, ppar, vth, v_norm_fac,
-        evolve_density, evolve_upar, evolve_p)
+        evolve_density, evolve_n_upar, evolve_p)
 
     # Prefactor for Maxwellian distribution functions
     if vperp.n == 1
@@ -1142,15 +1150,15 @@ function init_ion_pdf_over_density!(pdf, spec, composition, vpa, vperp, z,
             for iz ∈ 1:z.n
                 # obtain (vpa - upar)/vth
                 if evolve_p
-                    # if evolve_upar = true and evolve_p = true, then vpa coordinate is (vpa-upar)/vth;
-                    if evolve_upar
+                    # if evolve_n_upar = true and evolve_p = true, then vpa coordinate is (vpa-upar)/vth;
+                    if evolve_n_upar
                         @. vpa.scratch = vpa.grid
-                        # if evolve_upar = false and evolve_p = true, then vpa coordinate is vpa/vth;
+                        # if evolve_n_upar = false and evolve_p = true, then vpa coordinate is vpa/vth;
                     else
                         @. vpa.scratch = vpa.grid - upar[iz]/vth[iz]
                     end
-                    # if evolve_upar = true and evolve_p = false, then vpa coordinate is vpa-upar;
-                elseif evolve_upar
+                    # if evolve_n_upar = true and evolve_p = false, then vpa coordinate is vpa-upar;
+                elseif evolve_n_upar
                     @. vpa.scratch = vpa.grid/vth[iz]
                     # if evolve_upar = false and evolve_p = false, then vpa coordinate is vpa;
                 else
@@ -1187,7 +1195,7 @@ function init_ion_pdf_over_density!(pdf, spec, composition, vpa, vperp, z,
                 # but may not be exactly unity due to quadrature errors
                 densfac = integral(view(pdf,:,:,iz), vpa.grid, 0, vpa.wgts, vperp.grid, 0, vperp.wgts)
                 # Save w_s = vpa - upar_s in vpa.scratch
-                if evolve_upar
+                if evolve_n_upar
                     vpa.scratch .= vpa.grid
                 else
                     @. vpa.scratch = vpa.grid - upar[iz]
@@ -1204,7 +1212,7 @@ function init_ion_pdf_over_density!(pdf, spec, composition, vpa, vperp, z,
                                + integral(pdf[:,:,iz], vpa.scratch, 0, vpa.wgts, vperp.grid,
                                           2, vperp.wgts))
                 # pfac2 = the integral of the pdf over v-space, weighted by m_s w_s^2 (w_s^2 - vths^2 / 2) / vth^4
-                if evolve_upar
+                if evolve_n_upar
                     upar_offset = 0.0
                 else
                     upar_offset = upar[iz]
@@ -1453,7 +1461,7 @@ end
 function init_neutral_pdf_over_density!(pdf, spec, composition, vz, vr, vzeta, z,
                                         vzeta_spectral, vr_spectral, vz_spectral, density,
                                         uz, p, vth, v_norm_fac, evolve_density,
-                                        evolve_upar, evolve_p, wall_flux_0, wall_flux_L)
+                                        evolve_n_upar, evolve_p, wall_flux_0, wall_flux_L)
 
     zero = 1.0e-14
 
@@ -1474,16 +1482,16 @@ function init_neutral_pdf_over_density!(pdf, spec, composition, vz, vr, vzeta, z
                 # obtain (vz - uz)/vth
                 if evolve_p
                     # if evolve_upar = true and evolve_p = true, then vz coordinate is (vz-uz)/vth;
-                    if evolve_upar
+                    if evolve_n_upar
                         @. vz.scratch = vz.grid
-                        # if evolve_upar = false and evolve_p = true, then vz coordinate is vz/vth;
+                        # if evolve_n_upar = false and evolve_p = true, then vz coordinate is vz/vth;
                     else
                         @. vz.scratch = vz.grid - uz[iz]/vth[iz]
                     end
-                    # if evolve_upar = true and evolve_p = false, then vz coordinate is vz-uz;
-                elseif evolve_upar
+                    # if evolve_n_upar = true and evolve_p = false, then vz coordinate is vz-uz;
+                elseif evolve_n_upar
                     @. vz.scratch = vz.grid/vth[iz]
-                    # if evolve_upar = false and evolve_p = false, then vz coordinate is vz;
+                    # if evolve_n_upar = false and evolve_p = false, then vz coordinate is vz;
                 else
                     @. vz.scratch = (vz.grid - uz[iz])/vth[iz]
                 end
@@ -1521,7 +1529,7 @@ function init_neutral_pdf_over_density!(pdf, spec, composition, vz, vr, vzeta, z
                 densfac = integral(view(pdf,:,:,:,iz), vz.grid, 0, vz.wgts, vr.grid, 0,
                                    vr.wgts, vzeta.grid, 0, vzeta.wgts)
                 # Save w_s = vz - upar_s in vz.scratch
-                if evolve_upar
+                if evolve_n_upar
                     vz.scratch .= vz.grid
                 else
                     @. vz.scratch = vz.grid - uz[iz]
@@ -1540,7 +1548,7 @@ function init_neutral_pdf_over_density!(pdf, spec, composition, vz, vr, vzeta, z
                                + integral(pdf[:,:,:,iz], vz.scratch, 0, vz.wgts, vr.grid, 0,
                                           vr.wgts, vzeta.grid, 2, vzeta.wgts))
                 # pfac2 = the integral of the pdf over v-space, weighted by m_s w_s^2 (w_s^2 - vths^2 / 2) / vth^4
-                if evolve_upar
+                if evolve_n_upar
                     uz_offset = 0.0
                 else
                     uz_offset = uz[iz]
@@ -1795,7 +1803,7 @@ function init_neutral_pdf_over_density!(pdf, spec, composition, vz, vr, vzeta, z
             convert_full_f_neutral_to_normalised!(pdf, density, uz, p, vth, vzeta, vr,
                                                   vz, vzeta_spectral, vr_spectral,
                                                   vz_spectral, evolve_density,
-                                                  evolve_upar, evolve_p,
+                                                  evolve_n_upar, evolve_p,
                                                   vgrid_scale_factor)
 
             if !evolve_density
@@ -1967,19 +1975,21 @@ function init_pdf_moments_manufactured_solns!(pdf, moments, vz, vr, vzeta, vpa, 
     # update upar, ppar, qpar, vth consistent with manufactured solns
     update_density!(moments.ion.dens, pdf.ion.norm, vpa, vperp, z, r, composition)
     # get particle flux
-    update_upar!(moments.ion.upar, moments.ion.dens, moments.ion.ppar, pdf.ion.norm, vpa,
-                 vperp, z, r, composition, moments.evolve_density, moments.evolve_p)
+    update_n_upar!(moments.ion.n_upar, moments.ion.dens, moments.ion.ppar, pdf.ion.norm,
+                   vpa, vperp, z, r, composition, moments.evolve_density,
+                   moments.evolve_p)
+    update_upar!(moments.ion.upar, moments.ion.dens, moments.ion.n_upar)
     update_p!(moments.ion.p, moments.ion.dens, moments.ion.upar, pdf.ion.norm, vpa, vperp,
-              z, r, composition, moments.evolve_density, moments.evolve_upar)
+              z, r, composition, moments.evolve_density, moments.evolve_n_upar)
     update_ppar!(moments.ion.ppar, moments.ion.dens, moments.ion.upar, moments.ion.vth, moments.ion.p,
                  pdf.ion.norm, vpa, vperp, z, r, composition, moments.evolve_density,
-                 moments.evolve_upar, moments.evolve_p)
+                 moments.evolve_n_upar, moments.evolve_p)
     update_pperp!(moments.ion.pperp, moments.ion.p, moments.ion.ppar, vperp, z, r,
                   composition)
     update_ion_qpar!(moments.ion.qpar, moments.ion.dens, moments.ion.upar,
                      moments.ion.vth, moments.ion.dT_dz, pdf.ion.norm, vpa, vperp, z, r,
                      composition, drift_kinetic_ions, collisions, moments.evolve_density,
-                     moments.evolve_upar, moments.evolve_p)
+                     moments.evolve_n_upar, moments.evolve_p)
     update_vth!(moments.ion.vth, moments.ion.temp, moments.ion.p, moments.ion.dens, z, r,
                 composition)
 
@@ -1989,6 +1999,7 @@ function init_pdf_moments_manufactured_solns!(pdf, moments, vz, vr, vzeta, vpa, 
         # we only set the values to avoid false positives from the debug checks
         # (when @debug_track_initialized is active).
         moments.electron.dens .= 0.0
+        moments.electron.n_upar .= 0.0
         moments.electron.upar .= 0.0
         moments.electron.p .= 0.0
         moments.electron.ppar .= 0.0
@@ -2015,9 +2026,10 @@ function init_pdf_moments_manufactured_solns!(pdf, moments, vz, vr, vzeta, vpa, 
         # get consistent moments with manufactured solutions
         update_neutral_density!(moments.neutral.dens, pdf.neutral.norm, vz, vr, vzeta, z,
                                 r, composition)
-        update_neutral_uz!(moments.neutral.uz, moments.neutral.dens, moments.neutral.vth,
-                           pdf.neutral.norm, vz, vr, vzeta, z, r, composition,
-                           moments.evolve_density, moments.evolve_p)
+        update_neutral_n_uz!(moments.neutral.n_uz, moments.neutral.dens,
+                            moments.neutral.vth, pdf.neutral.norm, vz, vr, vzeta, z, r,
+                            composition, moments.evolve_density, moments.evolve_p)
+        update_neutral_uz!(moments.neutral.uz, moments.neutral.dens, moments.neutral.n_uz)
         update_neutral_ur!(moments.neutral.ur, moments.neutral.dens, moments.neutral.vth,
                            pdf.neutral.norm, vz, vr, vzeta, z, r, composition,
                            moments.evolve_density, moments.evolve_p)
@@ -2027,23 +2039,23 @@ function init_pdf_moments_manufactured_solns!(pdf, moments, vz, vr, vzeta, vpa, 
         update_neutral_p!(moments.neutral.p, moments.neutral.dens, moments.neutral.uz,
                           moments.neutral.ur, moments.neutral.uzeta, moments.neutral.vth,
                           pdf.neutral.norm, vz, vr, vzeta, z, r, composition,
-                          moments.evolve_density, moments.evolve_upar, moments.evolve_p)
+                          moments.evolve_density, moments.evolve_n_upar, moments.evolve_p)
         update_neutral_pz!(moments.neutral.pz, moments.neutral.dens, moments.neutral.uz,
                            moments.neutral.p, moments.neutral.vth, pdf.neutral.norm, vz,
                            vr, vzeta, z, r, composition, moments.evolve_density,
-                           moments.evolve_upar, moments.evolve_p)
+                           moments.evolve_n_upar, moments.evolve_p)
         update_neutral_pr!(moments.neutral.pr, moments.neutral.dens, moments.neutral.ur,
                            moments.neutral.vth, pdf.neutral.norm, vz, vr, vzeta, z, r,
-                           composition, moments.evolve_density, moments.evolve_upar,
+                           composition, moments.evolve_density, moments.evolve_n_upar,
                            moments.evolve_p)
         update_neutral_pzeta!(moments.neutral.pzeta, moments.neutral.dens,
                               moments.neutral.uzeta, moments.neutral.vth,
                               pdf.neutral.norm, vz, vr, vzeta, z, r, composition,
-                              moments.evolve_density, moments.evolve_upar,
+                              moments.evolve_density, moments.evolve_n_upar,
                               moments.evolve_p)
         update_neutral_qz!(moments.neutral.qz, moments.neutral.dens, moments.neutral.uz,
                            moments.neutral.vth, pdf.neutral.norm, vz, vr, vzeta, z, r,
-                           composition, moments.evolve_density, moments.evolve_upar,
+                           composition, moments.evolve_density, moments.evolve_n_upar,
                            moments.evolve_p)
     end
     return nothing
@@ -2065,7 +2077,7 @@ The velocity grid that the input `f` is defined on can be scaled by `vgrid_scale
 """
 function convert_full_f_ion_to_normalised!(f, density, upar, p, vth, vperp, vpa,
                                            vperp_spectral, vpa_spectral, evolve_density,
-                                           evolve_upar, evolve_p,
+                                           evolve_n_upar, evolve_p,
                                            vgrid_scale_factor=ones(size(vth)))
 
     @loop_z iz begin
@@ -2100,11 +2112,11 @@ function convert_full_f_ion_to_normalised!(f, density, upar, p, vth, vperp, vpa,
         end
 
         # Interpolate f to moment kinetic grid
-        if evolve_p || evolve_upar
+        if evolve_p || evolve_n_upar
             # The values to interpolate *to* are the v_parallel/vperp values corresponding
             # to the w_parallel/w_perp grid
             vpa.scratch .= vpagrid_to_vpa(vpa.grid, vth[iz], upar[iz], evolve_p,
-                                          evolve_upar)
+                                          evolve_n_upar)
             if evolve_p
                 @. vperp.scratch .= vperp.grid * vth[iz]
             else
@@ -2147,7 +2159,7 @@ The velocity grid that the input `f` is defined on can be scaled by `vgrid_scale
 """
 function convert_full_f_neutral_to_normalised!(f, density, uz, p, vth, vzeta, vr, vz,
                                                vzeta_spectral, vr_spectral, vz_spectral,
-                                               evolve_density, evolve_upar, evolve_p,
+                                               evolve_density, evolve_n_upar, evolve_p,
                                                vgrid_scale_factor=ones(size(vth)))
 
     @loop_z iz begin
@@ -2194,10 +2206,10 @@ function convert_full_f_neutral_to_normalised!(f, density, uz, p, vth, vzeta, vr
         end
 
         # Interpolate f to moment kinetic grid
-        if evolve_p || evolve_upar
+        if evolve_p || evolve_n_upar
             # The values to interpolate *to* are the vz/vzeta/vr values corresponding to
             # the wz/wzeta/wr grid.
-            vz.scratch .= vpagrid_to_vpa(vz.grid, vth[iz], uz[iz], evolve_p, evolve_upar)
+            vz.scratch .= vpagrid_to_vpa(vz.grid, vth[iz], uz[iz], evolve_p, evolve_n_upar)
             if evolve_p
                 @. vzeta.scratch = vzeta.grid * vth[iz]
                 @. vr.scratch = vr.grid * vth[iz]
