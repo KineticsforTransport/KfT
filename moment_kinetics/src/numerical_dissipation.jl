@@ -142,7 +142,7 @@ vpa_boundary_buffer_damping_rate = 0.1
 
     @begin_s_r_z_region()
 
-    if moments.evolve_upar && moments.evolve_ppar
+    if moments.evolve_n_upar && moments.evolve_ppar
         @loop_s_r_z is ir iz begin
             for ivpa ∈ vpa_inds
                 f_out[ivpa,iz,ir,is] += dt*vpa.scratch[ivpa]*
@@ -159,7 +159,7 @@ vpa_boundary_buffer_damping_rate = 0.1
                                          fvec_in.pdf[ivpa,iz,ir,is])
             end
         end
-    elseif moments.evolve_upar
+    elseif moments.evolve_n_upar
         @loop_s_r_z is ir iz begin
             vth = sqrt(2.0*fvec_in.ppar[iz,ir,is]/fvec_in.density[iz,ir,is])
             for ivpa ∈ vpa_inds
@@ -319,12 +319,12 @@ vpa_dissipation_coefficient = 0.1
     # # diffuse the result, i.e.
     # # df/dt += diffusion_coefficient * f_M d2(f/f_M)/dvpa2
     # # Store f_M in vpa.scratch
-    # if (moments.evolve_ppar || moments.evolve_vth) && moments.evolve_upar
+    # if (moments.evolve_ppar || moments.evolve_vth) && moments.evolve_n_upar
     #     @views @. vpa.scratch = exp(-vpa.grid^2)
     # elseif moments.evolve_ppar || moments.evolve_vth
     #     vth = sqrt(2.0*fvec_in.ppar[iz,ir,is]/fvec_in.density[iz,ir,is])
     #     @views @. vpa.scratch = exp(-(vpa.grid - fvec_in.upar[iz,ir,is]/vth)^2)
-    # elseif moments.evolve_upar
+    # elseif moments.evolve_n_upar
     #     vth = sqrt(2.0*fvec_in.ppar[iz,ir,is]/fvec_in.density[iz,ir,is])
     #     @views @. vpa.scratch = exp(-(vpa.grid/vth)^2)
     # elseif moments.evolve_density

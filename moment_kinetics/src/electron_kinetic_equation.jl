@@ -372,8 +372,7 @@ function update_electron_pdf_with_time_advance!(scratch, pdf, moments,
                                                              composition, ir)
                         end
                         calculate_electron_moment_derivatives_no_r!(
-                            moments, this_dens, this_p, scratch_dummy, z,
-                            z_spectral,
+                            moments, this_dens, this_p, scratch_dummy, z, z_spectral,
                             num_diss_params.electron.moment_dissipation_coefficient, ir)
                     else
                         # compute the z-derivative of the parallel electron heat flux
@@ -2060,7 +2059,7 @@ end
     electron_density
     electron_n_upar
     ion_density
-    ion_upar
+    ion_n_upar
     r
     z
     vperp
@@ -2090,7 +2089,7 @@ function (res::kinetic_electron_residual!)(this_residual, new_variables; krylov=
     electron_density = res.electron_density
     electron_n_upar = res.electron_n_upar
     ion_density = res.ion_density
-    ion_upar = res.ion_upar
+    ion_n_upar = res.ion_n_upar
     r = res.r
     z = res.z
     vperp = res.vperp
@@ -2264,19 +2263,19 @@ pressure \$p_{e∥}\$.
         electron_density = @view moments.electron.dens[:,ir]
         electron_n_upar = @view moments.electron.n_upar[:,ir]
         ion_density = @view moments.ion.dens[:,ir,:]
-        ion_upar = @view moments.ion.upar[:,ir,:]
+        ion_n_upar = @view moments.ion.n_upar[:,ir,:]
     else
         electron_density = @view old_scratch.electron_density[:,ir]
         electron_n_upar = @view old_scratch.electron_n_upar[:,ir]
         ion_density = @view old_scratch.density[:,ir,:]
-        ion_upar = @view old_scratch.upar[:,ir,:]
+        ion_n_upar = @view old_scratch.n_upar[:,ir,:]
     end
 
     # Calculate derived moments and derivatives using updated f_electron
     @views calculate_electron_moments_no_r!(f_electron_new, electron_density,
-                                            electron_p_new, ion_density, ion_upar,
-                                            moments, composition, collisions, r, z, vperp,
-                                            vpa, ir)
+                                            electron_n_upar, electron_p_new, ion_density,
+                                            ion_n_upar, moments, composition, collisions, r,
+                                            z, vperp, vpa, ir)
     @views calculate_electron_moment_derivatives_no_r!(
                moments, electron_density, electron_p_new, scratch_dummy, z, z_spectral,
                num_diss_params.electron.moment_dissipation_coefficient, ir)
@@ -2309,7 +2308,7 @@ pressure \$p_{e∥}\$.
                                                 collisions, external_source_settings,
                                                 t_params, ion_dt, scratch_dummy, this_phi,
                                                 electron_density, electron_n_upar,
-                                                ion_density, ion_upar, r, z, vperp, vpa,
+                                                ion_density, ion_n_upar, r, z, vperp, vpa,
                                                 z_spectral, vperp_spectral, vpa_spectral,
                                                 z_advect, vpa_advect, num_diss_params, ir)
 
@@ -2422,11 +2421,11 @@ time-level.
                                                     collisions, external_source_settings,
                                                     t_params, ion_dt, scratch_dummy,
                                                     this_phi, electron_density,
-                                                    electron_n_upar, ion_density, ion_upar,
-                                                    r, z, vperp, vpa, z_spectral,
-                                                    vperp_spectral, vpa_spectral,
-                                                    z_advect, vpa_advect, num_diss_params,
-                                                    ir)
+                                                    electron_n_upar, ion_density,
+                                                    ion_n_upar, r, z, vperp, vpa,
+                                                    z_spectral, vperp_spectral,
+                                                    vpa_spectral, z_advect, vpa_advect,
+                                                    num_diss_params, ir)
 
         residual = (scratch_dummy.implicit_buffer_z_1,
                     scratch_dummy.implicit_buffer_vpavperpz_1)
@@ -2575,7 +2574,7 @@ function apply_electron_bc_and_constraints_no_r!(
         (A[iz,ir], B[iz,ir], C[iz,ir]) =
             @views hard_force_moment_constraints!(f_electron[:,:,iz],
                                                   (evolve_density=true,
-                                                   evolve_upar=true,
+                                                   evolve_n_upar=true,
                                                    evolve_p=true,
                                                    enforce_conservation=true), vpa, vperp)
     end

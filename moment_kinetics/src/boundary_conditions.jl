@@ -535,7 +535,7 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                                     Maxwellian_prefactor / fudge_factor_1V *
                                     exp(-(vpa_grid[ivpa]^2 + vperp_grid[ivperp]^2) / fudge_factor_1V^2)
                             end
-                        elseif moments.evolve_upar
+                        elseif moments.evolve_n_upar
                             @loop_vperp_vpa ivperp ivpa begin
                                 bc_ion_pdf[ivpa,ivperp,z_range,is] .=
                                     Maxwellian_prefactor / vth^vth_power *
@@ -585,7 +585,7 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                                     Maxwellian_prefactor / fudge_factor_1V *
                                     exp(-(vpa_grid[ivpa]^2 + vperp_grid[ivperp]^2) / fudge_factor_1V^2)
                             end
-                        elseif moments.evolve_upar
+                        elseif moments.evolve_n_upar
                             @loop_vperp_vpa ivperp ivpa begin
                                 bc_electron_pdf[ivpa,ivperp,z_range] .=
                                     Maxwellian_prefactor / vth^vth_power *
@@ -639,7 +639,7 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                                     Maxwellian_prefactor / fudge_factor_1V *
                                     exp(-(vpa_grid[ivpa]^2 + vperp_grid[ivperp]^2) / fudge_factor_1V^2)
                             end
-                        elseif moments.evolve_upar
+                        elseif moments.evolve_n_upar
                             @loop_vperp_vpa ivperp ivpa begin
                                 bc_neutral_pdf[ivpa,ivperp,z_range,isn] .=
                                     Maxwellian_prefactor / vth^vth_power *
@@ -1280,13 +1280,13 @@ shared-memory-parallelised loop.
         @begin_s_r_region()
         @loop_s is begin
             # zero incoming BC for ions, as they recombine at the wall
-            if moments.evolve_upar
+            if moments.evolve_n_upar
                 @loop_r ir begin
                     @views enforce_zero_incoming_bc!(
                         pdf[:,:,:,ir,is], z, vperp, vpa, density[:,ir,is], upar[:,ir,is],
                         vth[:,ir,is], ppar[:,ir,is], fields.vEz[:,ir,is],
-                        geometry.bzed[:,ir], moments.evolve_upar, moments.evolve_p, zero,
-                        fields.phi[:,ir], vpavperp_buffer)
+                        geometry.bzed[:,ir], moments.evolve_n_upar, moments.evolve_p,
+                        zero, fields.phi[:,ir], vpavperp_buffer)
                 end
             else
                 @loop_r ir begin
@@ -1861,7 +1861,7 @@ enforce boundary conditions on neutral particle f in z
                     pdf[:,:,:,:,ir,isn], z, vzeta, vr, vz, pz[:,ir,isn], uz[:,ir,isn],
                     density[:,ir,isn], ion_flux_0, ion_flux_L, z_boundaries,
                     T_wall_over_m, composition.recycling_fraction, moments.evolve_p,
-                    moments.evolve_upar, moments.evolve_density, zero,
+                    moments.evolve_n_upar, moments.evolve_density, zero,
                     pdf_buffer[:,:,:,ir,isn])
             end
         end
@@ -1995,13 +1995,13 @@ function enforce_zero_incoming_bc!(pdf, speed, z, zero, phi, epsz)
     end
 end
 function get_ion_z_boundary_cutoff_indices(density, upar, vEz, bz, vth0, vthL,
-                                           evolve_upar, evolve_p, z, vpa, zero, phi)
+                                           evolve_n_upar, evolve_p, z, vpa, zero, phi)
     epsz = z.boundary_parameters.epsz
     if z.irank == 0
         deltaphi = phi[2] - phi[1]
         vz_cut = deltaphi > 0 ? bz[1] * sqrt(2.0 * deltaphi)*(epsz^0.25) : 0.0
         vpa_cut = (vz_cut - vEz[1]) / bz[1]
-        wpa_cut_lower = vpa_to_wpa(vpa_cut, vth0, upar[1], evolve_p, evolve_upar)
+        wpa_cut_lower = vpa_to_wpa(vpa_cut, vth0, upar[1], evolve_p, evolve_n_upar)
         last_negative_vpa_ind = searchsortedlast(vpa.grid, wpa_cut_lower)
     else
         wpa_cut_lower = nothing
@@ -2011,7 +2011,7 @@ function get_ion_z_boundary_cutoff_indices(density, upar, vEz, bz, vth0, vthL,
         deltaphi = phi[end-1] - phi[end]
         vz_cut = deltaphi > 0 ? bz[end] * sqrt(2.0 * deltaphi)*(epsz^0.25) : 0.0
         vpa_cut = (vz_cut - vEz[end]) / bz[end]
-        wpa_cut_upper = vpa_to_wpa(vpa_cut, vthL, upar[end], evolve_p, evolve_upar)
+        wpa_cut_upper = vpa_to_wpa(vpa_cut, vthL, upar[end], evolve_p, evolve_n_upar)
         first_positive_vpa_ind = searchsortedfirst(vpa.grid, wpa_cut_upper)
     else
         wpa_cut_upper = nothing
@@ -2020,7 +2020,7 @@ function get_ion_z_boundary_cutoff_indices(density, upar, vEz, bz, vth0, vthL,
     return last_negative_vpa_ind, wpa_cut_lower, first_positive_vpa_ind, wpa_cut_upper
 end
 function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::coordinate,
-                                   density, upar, vth, ppar, vEz, bz, evolve_upar,
+                                   density, upar, vth, ppar, vEz, bz, evolve_n_upar,
                                    evolve_p, zero, phi, vpavperp_buffer)
     if z.irank != 0 && z.irank != z.nrank - 1
         # No z-boundary in this block
@@ -2039,8 +2039,8 @@ function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::c
 
     # absolute velocity at left boundary
     last_negative_vpa_ind, wpa_cut_lower, first_positive_vpa_ind, wpa_cut_upper =
-        get_ion_z_boundary_cutoff_indices(density, upar, vEz, bz, vth0, vthL, evolve_upar,
-                                          evolve_p, z, vpa, zero, phi)
+        get_ion_z_boundary_cutoff_indices(density, upar, vEz, bz, vth0, vthL,
+                                          evolve_n_upar, evolve_p, z, vpa, zero, phi)
     if z.irank == 0
         pdf[last_negative_vpa_ind+1:end,:,1] .= 0.0
         # Limit last non-zero grid point to be less than the linear fit between the
@@ -2086,7 +2086,7 @@ function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::c
     for (iz, vth, vthpar) ∈ zip(z_range, vth_list, vthpar_list)
         @debug_consistency_checks size(pdf,2) == 1
         f = @view pdf[:,:,iz]
-        if evolve_p && evolve_upar
+        if evolve_p && evolve_n_upar
             I0 = integral((vperp,vpa)->(1), f, vperp, vpa)
             I1 = integral((vperp,vpa)->(vpa), f, vperp, vpa)
             I2 = integral((vperp,vpa)->(vpa^2 + vperp^2), f, vperp, vpa)
@@ -2162,7 +2162,7 @@ function enforce_zero_incoming_bc!(pdf, z::coordinate, vperp::coordinate, vpa::c
             @loop_vperp_vpa ivperp ivpa begin
                 f[ivpa,ivperp] = f[ivpa,ivperp] * (A + B*vpa.grid[ivpa]*vpa.scratch2[ivpa] + C*(vpa.grid[ivpa]^2 + vperp.grid[ivperp]^2)*vpa.scratch2[ivpa])
             end
-        elseif evolve_upar
+        elseif evolve_n_upar
             I0 = integral((vperp,vpa)->(1), f, vperp, vpa)
             I1 = integral((vperp,vpa)->(vpa), f, vperp, vpa)
 
@@ -2259,7 +2259,7 @@ i.e., the incoming flux of neutrals equals the sum of the ion/neutral outgoing f
 """
 function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, uz, density, wall_flux_0,
                                   wall_flux_L, z_boundaries, T_wall_over_m,
-                                  recycling_fraction, evolve_p, evolve_upar,
+                                  recycling_fraction, evolve_p, evolve_n_upar,
                                   evolve_density, zero, pdf_buffer)
 
     # Reduce the ion flux by `recycling_fraction` to account for ions absorbed by the
@@ -2267,7 +2267,7 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, uz, density, wall_f
     wall_flux_0 *= recycling_fraction
     wall_flux_L *= recycling_fraction
 
-    if !evolve_density && !evolve_upar
+    if !evolve_density && !evolve_n_upar
         knudsen_cosine = z_boundaries.knudsen_cosine
 
         if z.irank == 0
@@ -2303,7 +2303,7 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, uz, density, wall_f
                 end
             end
         end
-    elseif !evolve_upar
+    elseif !evolve_n_upar
         # Evolving density case
         knudsen_cosine = z_boundaries.knudsen_cosine
 
@@ -2381,7 +2381,7 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, uz, density, wall_f
             else
                 vth = nothing
             end
-            @. vz.scratch2 = vpagrid_to_vpa(vz.grid, vth, uz[1], evolve_p, evolve_upar)
+            @. vz.scratch2 = vpagrid_to_vpa(vz.grid, vth, uz[1], evolve_p, evolve_n_upar)
 
             # First apply boundary condition that total neutral outflux is equal to ion
             # influx to uz
@@ -2517,7 +2517,7 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, uz, density, wall_f
             else
                 vth = nothing
             end
-            @. vz.scratch2 = vpagrid_to_vpa(vz.grid, vth, uz[end], evolve_p, evolve_upar)
+            @. vz.scratch2 = vpagrid_to_vpa(vz.grid, vth, uz[end], evolve_p, evolve_n_upar)
 
             # First apply boundary condition that total neutral outflux is equal to ion
             # influx to uz
@@ -2644,14 +2644,14 @@ end
 """
 create an array of v_∥ values corresponding to the given vpagrid values
 """
-function vpagrid_to_vpa(vpagrid, vth, upar, evolve_p, evolve_upar)
+function vpagrid_to_vpa(vpagrid, vth, upar, evolve_p, evolve_n_upar)
     if evolve_p
-        if evolve_upar
+        if evolve_n_upar
             return @. vpagrid * vth + upar
         else
             return @. vpagrid * vth
         end
-    elseif evolve_upar
+    elseif evolve_n_upar
         return @. vpagrid + upar
     else
         return vpagrid
@@ -2661,14 +2661,14 @@ end
 """
 create an array of w_∥ values corresponding to the given vpa values
 """
-function vpa_to_wpa(vpa, vth, upar, evolve_p, evolve_upar)
+function vpa_to_wpa(vpa, vth, upar, evolve_p, evolve_n_upar)
     if evolve_p
-        if evolve_upar
+        if evolve_n_upar
             return @. (vpa - upar) / vth
         else
             return @. vpa / vth
         end
-    elseif evolve_upar
+    elseif evolve_n_upar
         return @. vpa - upar
     else
         return vpa

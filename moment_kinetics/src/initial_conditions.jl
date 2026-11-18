@@ -22,7 +22,7 @@ using ..communication
 using ..external_sources
 using ..interpolation: interpolate_to_grid_1d!
 using ..looping
-using ..electron_fluid_equations: calculate_electron_moments!
+using ..electron_fluid_equations: calculate_electron_moments!, calculate_electron_upar!
 using ..electron_kinetic_equation: implicit_electron_advance!
 using ..em_fields: update_phi!
 using ..file_io: setup_electron_io, write_electron_state, finish_electron_io
@@ -285,8 +285,11 @@ function initialize_electrons!(pdf, moments, fields, geometry, composition, r, z
     # initialise the electron density profile
     init_electron_density!(moments.electron.dens, moments.ion.dens, r, z)
     # initialise the electron parallel flow profile
-    init_electron_upar!(moments.electron.upar, moments.electron.dens, moments.ion.upar,
-                        moments.ion.dens, composition.electron_physics, r, z)
+    init_electron_upar!(moments.electron.n_upar, moments.ion.n_upar,
+                        composition.electron_physics, r, z)
+    calculate_electron_upar!(moments.electron.upar, moments.electron.dens,
+                             moments.electron.n_upar)
+    halo_swap!(r, z, moments.electron.upar)
     @begin_r_z_region()
     @loop_r_z ir iz begin
         moments.electron.n_upar[iz,ir] = moments.electron.dens[iz,ir] * moments.electron.upar[iz,ir]
@@ -1104,11 +1107,12 @@ end
 """
 initialise the electron parallel flow density
 """
-function init_electron_upar!(upar_e, dens_e, upar_i, dens_i, electron_model, r, z)
-    calculate_electron_upar_from_charge_conservation!(upar_e, dens_e, upar_i, dens_i, electron_model, r, z)
+function init_electron_upar!(n_upar_e, n_upar_i, electron_model, r, z)
+    calculate_electron_n_upar_from_charge_conservation!(n_upar_e, n_upar_i,
+                                                        electron_model, r, z)
 
     # Ensure subdomain boundary points are initialised.
-    halo_swap!(r, z, upar_e)
+    halo_swap!(r, z, n_upar_e)
 
     return nothing
 end
@@ -1160,7 +1164,7 @@ function init_ion_pdf_over_density!(pdf, spec, composition, vpa, vperp, z,
                     # if evolve_n_upar = true and evolve_p = false, then vpa coordinate is vpa-upar;
                 elseif evolve_n_upar
                     @. vpa.scratch = vpa.grid/vth[iz]
-                    # if evolve_upar = false and evolve_p = false, then vpa coordinate is vpa;
+                    # if evolve_n_upar = false and evolve_p = false, then vpa coordinate is vpa;
                 else
                     @. vpa.scratch = (vpa.grid - upar[iz])/vth[iz]
                 end
@@ -1366,7 +1370,7 @@ function init_ion_pdf_over_density!(pdf, spec, composition, vpa, vperp, z,
             # distribution function (which will be modified from the input moments).
             convert_full_f_ion_to_normalised!(pdf, density, upar, p, vth, vperp, vpa,
                                               vperp_spectral, vpa_spectral,
-                                              evolve_density, evolve_upar, evolve_p,
+                                              evolve_density, evolve_n_upar, evolve_p,
                                               vgrid_scale_factor)
 
             if !evolve_density
@@ -1437,7 +1441,7 @@ function init_ion_pdf_over_density!(pdf, spec, composition, vpa, vperp, z,
             if evolve_p
                 vpa_unnorm = @. vpa.grid * vth[iz] + upar[iz]
                 vperp_unnorm = @. vperp.grid * vth[iz]
-            elseif evolve_upar
+            elseif evolve_n_upar
                 vpa_unnorm = @. vpa.grid + upar[iz]
                 vperp_unnorm = vperp.grid
             else
@@ -1481,7 +1485,7 @@ function init_neutral_pdf_over_density!(pdf, spec, composition, vz, vr, vzeta, z
             for iz ∈ 1:z.n
                 # obtain (vz - uz)/vth
                 if evolve_p
-                    # if evolve_upar = true and evolve_p = true, then vz coordinate is (vz-uz)/vth;
+                    # if evolve_n_upar = true and evolve_p = true, then vz coordinate is (vz-uz)/vth;
                     if evolve_n_upar
                         @. vz.scratch = vz.grid
                         # if evolve_n_upar = false and evolve_p = true, then vz coordinate is vz/vth;

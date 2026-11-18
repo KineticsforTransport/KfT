@@ -87,7 +87,7 @@ to act as the diffusion operator.
         return nothing
     end
 
-    if vperp.n > 1 && (moments.evolve_density || moments.evolve_upar || moments.evolve_ppar)
+    if vperp.n > 1 && (moments.evolve_density || moments.evolve_n_upar || moments.evolve_ppar)
         error("Maxwell diffusion not implemented for 2V moment-kinetic cases yet")
     end
 
@@ -110,14 +110,14 @@ to act as the diffusion operator.
     # - upar: working in peculiar velocity space, so no upar subtraction from vpa 
     # - ppar: normalisation by vth, in 1D is 1/vth prefactor, and grid is normalised by vth,
     # hence no 1/vth^2 term in the exponent.
-    if moments.evolve_density && moments.evolve_upar && moments.evolve_ppar
+    if moments.evolve_density && moments.evolve_n_upar && moments.evolve_ppar
         @loop_s_r_z_vperp is ir iz ivperp begin
             @views @. vpa.scratch = f_in.pdf[:,ivperp,iz,ir,is] - 
                             Maxwellian_prefactor * exp(-((vpa.grid[:])^2 + (vperp.grid[ivperp])^2) )
             second_derivative!(vpa.scratch2, vpa.scratch, vpa, spectral)
             @views @. f_out[:,ivperp,iz,ir,is] += dt * diffusion_coefficient * vpa.scratch2
         end
-    elseif moments.evolve_density && moments.evolve_upar
+    elseif moments.evolve_density && moments.evolve_n_upar
         @loop_s_r_z_vperp is ir iz ivperp begin
             vth = moments.ion.vth[iz,ir,is]
             @views @. vpa.scratch = f_in.pdf[:,ivperp,iz,ir,is] - 
@@ -133,7 +133,7 @@ to act as the diffusion operator.
             second_derivative!(vpa.scratch2, vpa.scratch, vpa, spectral)
             @views @. f_out[:,ivperp,iz,ir,is] += dt * diffusion_coefficient * vpa.scratch2
         end
-    elseif moments.evolve_upar && moments.evolve_ppar
+    elseif moments.evolve_n_upar && moments.evolve_ppar
         @loop_s_r_z_vperp is ir iz ivperp begin
             n = f_in.density[iz,ir,is]
             @views @. vpa.scratch = f_in.pdf[:,ivperp,iz,ir,is] - 
@@ -150,7 +150,7 @@ to act as the diffusion operator.
             second_derivative!(vpa.scratch2, vpa.scratch, vpa, spectral)
             @views @. f_out[:,ivperp,iz,ir,is] += dt * diffusion_coefficient * vpa.scratch2
         end
-    elseif moments.evolve_upar
+    elseif moments.evolve_n_upar
         @loop_s_r_z_vperp is ir iz ivperp begin
             vth = moments.ion.vth[iz,ir,is]
             n = f_in.density[iz,ir,is]
@@ -204,7 +204,7 @@ to act as the diffusion operator.
         return nothing
     end
 
-    if vr.n > 1 && (moments.evolve_density || moments.evolve_upar || moments.evolve_ppar)
+    if vr.n > 1 && (moments.evolve_density || moments.evolve_n_upar || moments.evolve_ppar)
         error("Maxwell diffusion not implemented for 2V moment-kinetic cases yet")
     end
 
@@ -221,7 +221,7 @@ to act as the diffusion operator.
     @begin_sn_r_z_vzeta_vr_region()
 
 
-    if moments.evolve_ppar && moments.evolve_upar
+    if moments.evolve_ppar && moments.evolve_n_upar
         # See similar comments in krook_collisions! function. 
         @loop_sn_r_z_vzeta_vr isn ir iz ivzeta ivr begin
             @views @. vz.scratch = f_in.pdf_neutral[:,ivr,ivzeta,iz,ir,isn] - 
@@ -238,7 +238,7 @@ to act as the diffusion operator.
             second_derivative!(vz.scratch2, vz.scratch, vz, spectral)
             @views @. f_out[:,ivr,ivzeta,iz,ir,isn] += dt * diffusion_coefficient * vz.scratch2
         end
-    elseif moments.evolve_upar
+    elseif moments.evolve_n_upar
         @loop_sn_r_z_vzeta_vr isn ir iz ivzeta ivr begin
             vth = moments.neutral.vth[iz,ir,isn]
             @views @. vz.scratch = f_in.pdf_neutral[:,ivr,ivzeta,iz,ir,isn] - 

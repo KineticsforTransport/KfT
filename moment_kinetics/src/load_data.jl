@@ -446,7 +446,15 @@ function load_mk_options(fid)
     overview = get_group(fid, "overview")
 
     evolve_density = load_variable(overview, "evolve_density")
-    evolve_n_upar = load_variable(overview, "evolve_n_upar")
+    try
+        evolve_n_upar = load_variable(overview, "evolve_n_upar")
+    catch e
+        if isa(e, KeyError)
+            evolve_n_upar = load_variable(overview, "evolve_upar")
+        else
+            rethrow()
+        end
+    end
     if "evolve_p" ∈ keys(overview)
         evolve_p = load_variable(overview, "evolve_p")
     else
@@ -4951,8 +4959,8 @@ const get_variable_funcs = Dict{String,Any}(
             return variable
         end,
     "dnupar_dt" => (run_info; kwargs...) -> begin
-            if !run_info.evolve_upar
-                throw(KeyError("evolve_upar=false, so do not calculate dnupar_dt"))
+            if !run_info.evolve_n_upar
+                throw(KeyError("evolve_n_upar=false, so do not calculate dnupar_dt"))
             end
             all_moments = _get_all_moment_variables(run_info)
             variable = similar(all_moments["parallel_flow"])
@@ -4979,8 +4987,8 @@ const get_variable_funcs = Dict{String,Any}(
             return variable
         end,
     "dupar_dt" => (run_info; kwargs...) -> begin
-            if !run_info.evolve_upar
-                throw(KeyError("evolve_upar=false, so do not calculate dupar_dt"))
+            if !run_info.evolve_n_upar
+                throw(KeyError("evolve_n_upar=false, so do not calculate dupar_dt"))
             end
             dn_dt = get_variable(run_info, "ddens_dt"; kwargs...)
             dnupar_dt = get_variable(run_info, "dnupar_dt"; kwargs...)
@@ -5534,7 +5542,7 @@ const get_variable_funcs = Dict{String,Any}(
                 advect = @view speed[:,:,:,:,:,it]
                 # Only need Er
                 @views update_speed_z!(advect, upar[:,:,:,it], vth[:,:,:,it],
-                                       run_info.evolve_upar, run_info.evolve_p,
+                                       run_info.evolve_n_upar, run_info.evolve_p,
                                        run_info.vpa, run_info.vperp, run_info.z,
                                        run_info.r, run_info.geometry)
             end

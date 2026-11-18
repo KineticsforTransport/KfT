@@ -424,7 +424,7 @@ function analyze_and_plot_data(prefix...; run_index=nothing)
     # load species data
     n_ion_species, n_neutral_species =
         get_tuple_of_return_values(load_species_data, moments_files0_first_restart)
-    evolve_density, evolve_upar, evolve_ppar =
+    evolve_density, evolve_n_upar, evolve_p =
         get_tuple_of_return_values(load_mk_options, moments_files0_first_restart)
 
     has_neutrals = any(n_neutral_species .> 0)
@@ -747,7 +747,7 @@ function analyze_and_plot_data(prefix...; run_index=nothing)
             has_neutrals ? Tuple(qz[:,ir0,:,:] for qz ∈ neutral_qz_at_pdf_times) : nothing,
             has_neutrals ? Tuple(neutral_vth[:,ir0,:,:] for neutral_vth ∈ neutral_thermal_speed_at_pdf_times) : nothing,
             has_neutrals ? Tuple(neutral_f[:,ivr0,ivzeta0,:,ir0,:,:] for neutral_f ∈ neutral_ff) : nothing,
-            n_ion_species, n_neutral_species, evolve_density, evolve_upar, evolve_ppar,
+            n_ion_species, n_neutral_species, evolve_density, evolve_n_upar, evolve_p,
             vz, vpa, z_global, ntime, time, ntime_pdfs, time_pdfs)
     end
 
@@ -781,7 +781,7 @@ function analyze_and_plot_data(prefix...; run_index=nothing)
                                        Er_at_pdf_times, geometry, "wall", nblocks,
                                        run_names, nothing, ir0,
                                        evolve_density=evolve_density,
-                                       evolve_upar=evolve_upar, evolve_ppar=evolve_ppar)
+                                       evolve_n_upar=evolve_n_upar, evolve_p=evolve_p)
 
         plot(legend=legend)
         for (t, cr, run_label) ∈ zip(time_pdfs, Chodura_ratio_lower, run_names)
@@ -810,7 +810,7 @@ function analyze_and_plot_data(prefix...; run_index=nothing)
                                        Er_at_pdf_times, geometry, "wall", nblocks,
                                        run_names, ntime_pdfs, nothing,
                                        evolve_density=evolve_density,
-                                       evolve_upar=evolve_upar, evolve_ppar=evolve_ppar)
+                                       evolve_n_upar=evolve_n_upar, evolve_p=evolve_p)
 
         plot(legend=legend)
         for (this_r, cr, run_label) ∈ zip(r, Chodura_ratio_lower, run_names)
@@ -1288,7 +1288,7 @@ function calculate_differences(prefix...)
     # load species data
     n_ion_species, n_neutral_species =
         get_tuple_of_return_values(load_species_data, moments_files0)
-    evolve_density, evolve_upar, evolve_ppar =
+    evolve_density, evolve_n_upar, evolve_p =
         get_tuple_of_return_values(load_mk_options, moments_files0)
 
     for f in moments_files0
@@ -1675,7 +1675,7 @@ function plot_1D_1V_diagnostics(run_name_labels, nwrite_movie, itime_min, itime_
         neutral_qz, neutral_thermal_speed, neutral_density_at_pdf_times,
         neutral_uz_at_pdf_times, neutral_pz_at_pdf_times, neutral_qz_at_pdf_times,
         neutral_thermal_speed_at_pdf_times, neutral_ff, n_ion_species, n_neutral_species,
-        evolve_density, evolve_upar, evolve_ppar, vz, vpa, z, ntime, time, ntime_pdfs,
+        evolve_density, evolve_n_upar, evolve_p, vz, vpa, z, ntime, time, ntime_pdfs,
         time_pdfs)
 
     n_runs = length(run_name_labels)
@@ -1730,12 +1730,12 @@ function plot_1D_1V_diagnostics(run_name_labels, nwrite_movie, itime_min, itime_
     # analyze the pdf data
     f_fldline_avg, delta_f, dens_moment, upar_moment, ppar_moment =
         get_tuple_of_return_values(analyze_pdf_data, ff, n_ion_species, ntime_pdfs, z,
-                                   vpa, thermal_speed_at_pdf_times, evolve_ppar)
+                                   vpa, thermal_speed_at_pdf_times, evolve_p)
 
     plot_dfns(density_at_pdf_times, parallel_flow_at_pdf_times,
         parallel_pressure_at_pdf_times, thermal_speed_at_pdf_times, ff, dens_moment,
         upar_moment, ppar_moment, time_pdfs, n_ion_species, z, vpa, evolve_density,
-        evolve_upar, evolve_ppar, run_name_labels, itime_min_pdfs, itime_max_pdfs,
+        evolve_n_upar, evolve_p, run_name_labels, itime_min_pdfs, itime_max_pdfs,
         nwrite_movie_pdfs, iz0, "ion")
 
     if maximum(n_neutral_species) > 0
@@ -1744,12 +1744,12 @@ function plot_1D_1V_diagnostics(run_name_labels, nwrite_movie, itime_min, itime_
         neutral_pz_moment =
             get_tuple_of_return_values(analyze_pdf_data, neutral_ff, n_neutral_species,
                                        ntime_pdfs, z, vpa, neutral_thermal_speed_at_pdf_times,
-                                       evolve_ppar)
+                                       evolve_p)
 
         plot_dfns(neutral_density_at_pdf_times, neutral_uz_at_pdf_times,
             neutral_pz_at_pdf_times, neutral_thermal_speed_at_pdf_times, neutral_ff,
             neutral_dens_moment, neutral_uz_moment, neutral_pz_moment, time_pdfs,
-            n_neutral_species, z, vz, evolve_density, evolve_upar, evolve_ppar,
+            n_neutral_species, z, vz, evolve_density, evolve_n_upar, evolve_p,
             run_name_labels, itime_min_pdfs, itime_max_pdfs, nwrite_movie_pdfs, iz0,
             "neutral")
     end
@@ -2249,7 +2249,7 @@ end
 """
 function plot_dfns(density, parallel_flow, parallel_pressure, thermal_speed, ff,
                    dens_moment, upar_moment, ppar_moment, time_pdfs, n_species, z, vpa,
-                   evolve_density, evolve_upar, evolve_ppar, run_name_labels,
+                   evolve_density, evolve_n_upar, evolve_p, run_name_labels,
                    itime_min_pdfs, itime_max_pdfs, nwrite_movie_pdfs, iz0, label)
     println("Plotting distribution function data...")
     cmlog(cmlin::ColorGradient) = RGB[cmlin[x] for x=LinRange(0,1,30)]
@@ -2277,7 +2277,7 @@ function plot_dfns(density, parallel_flow, parallel_pressure, thermal_speed, ff,
         end
         outfile = string(prefix, "_$(label)_intf0_vs_t", spec_string, ".pdf")
         trysavefig(outfile)
-        # if evolve_upar = true, plot ∫dwpa wpa * f, which should equal zero
+        # if evolve_n_upar = true, plot ∫dwpa wpa * f, which should equal zero
         # otherwise, this plots ∫dvpa vpa * f, which is dens*upar
         plot(legend=legend)
         for (t, upar_int, run_label) ∈ zip(time_pdfs, upar_moment, run_name_labels)
@@ -2361,7 +2361,7 @@ function plot_dfns(density, parallel_flow, parallel_pressure, thermal_speed, ff,
             # i counts from 0, Python-style
             for (run_ind, f, n, upar, vth, ev_n, ev_u, ev_p, this_z, this_vpa,
                  run_label) ∈ zip(1:n_runs, ff, density, parallel_flow, thermal_speed,
-                                  evolve_density, evolve_upar, evolve_ppar, z, vpa,
+                                  evolve_density, evolve_n_upar, evolve_p, z, vpa,
                                   run_name_labels)
 
                 PyPlot.subplot(1, n_runs, run_ind)
@@ -2384,7 +2384,7 @@ function plot_dfns(density, parallel_flow, parallel_pressure, thermal_speed, ff,
             # i counts from 0, Python-style
             for (run_ind, f, n, upar, vth, ev_n, ev_u, ev_p, this_z, this_vpa,
                  run_label) ∈ zip(1:n_runs, ff, density, parallel_flow, thermal_speed,
-                                  evolve_density, evolve_upar, evolve_ppar, z, vpa,
+                                  evolve_density, evolve_n_upar, evolve_p, z, vpa,
                                   run_name_labels)
 
                 @views f_unnorm, dzdt = get_unnormalised_f_dzdt_1d(
@@ -2400,7 +2400,7 @@ function plot_dfns(density, parallel_flow, parallel_pressure, thermal_speed, ff,
             # i counts from 0, Python-style
             for (run_ind, f, n, upar, vth, ev_n, ev_u, ev_p, this_z, this_vpa,
                  run_label) ∈ zip(1:n_runs, ff, density, parallel_flow, thermal_speed,
-                                  evolve_density, evolve_upar, evolve_ppar, z, vpa,
+                                  evolve_density, evolve_n_upar, evolve_p, z, vpa,
                                   run_name_labels)
 
                 @views f_unnorm, dzdt = get_unnormalised_f_dzdt_1d(
@@ -2518,10 +2518,10 @@ Add a thin, red, dashed line showing v_parallel=(vth*w_parallel+upar)=0 to a 2d 
 with axes (z,vpa).
 """
 function draw_v_parallel_zero!(plt::Plots.Plot, z::AbstractVector, upar, vth,
-                               evolve_upar::Bool, evolve_ppar::Bool)
-    if evolve_ppar && evolve_upar
+                               evolve_n_upar::Bool, evolve_p::Bool)
+    if evolve_p && evolve_n_upar
         zero_value = @. -upar/vth
-    elseif evolve_upar
+    elseif evolve_n_upar
         zero_value = @. -upar
     else
         zero_value = zeros(size(upar))
@@ -2529,9 +2529,9 @@ function draw_v_parallel_zero!(plt::Plots.Plot, z::AbstractVector, upar, vth,
     plot!(plt, z, zero_value, color=:red, linestyle=:dash, linewidth=1,
           xlims=xlims(plt), ylims=ylims(plt), label="")
 end
-function draw_v_parallel_zero!(z::AbstractVector, upar, vth, evolve_upar::Bool,
-                               evolve_ppar::Bool)
-    draw_v_parallel_zero!(Plots.CURRENT_PLOT, z, upar, vth, evolve_upar, evolve_ppar)
+function draw_v_parallel_zero!(z::AbstractVector, upar, vth, evolve_n_upar::Bool,
+                               evolve_p::Bool)
+    draw_v_parallel_zero!(Plots.CURRENT_PLOT, z, upar, vth, evolve_n_upar, evolve_p)
 end
 
 """

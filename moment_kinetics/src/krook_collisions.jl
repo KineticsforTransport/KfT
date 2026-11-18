@@ -89,8 +89,8 @@ Currently Krook collisions
 
     # Note: do not need 1/sqrt(pi) for the 'Maxwellian' term because the pdf is already
     # normalized by sqrt(pi) (see velocity_moments.integrate_over_vspace).
-    if moments.evolve_p && moments.evolve_upar
-        # Compared to evolve_upar version, grid is already normalized by vth, and multiply
+    if moments.evolve_p && moments.evolve_n_upar
+        # Compared to evolve_n_upar version, grid is already normalized by vth, and multiply
         # through by vth, remembering pdf is already multiplied by vth
         @loop_s_r_z is ir iz begin
             n = fvec_in.density[iz,ir,is]
@@ -137,7 +137,7 @@ Currently Krook collisions
                                                               - (vperp.grid[ivperp])^2)*adjust_1V)
             end
         end
-    elseif moments.evolve_upar
+    elseif moments.evolve_n_upar
         # Compared to evolve_density version, grid is already shifted by upar
         @loop_s_r_z is ir iz begin
             n = fvec_in.density[iz,ir,is]
@@ -231,17 +231,17 @@ Note that this function operates on a single point in `r`, so `pdf_out`, `pdf_in
 
     # For now, electrons are always fully moment-kinetic
     evolve_density = true
-    evolve_upar = true
+    evolve_n_upar = true
     evolve_p = true
 
-    if vperp.n > 1 && (evolve_density || evolve_upar || evolve_p)
+    if vperp.n > 1 && (evolve_density || evolve_n_upar || evolve_p)
         error("Krook collisions not implemented for 2V moment-kinetic cases yet")
     end
 
     # Note: do not need 1/sqrt(pi) for the 'Maxwellian' term because the pdf is already
     # normalized by sqrt(pi) (see velocity_moments.integrate_over_vspace).
-    if evolve_p && evolve_upar
-        # Compared to evolve_upar version, grid is already normalized by vth, and multiply
+    if evolve_p && evolve_n_upar
+        # Compared to evolve_n_upar version, grid is already normalized by vth, and multiply
         # through by vth, remembering pdf is already multiplied by vth
         @loop_z iz begin
             n = dens_in[iz]
@@ -302,7 +302,7 @@ Note that this function operates on a single point in `r`, so `pdf_out`, `pdf_in
                    )
             end
         end
-    elseif evolve_upar
+    elseif evolve_n_upar
         # Compared to evolve_density version, grid is already shifted by upar
         @loop_z iz begin
             n = dens_in[iz]

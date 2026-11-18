@@ -2327,7 +2327,7 @@ function plot_f_unnorm_vs_vpa(run_info; f_over_vpa2=false, input=nothing, electr
 
     f_unnorm, dzdt = get_unnormalised_f_dzdt_1d(f, vcoord.grid, density, upar, vth,
                                                 run_info.evolve_density,
-                                                run_info.evolve_upar,
+                                                run_info.evolve_n_upar,
                                                 run_info.evolve_p)
 
     if f_over_vpa2
@@ -2518,7 +2518,7 @@ function plot_f_unnorm_vs_vpa_z(run_info; input=nothing, electron=false, neutral
     f_unnorm, z, dzdt = get_unnormalised_f_coords_2d(f, run_info.z.grid,
                                                      vpa_grid, density, upar,
                                                      vth, run_info.evolve_density,
-                                                     run_info.evolve_upar,
+                                                     run_info.evolve_n_upar,
                                                      run_info.evolve_p)
 
     f_unnorm = transform.(f_unnorm)
@@ -2711,7 +2711,7 @@ function animate_f_unnorm_vs_vpa(run_info; f_over_vpa2=false, input=nothing,
 
         if f_over_vpa2
             this_dzdt = vpagrid_to_vpa(vcoord.grid, vth[it], upar[it], run_info.evolve_p,
-                                       run_info.evolve_upar)
+                                       run_info.evolve_n_upar)
             this_dzdt2 = this_dzdt.^2
             for i ∈ eachindex(this_dzdt2)
                 if this_dzdt2[i] == 0.0
@@ -2732,7 +2732,7 @@ function animate_f_unnorm_vs_vpa(run_info; f_over_vpa2=false, input=nothing,
     fmax = -Inf
     for it ∈ 1:run_info.nt
         this_dzdt = vpagrid_to_vpa(vcoord.grid, vth[it], upar[it], run_info.evolve_p,
-                                   run_info.evolve_upar)
+                                   run_info.evolve_n_upar)
         this_dzdtmin, this_dzdtmax = extrema(this_dzdt)
         dzdtmin = min(dzdtmin, this_dzdtmin)
         dzdtmax = max(dzdtmax, this_dzdtmax)
@@ -2760,7 +2760,7 @@ function animate_f_unnorm_vs_vpa(run_info; f_over_vpa2=false, input=nothing,
     end
 
     dzdt = @lift vpagrid_to_vpa(vcoord.grid, vth[$frame_index], upar[$frame_index],
-                                run_info.evolve_p, run_info.evolve_upar)
+                                run_info.evolve_p, run_info.evolve_n_upar)
     f_unnorm = @lift transform.(get_this_f_unnorm($frame_index))
 
     l = plot_1d(dzdt, f_unnorm; ax=ax, label=run_info.run_name, yscale=yscale, kwargs...)
@@ -2955,7 +2955,7 @@ function animate_f_unnorm_vs_vpa_z(run_info; input=nothing, electron=false, neut
     for it ∈ 1:run_info.nt
         this_dzdt = vpagrid_to_v_parallel_2d(vpa_grid, get_cache_slice(vth, it),
                                              get_cache_slice(upar, it), run_info.evolve_p,
-                                             run_info.evolve_upar)
+                                             run_info.evolve_n_upar)
         this_dzdtmin, this_dzdtmax = extrema(this_dzdt)
         dzdtmin = min(dzdtmin, this_dzdtmin)
         dzdtmax = max(dzdtmax, this_dzdtmax)
@@ -2965,7 +2965,7 @@ function animate_f_unnorm_vs_vpa_z(run_info; input=nothing, electron=false, neut
 
     dzdt = @lift vpagrid_to_v_parallel_2d(vpa_grid, get_cache_slice(vth, $frame_index),
                                           get_cache_slice(upar, $frame_index),
-                                          run_info.evolve_p, run_info.evolve_upar)
+                                          run_info.evolve_p, run_info.evolve_n_upar)
     f_unnorm = @lift transform.(get_unnormalised_f_2d(
                                     get_cache_slice(f, $frame_index),
                                     get_cache_slice(density, $frame_index),

@@ -103,7 +103,7 @@ using ..utils: to_minutes, get_minimum_CFL_r, get_minimum_CFL_z, get_minimum_CFL
                get_minimum_CFL_neutral_vz
 using ..electron_fluid_equations: calculate_electron_moments!
 using ..electron_fluid_equations: calculate_electron_density!
-using ..electron_fluid_equations: calculate_electron_upar_from_charge_conservation!
+using ..electron_fluid_equations: calculate_electron_n_upar_from_charge_conservation!
 using ..electron_fluid_equations: calculate_electron_qpar!, electron_fluid_qpar_boundary_condition!
 using ..electron_fluid_equations: calculate_electron_parallel_friction_force!
 using ..electron_fluid_equations: electron_energy_equation!, update_electron_vth_temperature!,
