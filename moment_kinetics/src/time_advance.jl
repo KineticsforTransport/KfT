@@ -3992,7 +3992,7 @@ implementation), a call needs to be made with `dt` scaled by some coefficient.
         write_debug_IO("neutral_continuity_equation!")
     end
     if advance.neutral_force_balance
-        neutral_force_balance!(fvec_out.uz_neutral, fvec_out.density_neutral, fvec_in,
+        neutral_force_balance!(fvec_out.n_uz_neutral, fvec_out.density_neutral, fvec_in,
                                moments, fields, collisions, dt, z_spectral, composition,
                                geometry, external_source_settings.neutral,
                                num_diss_params)
