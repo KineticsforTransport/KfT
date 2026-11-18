@@ -503,7 +503,7 @@ function test_get_pdf_term(test_input::AbstractDict, label::String, get_term::Fu
                                                 vperp, vpa)
         end
 
-        jacobian = nl_solver_params.electron_advance.preconditioners[1][2]
+        jacobian = nl_solver_params.electron_advance.preconditioner_info.preconditioners[1][2]
         jacobian_initialize_identity!(jacobian)
 
         separate_zeroth_moment = (:zeroth_moment ∈ jacobian.state_vector_entries)
@@ -1068,7 +1068,7 @@ function test_get_p_term(test_input::AbstractDict, label::String, get_term::Func
                                       vpa_spectral)
         end
 
-        jacobian = nl_solver_params.electron_advance.preconditioners[1][2]
+        jacobian = nl_solver_params.electron_advance.preconditioner_info.preconditioners[1][2]
         jacobian_initialize_identity!(jacobian)
 
         separate_zeroth_moment = (:zeroth_moment ∈ jacobian.state_vector_entries)
@@ -1594,7 +1594,7 @@ function test_electron_kinetic_equation(test_input, counter::mk_int;
                                                 vperp, vpa)
         end
 
-        jacobian = nl_solver_params.electron_advance.preconditioners[1][2]
+        jacobian = nl_solver_params.electron_advance.preconditioner_info.preconditioners[1][2]
         separate_zeroth_moment = (:zeroth_moment ∈ jacobian.state_vector_entries)
         separate_first_moment = (:first_moment ∈ jacobian.state_vector_entries)
         separate_second_moment = (:second_moment ∈ jacobian.state_vector_entries)
@@ -2165,7 +2165,7 @@ function test_electron_wall_bc(test_input, counter::mk_int; atol=(10.0*epsilon)^
                                vpa_advect[:,ivperp,iz,ir], vpa_spectral)
         end
 
-        jacobian = nl_solver_params.electron_advance.preconditioners[1][2]
+        jacobian = nl_solver_params.electron_advance.preconditioner_info.preconditioners[1][2]
         separate_zeroth_moment = (:zeroth_moment ∈ jacobian.state_vector_entries)
         separate_first_moment = (:first_moment ∈ jacobian.state_vector_entries)
         separate_second_moment = (:second_moment ∈ jacobian.state_vector_entries)
@@ -2611,7 +2611,7 @@ function test_jacobian_inversion(test_input, counter::mk_int; rtol=2.0e-11)
                                        @view residual_f[1:regression_f_step:end];
                                        rtol=rtol, atol=1.0e-16)
 
-            if (nl_solver_params.electron_advance.preconditioner_type === Val(:electron_lu_separate_dp_dz_dq_dz)
+            if (nl_solver_params.electron_advance.preconditioner_info.preconditioner_type === Val(:electron_lu_separate_dp_dz_dq_dz)
                     && bc == "periodic")
                 # This combination has a strangely high relative error. Not sure why,
                 # maybe just bad luck (?), but :lu_separate_dp_dz_dq_dz is not commonly

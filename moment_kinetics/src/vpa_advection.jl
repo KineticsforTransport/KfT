@@ -324,7 +324,7 @@ end
             this_f_out .-= residual
 
             success = newton_solve!(this_f_out, residual_func!, residual, delta_x,
-                                    rhs_delta, v, w, nl_solver_params, coords=coords,
+                                    rhs_delta, v, w, nl_solver_params,
                                     left_preconditioner=left_preconditioner,
                                     right_preconditioner=right_preconditioner)
             if !success
