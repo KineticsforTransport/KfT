@@ -564,7 +564,7 @@ function initialize_pdf!(pdf, moments, composition, r, z, vperp, vpa, vzeta, vr,
                 wall_flux_0[ir,min(isn,composition.n_ion_species)],
                 wall_flux_L[ir,min(isn,composition.n_ion_species)])
             @loop_z iz begin
-                moments.neutral.n_uz[iz,ir,is] = moments.neutral.dens[iz,ir,is] * moments.neutral.uz[iz,ir,is]
+                moments.neutral.n_uz[iz,ir,isn] = moments.neutral.dens[iz,ir,isn] * moments.neutral.uz[iz,ir,isn]
                 if moments.evolve_density == false
                     @. pdf.neutral.norm[:,:,:,iz,ir,isn] *= moments.neutral.dens[iz,ir,isn]
                 end

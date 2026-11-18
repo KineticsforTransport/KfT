@@ -26,7 +26,7 @@ using ..moment_kinetics_structs: scratch_pdf, scratch_electron_pdf
 using ..velocity_moments: update_moments!, update_moments_neutral!, update_derived_moments!, update_derived_moments_neutral!
 using ..velocity_moments: update_derived_ion_moment_time_derivatives!
 using ..velocity_moments: update_neutral_qz!
-using ..velocity_moments: update_neutral_uzeta!, update_neutral_ur!
+using ..velocity_moments: update_neutral_uzeta!, update_neutral_ur!, update_neutral_uz!
 using ..velocity_moments: update_neutral_pzeta!, update_neutral_pr!, update_derived_neutral_moment_time_derivatives!
 using ..velocity_moments: calculate_ion_moment_derivatives!, calculate_neutral_moment_derivatives!
 using ..velocity_moments: calculate_electron_moment_derivatives!, update_derived_electron_moment_time_derivatives!
@@ -1442,11 +1442,11 @@ function _setup_time_advance_internal!(pdf, fields, vz, vr, vzeta, vpa, vperp, z
         @loop_sn_r_z isn ir iz begin
             scratch[1].pdf_neutral[:,:,:,iz,ir,isn] .= pdf.neutral.norm[:,:,:,iz,ir,isn]
             scratch[1].density_neutral[iz,ir,isn] = moments.neutral.dens[iz,ir,isn]
-            scratch[1].uz_neutral[iz,ir,isn] = moments.neutral.uz[iz,ir,isn]
+            scratch[1].n_uz_neutral[iz,ir,isn] = moments.neutral.n_uz[iz,ir,isn]
             scratch[1].p_neutral[iz,ir,isn] = moments.neutral.p[iz,ir,isn]
             scratch[t_params.n_rk_stages+1].pdf_neutral[:,:,:,iz,ir,isn] .= pdf.neutral.norm[:,:,:,iz,ir,isn]
             scratch[t_params.n_rk_stages+1].density_neutral[iz,ir,isn] = moments.neutral.dens[iz,ir,isn]
-            scratch[t_params.n_rk_stages+1].uz_neutral[iz,ir,isn] = moments.neutral.uz[iz,ir,isn]
+            scratch[t_params.n_rk_stages+1].n_uz_neutral[iz,ir,isn] = moments.neutral.n_uz[iz,ir,isn]
             scratch[t_params.n_rk_stages+1].p_neutral[iz,ir,isn] = moments.neutral.p[iz,ir,isn]
         end
     end
@@ -2118,7 +2118,7 @@ function setup_scratch_arrays(moments, pdf, n, time_evolve_electrons, compositio
 
             scratch[istage].pdf_neutral .= pdf.neutral.norm
             scratch[istage].density_neutral .= moments.neutral.dens
-            scratch[istage].uz_neutral .= moments.neutral.uz
+            scratch[istage].n_uz_neutral .= moments.neutral.n_uz
             scratch[istage].p_neutral .= moments.neutral.p
             scratch[istage].neutral_external_source_controller_integral .=
                 moments.neutral.external_source_controller_integral
@@ -3018,7 +3018,7 @@ moments and moment derivatives
             # do the same for the evolved moments Note, so far vr and vzeta do not need advect
             # objects, so pass `nothing` for those as a placeholder
             enforce_neutral_boundary_conditions!(this_scratch.pdf_neutral,
-                this_scratch.pdf, this_scratch.density_neutral, this_scratch.uz_neutral,
+                this_scratch.pdf, this_scratch.density_neutral, moments.neutral.uz,
                 moments.neutral.ur, this_scratch.p_neutral, boundaries, moments,
                 this_scratch.density, this_scratch.n_upar, fields.Er, vzeta_spectral,
                 vr_spectral, vz_spectral, neutral_r_advect, neutral_z_advect, nothing,
@@ -3039,7 +3039,7 @@ moments and moment derivatives
 
         # update the parallel heat flux
         update_neutral_qz!(moments.neutral.qz, this_scratch.density_neutral,
-                           this_scratch.uz_neutral, moments.neutral.vth,
+                           moments.neutral.uz, moments.neutral.vth,
                            this_scratch.pdf_neutral, vz, vr, vzeta, z, r, composition,
                            moments.evolve_density, moments.evolve_n_upar, moments.evolve_p)
 
@@ -3611,7 +3611,7 @@ end
         end
         @loop_sn_r_z isn ir iz begin
             first_scratch.density_neutral[iz,ir,isn] = moments.neutral.dens[iz,ir,isn]
-            first_scratch.uz_neutral[iz,ir,isn] = moments.neutral.uz[iz,ir,isn]
+            first_scratch.n_uz_neutral[iz,ir,isn] = moments.neutral.n_uz[iz,ir,isn]
             first_scratch.p_neutral[iz,ir,isn] = moments.neutral.p[iz,ir,isn]
             # other neutral moments here if required
         end
@@ -3869,11 +3869,13 @@ end
             end
             @loop_sn_r_z isn ir iz begin
                 moments.neutral.dens[iz,ir,isn] = final_scratch.density_neutral[iz,ir,isn]
-                moments.neutral.uz[iz,ir,isn] = final_scratch.uz_neutral[iz,ir,isn]
+                moments.neutral.n_uz[iz,ir,isn] = final_scratch.n_uz_neutral[iz,ir,isn]
                 moments.neutral.p[iz,ir,isn] = final_scratch.p_neutral[iz,ir,isn]
             end
             # for now update moments.neutral object directly for diagnostic moments
             # that are not used in Runga-Kutta steps
+            update_neutral_uz!(moments.neutral.uz, moments.neutral.dens,
+                               moments.neutral.n_uz)
             update_neutral_ur!(moments.neutral.ur, moments.neutral.dens,
                                moments.neutral.vth, pdf.neutral.norm, vz, vr, vzeta, z, r,
                                composition, moments.evolve_density, moments.evolve_p)

@@ -20,7 +20,7 @@ do a single stage time advance (potentially as part of a multi-stage RK scheme)
                          spectral, composition, geometry, scratch_dummy) = begin
 
     # get the updated speed along the z direction using the current f
-    update_speed_z!(advect, fvec_in.upar, moments.ion.vth, moments.evolve_n_upar,
+    update_speed_z!(advect, moments.ion.upar, moments.ion.vth, moments.evolve_n_upar,
                     moments.evolve_p, vpa, vperp, z, r, geometry)
 
     @begin_s_r_vperp_vpa_region()

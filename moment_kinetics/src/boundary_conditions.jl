@@ -147,11 +147,11 @@ function create_r_boundary_info(input_dict, pdf, moments, fields, r, z, vperp, v
     if pdf !== nothing && moments !== nothing && fields !== nothing
         ion_pdf_inner = @view pdf.ion.norm[:,:,:,1,:]
         ion_density_inner = @view moments.ion.dens[:,1,:]
-        ion_upar_inner = @view moments.ion.upar[:,1,:]
+        ion_n_upar_inner = @view moments.ion.n_upar[:,1,:]
         ion_p_inner = @view moments.ion.p[:,1,:]
         electron_pdf_inner = pdf.electron === nothing ? nothing : @view pdf.electron.norm[:,:,:,1]
         electron_density_inner = @view moments.electron.dens[:,1]
-        electron_upar_inner = @view moments.electron.upar[:,1]
+        electron_n_upar_inner = @view moments.electron.n_upar[:,1]
         electron_p_inner = @view moments.electron.p[:,1]
         neutral_pdf_inner = @view pdf.neutral.norm[:,:,:,:,1,:]
         neutral_density_inner = @view moments.neutral.dens[:,1,:]
@@ -161,11 +161,11 @@ function create_r_boundary_info(input_dict, pdf, moments, fields, r, z, vperp, v
     else
         ion_pdf_inner = nothing
         ion_density_inner = nothing
-        ion_upar_inner = nothing
+        ion_n_upar_inner = nothing
         ion_p_inner = nothing
         electron_pdf_inner = nothing
         electron_density_inner = nothing
-        electron_upar_inner = nothing
+        electron_n_upar_inner = nothing
         electron_p_inner = nothing
         neutral_pdf_inner = nothing
         neutral_density_inner = nothing
@@ -178,10 +178,10 @@ function create_r_boundary_info(input_dict, pdf, moments, fields, r, z, vperp, v
     # Note that 1D simulations cannot have r-boundaries
     if r.n > 1 && r.irank == 0
         inner_sections = collect(create_r_section(inp, ion_pdf_inner, ion_density_inner,
-                                                  ion_upar_inner, ion_p_inner,
+                                                  ion_n_upar_inner, ion_p_inner,
                                                   electron_pdf_inner,
                                                   electron_density_inner,
-                                                  electron_upar_inner, electron_p_inner,
+                                                  electron_n_upar_inner, electron_p_inner,
                                                   neutral_pdf_inner,
                                                   neutral_density_inner, neutral_uz_inner,
                                                   neutral_p_inner, phi_inner, r, z, vperp,
@@ -195,11 +195,11 @@ function create_r_boundary_info(input_dict, pdf, moments, fields, r, z, vperp, v
     if pdf !== nothing && moments !== nothing && fields !== nothing
         ion_pdf_outer = @view pdf.ion.norm[:,:,:,end,:]
         ion_density_outer = @view moments.ion.dens[:,end,:]
-        ion_upar_outer = @view moments.ion.upar[:,end,:]
+        ion_n_upar_outer = @view moments.ion.n_upar[:,end,:]
         ion_p_outer = @view moments.ion.p[:,end,:]
         electron_pdf_outer = pdf.electron === nothing ? nothing : @view pdf.electron.norm[:,:,:,end]
         electron_density_outer = @view moments.electron.dens[:,end]
-        electron_upar_outer = @view moments.electron.upar[:,end]
+        electron_n_upar_outer = @view moments.electron.n_upar[:,end]
         electron_p_outer = @view moments.electron.p[:,end]
         neutral_pdf_outer = @view pdf.neutral.norm[:,:,:,:,end,:]
         neutral_density_outer = @view moments.neutral.dens[:,end,:]
@@ -209,11 +209,11 @@ function create_r_boundary_info(input_dict, pdf, moments, fields, r, z, vperp, v
     else
         ion_pdf_outer = nothing
         ion_density_outer = nothing
-        ion_upar_outer = nothing
+        ion_n_upar_outer = nothing
         ion_p_outer = nothing
         electron_pdf_outer = nothing
         electron_density_outer = nothing
-        electron_upar_outer = nothing
+        electron_n_upar_outer = nothing
         electron_p_outer = nothing
         neutral_pdf_outer = nothing
         neutral_density_outer = nothing
@@ -226,10 +226,10 @@ function create_r_boundary_info(input_dict, pdf, moments, fields, r, z, vperp, v
     # Note that 1D simulations cannot have r-boundaries
     if r.n > 1 && r.irank == r.nrank - 1
         outer_sections = collect(create_r_section(inp, ion_pdf_outer, ion_density_outer,
-                                                  ion_upar_outer, ion_p_outer,
+                                                  ion_n_upar_outer, ion_p_outer,
                                                   electron_pdf_outer,
                                                   electron_density_outer,
-                                                  electron_upar_outer, electron_p_outer,
+                                                  electron_n_upar_outer, electron_p_outer,
                                                   neutral_pdf_outer,
                                                   neutral_density_outer, neutral_uz_outer,
                                                   neutral_p_outer, phi_outer, r, z, vperp,
@@ -320,8 +320,8 @@ function create_r_boundary_info(input_dict, pdf, moments, fields, r, z, vperp, v
     return r_boundaries
 end
 
-function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, electron_pdf,
-                          electron_density, electron_upar, electron_p, neutral_pdf,
+function create_r_section(this_input, ion_pdf, ion_density, ion_n_upar, ion_p, electron_pdf,
+                          electron_density, electron_n_upar, electron_p, neutral_pdf,
                           neutral_density, neutral_uz, neutral_p, phi, r, z, vperp, vpa,
                           vzeta, vr, vz, r_spectral, moments, composition, is_inner)
     element_lower = this_input["element_lower"]
@@ -519,15 +519,15 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                                                        composition.ion_species_coord)
                     bc_ion_density = allocate_shared_float(:z_segment=>length(z_range),
                                                            composition.ion_species_coord)
-                    bc_ion_upar = allocate_shared_float(:z_segment=>length(z_range),
-                                                        composition.ion_species_coord)
+                    bc_ion_n_upar = allocate_shared_float(:z_segment=>length(z_range),
+                                                          composition.ion_species_coord)
                     bc_ion_p = allocate_shared_float(:z_segment=>length(z_range),
                                                      composition.ion_species_coord)
 
                     @begin_s_region()
                     @loop_s is begin
                         bc_ion_density[z_range,is] .= n_val
-                        bc_ion_upar[z_range,is] .= u_val
+                        bc_ion_n_upar[z_range,is] .= u_val
                         bc_ion_p[z_range,is] .= n_val * T_val
                         if moments.evolve_p
                             @loop_vperp_vpa ivperp ivpa begin
@@ -558,26 +558,26 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                 else
                     bc_ion_pdf = allocate_shared_float(:fake=>0, :fake=>0, :fake=>0, :fake=>0)
                     bc_ion_density = allocate_shared_float(:fake=>0, :fake=>0)
-                    bc_ion_upar = allocate_shared_float(:fake=>0, :fake=>0)
+                    bc_ion_n_upar = allocate_shared_float(:fake=>0, :fake=>0)
                     bc_ion_p = allocate_shared_float(:fake=>0, :fake=>0)
                 end
 
                 this_section = ion_r_boundary_section_Dirichlet(bc_ion_pdf,
                                                                 bc_ion_density,
-                                                                bc_ion_upar, bc_ion_p)
+                                                                bc_ion_n_upar, bc_ion_p)
             elseif species == "electron"
                 if electron_pdf !== nothing && electron_density !== nothing
                     vth /= sqrt(composition.me_over_mi)
 
                     bc_electron_pdf = allocate_shared_float(vpa, vperp, :z_segment=>length(z_range))
                     bc_electron_density = allocate_shared_float(:z_segment=>length(z_range))
-                    bc_electron_upar = allocate_shared_float(:z_segment=>length(z_range))
+                    bc_electron_n_upar = allocate_shared_float(:z_segment=>length(z_range))
                     bc_electron_p = allocate_shared_float(:z_segment=>length(z_range))
 
                     @begin_serial_region()
                     @serial_region begin
                         bc_electron_density[z_range] .= n_val
-                        bc_electron_upar[z_range] .= u_val
+                        bc_electron_n_upar[z_range] .= u_val
                         bc_electron_p[z_range] .= n_val * T_val
                         if moments.evolve_p
                             @loop_vperp_vpa ivperp ivpa begin
@@ -608,13 +608,13 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                 else
                     bc_electron_pdf = allocate_shared_float(:fake=>0, :fake=>0, :fake=>0)
                     bc_electron_density = allocate_shared_float(:fake=>0)
-                    bc_electron_upar = allocate_shared_float(:fake=>0)
+                    bc_electron_n_upar = allocate_shared_float(:fake=>0)
                     bc_electron_p = allocate_shared_float(:fake=>0)
                 end
 
                 this_section = electron_r_boundary_section_Dirichlet(bc_electron_pdf,
                                                                      bc_electron_density,
-                                                                     bc_electron_upar,
+                                                                     bc_electron_n_upar,
                                                                      bc_electron_p)
             elseif species == "neutral"
                 if neutral_pdf !== nothing && neutral_density !== nothing
@@ -623,7 +623,7 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                                                            composition.neutral_species_coord)
                     bc_neutral_density = allocate_shared_float(:z_segment=>length(z_range),
                                                                composition.neutral_species_coord)
-                    bc_neutral_upar = allocate_shared_float(:z_segment=>length(z_range),
+                    bc_neutral_n_uz = allocate_shared_float(:z_segment=>length(z_range),
                                                             composition.neutral_species_coord)
                     bc_neutral_p = allocate_shared_float(:z_segment=>length(z_range),
                                                          composition.neutral_species_coord)
@@ -631,7 +631,7 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                     @begin_sn_region()
                     @loop_sn isn begin
                         bc_neutral_density[z_range,isn] .= n_val
-                        bc_neutral_upar[z_range,isn] .= u_val
+                        bc_neutral_n_uz[z_range,isn] .= u_val
                         bc_neutral_p[z_range,isn] .= n_val * T_val
                         if moments.evolve_p
                             @loop_vperp_vpa ivperp ivpa begin
@@ -663,13 +663,13 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                     bc_neutral_pdf = allocate_shared_float(:fake=>0, :fake=>0, :fake=>0,
                                                            :fake=>0, :fake=>0)
                     bc_neutral_density = allocate_shared_float(:fake=>0, :fake=>0)
-                    bc_neutral_upar = allocate_shared_float(:fake=>0, :fake=>0)
+                    bc_neutral_n_uz = allocate_shared_float(:fake=>0, :fake=>0)
                     bc_neutral_p = allocate_shared_float(:fake=>0, :fake=>0)
                 end
 
                 this_section = neutral_r_boundary_section_Dirichlet(bc_neutral_pdf,
                                                                     bc_neutral_density,
-                                                                    bc_neutral_upar,
+                                                                    bc_neutral_n_uz,
                                                                     bc_neutral_p)
             elseif species == "em"
                 if phi !== nothing
@@ -695,8 +695,8 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                                                        composition.ion_species_coord)
                     bc_ion_density = allocate_shared_float(:z_segment=>length(z_range),
                                                            composition.ion_species_coord)
-                    bc_ion_upar = allocate_shared_float(:z_segment=>length(z_range),
-                                                        composition.ion_species_coord)
+                    bc_ion_n_upar = allocate_shared_float(:z_segment=>length(z_range),
+                                                          composition.ion_species_coord)
                     bc_ion_p = allocate_shared_float(:z_segment=>length(z_range),
                                                      composition.ion_species_coord)
 
@@ -704,13 +704,13 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                     @loop_s is begin
                         @views bc_ion_pdf[:,:,z_range,is] .= ion_pdf[:,:,z_range,is]
                         @views bc_ion_density[z_range,is] .= ion_density[z_range,is]
-                        @views bc_ion_upar[z_range,is] .= ion_upar[z_range,is]
+                        @views bc_ion_n_upar[z_range,is] .= ion_n_upar[z_range,is]
                         @views bc_ion_p[z_range,is] .= ion_p[z_range,is]
                     end
 
                     this_section = ion_r_boundary_section_Dirichlet(bc_ion_pdf,
                                                                     bc_ion_density,
-                                                                    bc_ion_upar, bc_ion_p)
+                                                                    bc_ion_n_upar, bc_ion_p)
                 else
                     this_section = ion_r_boundary_section_Dirichlet(nothing, nothing,
                                                                     nothing, nothing)
@@ -723,7 +723,7 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                 end
                 if electron_pdf === nothing && electron_density === nothing
                     bc_electron_density = allocate_shared_float(:z_segment=>length(z_range))
-                    bc_electron_upar = allocate_shared_float(:z_segment=>length(z_range))
+                    bc_electron_n_upar = allocate_shared_float(:z_segment=>length(z_range))
                     bc_electron_p = allocate_shared_float(:z_segment=>length(z_range))
 
                     @begin_serial_region()
@@ -732,18 +732,18 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                             @views bc_electron_pdf[:,:,z_range] .= electron_pdf[:,:,z_range]
                         end
                         @views bc_electron_density[z_range] .= electron_density[z_range]
-                        @views bc_electron_upar[z_range] .= electron_upar[z_range]
+                        @views bc_electron_n_upar[z_range] .= electron_n_upar[z_range]
                         @views bc_electron_p[z_range] .= electron_p[z_range]
                     end
                 else
                     bc_electron_density = nothing
-                    bc_electron_upar = nothing
+                    bc_electron_n_upar = nothing
                     bc_electron_p = nothing
                 end
 
                 this_section = electron_r_boundary_section_pin_initial(bc_electron_pdf,
                                                                        bc_electron_density,
-                                                                       bc_electron_upar,
+                                                                       bc_electron_n_upar,
                                                                        bc_electron_p)
             elseif species == "neutral"
                 if neutral_pdf === nothing
@@ -752,7 +752,7 @@ function create_r_section(this_input, ion_pdf, ion_density, ion_upar, ion_p, ele
                                                            composition.neutral_species_coord)
                     bc_neutral_density = allocate_shared_float(:z_segment=>length(z_range),
                                                                composition.neutral_species_coord)
-                    bc_neutral_upar = allocate_shared_float(:z_segment=>length(z_range),
+                    bc_neutral_n_upar = allocate_shared_float(:z_segment=>length(z_range),
                                                             composition.neutral_species_coord)
                     bc_neutral_p = allocate_shared_float(:z_segment=>length(z_range),
                                                          composition.neutral_species_coord)
@@ -954,7 +954,7 @@ function enforce_boundary_conditions_f!(fvec_out::scratch_pdf, moments,
                                         z_adv, r_adv, composition, geometry,
                                         scratch_dummy, r_diffusion, vpa_diffusion,
                                         vperp_diffusion)
-    enforce_boundary_conditions_f!(fvec_out.pdf, fvec_out.density, fvec_out.upar,
+    enforce_boundary_conditions_f!(fvec_out.pdf, fvec_out.density, moments.ion.upar,
                                    fvec_out.p, fields, boundaries, moments, vpa, vperp, z,
                                    r, vpa_spectral, vperp_spectral, vpa_adv, vperp_adv,
                                    z_adv, r_adv, composition, geometry, scratch_dummy,
@@ -965,8 +965,8 @@ end
 enforce boundary conditions in r and z on the moments.
 """
 @timeit global_timer enforce_boundary_conditions_moments!(
-                         density, upar, p, fields, boundaries::boundary_info, moments, z,
-                         r, z_adv, r_adv, composition, geometry, r_diffusion) = begin
+                         density, n_upar, p, fields, boundaries::boundary_info, moments,
+                         z, r, z_adv, r_adv, composition, geometry, r_diffusion) = begin
 
     if z.n > 1
         # Enforce the z BC on the evolved velocity space moments of the pdf. At the moment
@@ -976,7 +976,7 @@ enforce boundary conditions in r and z on the moments.
     end
     if r.n > 1
         moment_r_speed = fields.vEr # For now, allow only ExB drift of ion moments
-        enforce_r_boundary_condition_moments!(density, upar, p, moment_r_speed,
+        enforce_r_boundary_condition_moments!(density, n_upar, p, moment_r_speed,
                                               boundaries.r, z, r, composition,
                                               r_diffusion)
     end
@@ -985,7 +985,7 @@ function enforce_boundary_conditions_moments!(fvec_out::scratch_pdf, moments,
                                               fields::em_fields_struct,
                                               boundaries::boundary_info, z, r, z_adv,
                                               r_adv, composition, geometry, r_diffusion)
-    enforce_boundary_conditions_moments!(fvec_out.density, fvec_out.upar, fvec_out.p,
+    enforce_boundary_conditions_moments!(fvec_out.density, fvec_out.n_upar, fvec_out.p,
                                          fields, boundaries, moments, z, r, z_adv, r_adv,
                                          composition, geometry, r_diffusion)
 end
@@ -1020,7 +1020,7 @@ function enforce_r_boundary_section_f!(f, adv, r_diffusion::Bool, r::coordinate,
     return nothing
 end
 
-function enforce_r_boundary_section_moments!(density, upar, p, moment_r_speed,
+function enforce_r_boundary_section_moments!(density, n_upar, p, moment_r_speed,
                                              r_diffusion::Bool, r::coordinate, ir::mk_int,
                                              zero::mk_float, section::r_boundary_section,
                                              ion_section::ion_r_boundary_section_periodic)
@@ -1042,8 +1042,8 @@ function enforce_r_boundary_section_moments!(density, upar, p, moment_r_speed,
         for iz ∈ section.z_range
             density[iz,1,is] = 0.5 * (density[iz,nr,is] + density[iz,1,is])
             density[iz,nr,is] = density[iz,1,is]
-            upar[iz,1,is] = 0.5 * (upar[iz,nr,is] + upar[iz,1,is])
-            upar[iz,nr,is] = upar[iz,1,is]
+            n_upar[iz,1,is] = 0.5 * (n_upar[iz,nr,is] + n_upar[iz,1,is])
+            n_upar[iz,nr,is] = n_upar[iz,1,is]
             p[iz,1,is] = 0.5 * (p[iz,nr,is] + p[iz,1,is])
             p[iz,nr,is] = p[iz,1,is]
         end
@@ -1076,12 +1076,12 @@ function enforce_r_boundary_section_f!(f, adv, r_diffusion::Bool, r::coordinate,
     return nothing
 end
 
-function enforce_r_boundary_section_moments!(density, upar, p, moment_r_speed,
+function enforce_r_boundary_section_moments!(density, n_upar, p, moment_r_speed,
                                              r_diffusion::Bool, r::coordinate, ir::mk_int,
                                              zero::mk_float, section::r_boundary_section,
                                              ion_section::ion_r_boundary_section_Dirichlet)
     n_boundary = ion_section.density
-    u_boundary = ion_section.upar
+    n_u_boundary = ion_section.n_upar
     p_boundary = ion_section.p
     @begin_s_region()
     @loop_s is begin
@@ -1089,7 +1089,7 @@ function enforce_r_boundary_section_moments!(density, upar, p, moment_r_speed,
             if r_diffusion || (ir == 1 ? moment_r_speed[iz,ir] > zero
                                        : moment_r_speed[iz,ir] < -zero)
                 density[iz,ir,is] = n_boundary[iz_section,is]
-                upar[iz,ir,is] = u_boundary[iz_section,is]
+                n_upar[iz,ir,is] = n_u_boundary[iz_section,is]
                 p[iz,ir,is] = p[iz_section,is]
             end
         end
@@ -1130,7 +1130,7 @@ function enforce_r_boundary_section_f!(f, adv, r_diffusion::Bool, r::coordinate,
     return nothing
 end
 
-function enforce_r_boundary_section_moments!(density, upar, p, moment_r_speed,
+function enforce_r_boundary_section_moments!(density, n_upar, p, moment_r_speed,
                                              r_diffusion::Bool, r::coordinate, ir::mk_int,
                                              zero::mk_float, section::r_boundary_section,
                                              ion_section::ion_r_boundary_section_Neumann)
@@ -1151,9 +1151,9 @@ function enforce_r_boundary_section_moments!(density, upar, p, moment_r_speed,
                     dot(derivative_coefficients,
                         density[iz,other_elements_range,is]) *
                     one_over_logarithmic_gradient_value_minus_Db
-                @views upar[iz,ir,is] =
+                @views n_upar[iz,ir,is] =
                     dot(derivative_coefficients,
-                        upar[iz,other_elements_range,is]) *
+                        n_upar[iz,other_elements_range,is]) *
                     one_over_logarithmic_gradient_value_minus_Db
                 @views p[iz,ir,is] =
                     dot(derivative_coefficients,
@@ -1190,7 +1190,7 @@ enforce boundary conditions on ion moments in r
 """
 @timeit_debug global_timer enforce_r_boundary_condition_moments!(
         density::AbstractArray{mk_float,ndim_moment},
-        upar::AbstractArray{mk_float,ndim_moment}, p::AbstractArray{mk_float,ndim_moment},
+        n_upar::AbstractArray{mk_float,ndim_moment}, p::AbstractArray{mk_float,ndim_moment},
         moment_r_speed::AbstractArray{mk_float,ndim_field}, r_boundaries::r_boundary_info,
         z, r, composition, r_diffusion::Bool) = begin
 
@@ -1200,7 +1200,7 @@ enforce boundary conditions on ion moments in r
     for (ir, sections_tuple) ∈ ((1, r_boundaries.inner_sections),
                                 (nr, r_boundaries.outer_sections))
         for section ∈ sections_tuple
-            enforce_r_boundary_section_moments!(density, upar, p, moment_r_speed,
+            enforce_r_boundary_section_moments!(density, n_upar, p, moment_r_speed,
                                                 r_diffusion, r, ir, zero, section,
                                                 section.ion)
         end
@@ -1329,7 +1329,7 @@ function enforce_electron_r_boundary_section_f!(f, adv, r_diffusion::Bool, r::co
     return nothing
 end
 
-function enforce_electron_r_boundary_section_moments!(density, upar, p, moment_r_speed,
+function enforce_electron_r_boundary_section_moments!(density, n_upar, p, moment_r_speed,
                                                       r_diffusion::Bool, r::coordinate,
                                                       ir::mk_int, zero::mk_float,
                                                       section::r_boundary_section,
@@ -1352,8 +1352,8 @@ function enforce_electron_r_boundary_section_moments!(density, upar, p, moment_r
         for iz ∈ section.z_range
             density[iz,1] = 0.5 * (density[iz,nr] + density[iz,1])
             density[iz,nr] = density[iz,1]
-            upar[iz,1] = 0.5 * (upar[iz,nr] + upar[iz,1])
-            upar[iz,nr] = upar[iz,1]
+            n_upar[iz,1] = 0.5 * (n_upar[iz,nr] + n_upar[iz,1])
+            n_upar[iz,nr] = n_upar[iz,1]
             p[iz,1] = 0.5 * (p[iz,nr] + p[iz,1])
             p[iz,nr] = p[iz,1]
         end
@@ -1384,13 +1384,13 @@ function enforce_electron_r_boundary_section_f!(f, adv, r_diffusion::Bool, r::co
     return nothing
 end
 
-function enforce_electron_r_boundary_section_moments!(density, upar, p, moment_r_speed,
+function enforce_electron_r_boundary_section_moments!(density, n_upar, p, moment_r_speed,
                                                       r_diffusion::Bool, r::coordinate,
                                                       ir::mk_int, zero::mk_float,
                                                       section::r_boundary_section,
                                                       electron_section::electron_r_boundary_section_Dirichlet)
     n_boundary = ion_section.density
-    u_boundary = ion_section.upar
+    n_u_boundary = ion_section.n_upar
     p_boundary = ion_section.p
     @begin_serial_region()
     @serial_region begin
@@ -1398,7 +1398,7 @@ function enforce_electron_r_boundary_section_moments!(density, upar, p, moment_r
             if r_diffusion || (ir == 1 ? moment_r_speed[iz,ir] > zero
                                        : moment_r_speed[iz,ir] < -zero)
                 density[iz,ir] = n_boundary[iz_section]
-                upar[iz,ir] = u_boundary[iz_section]
+                n_upar[iz,ir] = n_u_boundary[iz_section]
                 p[iz,ir] = p[iz_section]
             end
         end
@@ -1437,7 +1437,7 @@ function enforce_electron_r_boundary_section_f!(f, adv, r_diffusion::Bool, r::co
     return nothing
 end
 
-function enforce_electron_r_boundary_section_moments!(density, upar, p, moment_r_speed,
+function enforce_electron_r_boundary_section_moments!(density, n_upar, p, moment_r_speed,
                                                       r_diffusion::Bool, r::coordinate,
                                                       ir::mk_int, zero::mk_float,
                                                       section::r_boundary_section,
@@ -1459,9 +1459,9 @@ function enforce_electron_r_boundary_section_moments!(density, upar, p, moment_r
                     dot(derivative_coefficients,
                         density[iz,other_elements_range]) *
                     one_over_logarithmic_gradient_value_minus_Db
-                @views upar[iz,ir] =
+                @views n_upar[iz,ir] =
                     dot(derivative_coefficients,
-                        upar[iz,other_elements_range]) *
+                        n_upar[iz,other_elements_range]) *
                     one_over_logarithmic_gradient_value_minus_Db
                 @views p[iz,ir] =
                     dot(derivative_coefficients,
@@ -1479,7 +1479,7 @@ enforce boundary conditions on electrons in r
 @timeit_debug global_timer enforce_electron_r_boundary_condition!(
         f::AbstractArray{mk_float,ndim_pdf_electron},
         density::AbstractArray{mk_float,ndim_field},
-        upar::AbstractArray{mk_float,ndim_field}, p::AbstractArray{mk_float,ndim_field},
+        n_upar::AbstractArray{mk_float,ndim_field}, p::AbstractArray{mk_float,ndim_field},
         moment_r_speed::AbstractArray{mk_float,ndim_field},
         r_boundaries::r_boundary_info, adv, vpa, vperp, z, r, composition,
         r_diffusion::Bool) = begin
@@ -1492,7 +1492,7 @@ enforce boundary conditions on electrons in r
         for section ∈ sections_tuple
             enforce_electron_r_boundary_section_f!(f, adv, r_diffusion, r, ir, zero,
                                                    section, section.electron)
-            enforce_electron_r_boundary_section_moments!(density, upar, p, moment_r_speed,
+            enforce_electron_r_boundary_section_moments!(density, n_upar, p, moment_r_speed,
                                                          r_diffusion, r, ir, zero,
                                                          section, section.electron)
         end

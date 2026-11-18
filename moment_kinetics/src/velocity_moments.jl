@@ -1372,7 +1372,7 @@ function update_derived_neutral_moment_time_derivatives!(fvec_in, moments)
     @begin_sn_r_z_region()
 
     n = fvec_in.density_neutral
-    uz = fvec_in.uz_neutral
+    uz = moments.neutral.uz
     p = fvec_in.p_neutral
     vth = moments.neutral.vth
     dn_dt = moments.neutral.ddens_dt
@@ -1971,7 +1971,7 @@ end
 function update_neutral_uz!(uz, density, n_uz)
     @begin_r_z_region()
     @loop_sn isn begin
-        @views update_neutral_uz_species(uz[:,:,isn], density[:,:,isn], n_uz[:,:,isn])
+        @views update_neutral_uz_species!(uz[:,:,isn], density[:,:,isn], n_uz[:,:,isn])
     end
     return nothing
 end

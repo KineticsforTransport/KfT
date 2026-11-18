@@ -176,7 +176,7 @@ end
     # copies of the element boundary points at sub-domain or periodic boundaries). Now
     # fill in the duplicate points.
     halo_swap!(r, z, scratch.electron_density, scratch.electron_n_upar,
-               scratch.electron_upar, scratch.electron_p, moments.electron.vth,
+               moments.electron.upar, scratch.electron_p, moments.electron.vth,
                moments.electron.temp, moments.electron.ppar, moments.electron.qpar)
 
     return nothing
