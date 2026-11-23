@@ -40,7 +40,7 @@ using ..velocity_moments: update_neutral_n_uz!, update_neutral_uz!, update_neutr
 using ..velocity_moments: update_p!, update_ppar!, update_n_upar!, update_upar!,
                           update_density!, update_pperp!, update_vth!
 using ..electron_fluid_equations: calculate_electron_density!, calculate_electron_density_no_r!
-using ..electron_fluid_equations: calculate_electron_n_upar_from_charge_conservation!
+using ..electron_fluid_equations: calculate_electron_n_upar_from_zero_parallel_current!
 using ..electron_fluid_equations: calculate_electron_qpar!, electron_fluid_qpar_boundary_condition!
 using ..electron_fluid_equations: calculate_electron_parallel_friction_force!
 using ..electron_kinetic_equation: update_electron_pdf!, enforce_boundary_condition_on_electron_pdf!
@@ -286,15 +286,10 @@ function initialize_electrons!(pdf, moments, fields, geometry, composition, r, z
     # initialise the electron density profile
     init_electron_density!(moments.electron.dens, moments.ion.dens, r, z)
     # initialise the electron parallel flow profile
-    init_electron_upar!(moments.electron.n_upar, moments.ion.n_upar,
-                        composition.electron_physics, r, z)
+    init_electron_n_upar!(moments.electron.n_upar, moments.ion.n_upar, r, z)
     calculate_electron_upar!(moments.electron.upar, moments.electron.dens,
                              moments.electron.n_upar)
     halo_swap!(r, z, moments.electron.upar)
-    @begin_r_z_region()
-    @loop_r_z ir iz begin
-        moments.electron.n_upar[iz,ir] = moments.electron.dens[iz,ir] * moments.electron.upar[iz,ir]
-    end
     # different choices for initialization of electron temperature/pressure/vth depending on whether
     # we are restarting from a previous simulation with Boltzmann electrons or not
     if restart_electron_physics === nothing
@@ -1108,9 +1103,8 @@ end
 """
 initialise the electron parallel flow density
 """
-function init_electron_upar!(n_upar_e, n_upar_i, electron_model, r, z)
-    calculate_electron_n_upar_from_charge_conservation!(n_upar_e, n_upar_i,
-                                                        electron_model, r, z)
+function init_electron_n_upar!(n_upar_e, n_upar_i, r, z)
+    calculate_electron_n_upar_from_zero_parallel_current!(n_upar_e, n_upar_i, r, z)
 
     # Ensure subdomain boundary points are initialised.
     halo_swap!(r, z, n_upar_e)

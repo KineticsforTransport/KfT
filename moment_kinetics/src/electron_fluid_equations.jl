@@ -1,7 +1,7 @@
 module electron_fluid_equations
 
 export calculate_electron_density!
-export calculate_electron_n_upar_from_charge_conservation!
+export calculate_electron_n_upar_from_zero_parallel_current!
 export calculate_electron_moments!
 export calculate_electron_moments_no_r!
 export electron_energy_equation!
@@ -67,62 +67,23 @@ inputs:
 output:
     n_upar_e = contains the updated electron parallel flow
 """
-function calculate_electron_n_upar_from_charge_conservation!(n_upar_e, n_upar_i,
-                                                             electron_model, r, z)
+function calculate_electron_n_upar_from_zero_parallel_current!(n_upar_e, n_upar_i, r, z)
     @begin_r_anyzv_region()
     @loop_r ir begin
-        @views calculate_electron_n_upar_from_charge_conservation_no_r!(
-                   n_upar_e[:,ir], n_upar_i[:,ir,:], electron_model, r, z, ir)
+        @views calculate_electron_n_upar_from_zero_parallel_current_no_r!(
+                   n_upar_e[:,ir], n_upar_i[:,ir,:], r, z, ir)
     end
     return nothing
 end
-function calculate_electron_n_upar_from_charge_conservation_no_r!(n_upar_e, n_upar_i,
-                                                                  electron_model, r, z,
-                                                                  ir)
+function calculate_electron_n_upar_from_zero_parallel_current_no_r!(n_upar_e, n_upar_i, r,
+                                                                    z, ir)
+
     @begin_anyzv_z_region()
-    # initialise the electron parallel flow density to zero
     @loop_z iz begin
-        n_upar_e[iz] = 0.0
-    end
-    # if using a simple logical sheath model, then the electron parallel current at the boundaries in zed
-    # is equal and opposite to the ion parallel current
-    if electron_model ∈ (boltzmann_electron_response_with_simple_sheath,
-                         braginskii_fluid, kinetic_electrons,
-                         kinetic_electrons_with_temperature_equation)
-        boundary_flux = @view r.scratch_shared[ir:ir]
-        boundary_ion_flux = @view r.scratch_shared2[ir:ir]
-        @begin_anyzv_region()
-        @anyzv_serial_region begin
-            if z.irank == 0
-                boundary_flux[] = 0.0
-                boundary_ion_flux[] = 0.0
-                for is ∈ 1:size(n_upar_i, 2)
-                    boundary_flux[] += n_upar_e[1,is]
-                    boundary_ion_flux[] += n_upar_i[1,is]
-                end
-            end
-            MPI.Bcast!(boundary_flux, 0, z.comm)
-            MPI.Bcast!(boundary_ion_flux, 0, z.comm)
-        end
-        # loop over ion species, adding each species contribution to the
-        # ion parallel particle flux at the boundaries in zed
-        @begin_anyzv_z_region()
-        @loop_z iz begin
-            # initialise the electron particle flux to its value at the boundary in
-            # zed and subtract the ion boundary flux - we want to calculate n_upar_e =
-            # boundary_flux + (ion_flux - boundary_ion_flux).
-            n_upar_e[iz] = boundary_flux[] - boundary_ion_flux[]
-            # add the contributions to the electron particle flux from the various ion species
-            # particle fluxes
-            @loop_s is begin
-                n_upar_e[iz] += n_upar_i[iz,is]
-            end
-        end
-    else
-        @begin_anyzv_z_region()
-        @loop_z iz begin
-            n_upar_e[iz] = n_upar_i[iz,1]
-        end
+        # Set the electron parallel particle flux equal to the sum of the ion parallel
+        # particle fluxes (this should be weighted by the ion charges when charges other
+        # than +1 are allowed), so that the parallel current is zero.
+        n_upar_e[iz] = sum(@view(n_upar_i[iz,:]))
     end
     return nothing
 end
@@ -186,8 +147,8 @@ function calculate_electron_moments_no_r!(pdf_electron, electron_density, electr
                                           electron_p, ion_density, ion_n_upar, moments,
                                           composition, collisions, r, z, vperp, vpa, ir)
     calculate_electron_density_no_r!(electron_density, ion_density, ir)
-    calculate_electron_n_upar_from_charge_conservation_no_r!(
-        electron_n_upar, ion_n_upar, composition.electron_physics, r, z, ir)
+    calculate_electron_n_upar_from_zero_parallel_current_no_r!(
+        electron_n_upar, ion_n_upar, r, z, ir)
     @views calculate_electron_upar_no_r!(moments.electron.upar[:,ir], electron_density,
                                          electron_n_upar)
     if composition.electron_physics ∉ (braginskii_fluid, kinetic_electrons,

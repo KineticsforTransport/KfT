@@ -103,7 +103,7 @@ using ..utils: to_minutes, get_minimum_CFL_r, get_minimum_CFL_z, get_minimum_CFL
                get_minimum_CFL_neutral_vz
 using ..electron_fluid_equations: calculate_electron_moments!
 using ..electron_fluid_equations: calculate_electron_density!
-using ..electron_fluid_equations: calculate_electron_n_upar_from_charge_conservation!
+using ..electron_fluid_equations: calculate_electron_n_upar_from_zero_parallel_current!
 using ..electron_fluid_equations: calculate_electron_qpar!, electron_fluid_qpar_boundary_condition!
 using ..electron_fluid_equations: calculate_electron_parallel_friction_force!
 using ..electron_fluid_equations: electron_energy_equation!, update_electron_vth_temperature!,
@@ -1393,10 +1393,8 @@ function _setup_time_advance_internal!(pdf, fields, vz, vr, vzeta, vpa, vperp, z
         # in case the corresponding ion quantities have been changed by applying
         # constraints to the ion pdf
         calculate_electron_density!(moments.electron.dens, moments.ion.dens)
-        calculate_electron_n_upar_from_charge_conservation!(moments.electron.n_upar,
-                                                            moments.ion.n_upar,
-                                                            composition.electron_physics,
-                                                            r, z)
+        calculate_electron_n_upar_from_zero_parallel_current!(moments.electron.n_upar,
+                                                              moments.ion.n_upar, r, z)
         @begin_serial_region()
         # compute the updated electron temperature
         # NB: not currently necessary, as initial vth is not directly dependent on ion quantities
