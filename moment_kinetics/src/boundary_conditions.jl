@@ -2404,7 +2404,6 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, n_uz, uz, density,
             else
                 vth = nothing
             end
-            @. vz.scratch2 = vpagrid_to_vpa(vz.grid, vth, uz[1], evolve_p, evolve_n_upar)
 
             # First apply boundary condition that total neutral outflux is equal to ion
             # influx to uz
@@ -2412,6 +2411,8 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, n_uz, uz, density,
             uz[1] = wall_flux_0 / density[1]
             #would setting density work better??
             #density[1] = - wall_flux_0 / uz[1]
+
+            @. vz.scratch2 = vpagrid_to_vpa(vz.grid, vth, uz[1], evolve_p, evolve_n_upar)
 
             # Create normalised Knudsen cosine distribution, to use for positive v_parallel
             # at z = -Lz/2
@@ -2541,7 +2542,6 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, n_uz, uz, density,
             else
                 vth = nothing
             end
-            @. vz.scratch2 = vpagrid_to_vpa(vz.grid, vth, uz[end], evolve_p, evolve_n_upar)
 
             # First apply boundary condition that total neutral outflux is equal to ion
             # influx to uz
@@ -2549,6 +2549,8 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, n_uz, uz, density,
             uz[end] = - wall_flux_L / density[end]
             #would setting density work better??
             #density[end] = - wall_flux_L / upar[end]
+
+            @. vz.scratch2 = vpagrid_to_vpa(vz.grid, vth, uz[end], evolve_p, evolve_n_upar)
 
             # obtain the Knudsen cosine distribution at z = Lz/2
             # the z-dependence is only introduced if the peculiiar velocity is used as vz
