@@ -3340,7 +3340,7 @@ appropriate.
         @begin_s_r_z_region()
         ion_n_u_err = local_error_norm(scratch[2].n_upar,
                                        scratch[t_params.n_rk_stages+1].n_upar,
-                                       t_params.rtol, t_params.atol;
+                                       t_params.rtol, t_params.atol_n_upar;
                                        method=error_norm_method,
                                        skip_r_inner=skip_r_inner,
                                        skip_z_lower=skip_z_lower,
@@ -3440,7 +3440,7 @@ appropriate.
             @begin_sn_r_z_region()
             neut_n_u_err = local_error_norm(scratch[2].n_uz_neutral,
                                             scratch[t_params.n_rk_stages+1].n_uz_neutral,
-                                            t_params.rtol, t_params.atol, true;
+                                            t_params.rtol, t_params.atol_n_upar, true;
                                             method=error_norm_method,
                                             skip_r_inner=skip_r_inner,
                                             skip_z_lower=skip_z_lower,
@@ -4499,9 +4499,6 @@ Do a backward-Euler timestep for all terms in the ion kinetic equation.
     icut_lower_z = scratch_dummy.int_buffer_vperprs_1
     icut_upper_z = scratch_dummy.int_buffer_vperprs_2
     zero = 1.0e-14
-
-    rtol = nl_solver_params.rtol
-    atol = nl_solver_params.atol
 
     @begin_s_r_z_region()
     @loop_s_r_z is ir iz begin
