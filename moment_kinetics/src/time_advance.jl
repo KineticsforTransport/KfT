@@ -2494,7 +2494,7 @@ function time_advance!(pdf, scratch, scratch_implicit, scratch_electron, t_param
             end
 
             if t_params.previous_dt[] == 0.0
-                # Timestep failed, so reset  scratch[t_params.n_rk_stages+1] equal to
+                # Timestep failed, so reset scratch[t_params.n_rk_stages+1] equal to
                 # scratch[1] to start the timestep over.
                 scratch_temp = scratch[t_params.n_rk_stages+1]
                 scratch[t_params.n_rk_stages+1] = scratch[1]
@@ -2809,11 +2809,14 @@ moments and moment derivatives
 
     success = ""
 
-    if pdf_bc_constraints && composition.ion_physics ∈ (drift_kinetic_ions, gyrokinetic_ions)
-        # Ensure there are no negative values in the pdf before applying boundary
-        # conditions, so that negative deviations do not mess up the integral-constraint
-        # corrections in the sheath boundary conditions.
-        force_minimum_pdf_value!(this_scratch.pdf, num_diss_params.ion.force_minimum_pdf_value)
+    if composition.ion_physics ∈ (drift_kinetic_ions, gyrokinetic_ions)
+        if pdf_bc_constraints
+            # Ensure there are no negative values in the pdf before applying boundary
+            # conditions, so that negative deviations do not mess up the
+            # integral-constraint corrections in the sheath boundary conditions.
+            force_minimum_pdf_value!(this_scratch.pdf,
+                                     num_diss_params.ion.force_minimum_pdf_value)
+        end
 
         # If using an ion model with no velocity space grid, diagnostic moments are never
         # needed.
@@ -2848,14 +2851,17 @@ moments and moment derivatives
             # here.
             update_upar!(moments.ion.upar, this_scratch.density, this_scratch.n_upar)
 
-            enforce_boundary_conditions_f!(this_scratch, moments, fields, boundaries, vpa,
-                                           vperp, z, r, vpa_spectral, vperp_spectral,
-                                           vpa_advect, vperp_advect, z_advect, r_advect,
-                                           composition, geometry, scratch_dummy,
-                                           advance.r_diffusion, advance.vpa_diffusion,
-                                           advance.vperp_diffusion)
+            if pdf_bc_constraints
+                enforce_boundary_conditions_f!(this_scratch, moments, fields, boundaries,
+                                               vpa, vperp, z, r, vpa_spectral,
+                                               vperp_spectral, vpa_advect, vperp_advect,
+                                               z_advect, r_advect, composition, geometry,
+                                               scratch_dummy, advance.r_diffusion,
+                                               advance.vpa_diffusion,
+                                               advance.vperp_diffusion)
 
-            hard_force_moment_constraints!(this_scratch.pdf, moments, vpa, vperp)
+                hard_force_moment_constraints!(this_scratch.pdf, moments, vpa, vperp)
+            end
 
             # update remaining velocity moments that are calculable from the evolved pdf
             # Note these may be needed for the boundary condition on the neutrals, so must
@@ -2883,14 +2889,17 @@ moments and moment derivatives
             # used, and it would be a faff to handle updating n_upar in an appropriate
             # place. So for simplicity, just do the same as for the standard-drift-kinetic
             # case.
-            enforce_boundary_conditions_f!(this_scratch, moments, fields, boundaries, vpa,
-                                           vperp, z, r, vpa_spectral, vperp_spectral,
-                                           vpa_advect, vperp_advect, z_advect, r_advect,
-                                           composition, geometry, scratch_dummy,
-                                           advance.r_diffusion, advance.vpa_diffusion,
-                                           advance.vperp_diffusion)
+            if pdf_bc_constraints
+                enforce_boundary_conditions_f!(this_scratch, moments, fields, boundaries,
+                                               vpa, vperp, z, r, vpa_spectral,
+                                               vperp_spectral, vpa_advect, vperp_advect,
+                                               z_advect, r_advect, composition, geometry,
+                                               scratch_dummy, advance.r_diffusion,
+                                               advance.vpa_diffusion,
+                                               advance.vperp_diffusion)
 
-            hard_force_moment_constraints!(this_scratch.pdf, moments, vpa, vperp)
+                hard_force_moment_constraints!(this_scratch.pdf, moments, vpa, vperp)
+            end
 
             # update remaining velocity moments that are calculable from the evolved pdf
             # Note these may be needed for the boundary condition on the neutrals, so must
