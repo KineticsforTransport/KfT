@@ -2846,6 +2846,12 @@ moments and moment derivatives
                         moments, geometry, z_spectral, r_spectral, scratch_dummy, gyroavs,
                         boundaries)
 
+            enforce_boundary_conditions_moments!(this_scratch.density,
+                                                 this_scratch.n_upar, this_scratch.p,
+                                                 fields, boundaries, moments, z, r,
+                                                 z_advect, r_advect, composition,
+                                                 geometry, advance.r_diffusion)
+
             # upar is needed when applying the sheath entrance boundary condition to the
             # shape function. Doesn't make sense to calculate twice, so calculate once
             # here.
@@ -2951,6 +2957,11 @@ moments and moment derivatives
     end
 
     if composition.ion_physics == coll_krook_ions
+        enforce_boundary_conditions_moments!(this_scratch.density,
+                                             this_scratch.n_upar, this_scratch.p,
+                                             fields, boundaries, moments, z, r,
+                                             z_advect, r_advect, composition,
+                                             geometry, advance.r_diffusion)
         update_upar!(moments.ion.upar, this_scratch.density, this_scratch.n_upar)
 
         # coll_krook heat flux is calculated from moments in this function via update_ion_qpar

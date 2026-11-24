@@ -93,37 +93,6 @@ to update the parallel particle flux dens*upar for each species
     @loop_s_r_z is ir iz begin
         n_upar_out[iz,ir,is] = n_upar[iz,ir,is] + dt * dnupar_dt[iz,ir,is]
     end
-
-    if composition.ion_physics == coll_krook_ions
-        @begin_s_r_region()
-        # boundary condition for fluid simulation on ion flow at wall is that flow must be at least sonic.
-        if z.irank == 0 && (z.irank == z.nrank - 1)
-            z_indices = (1, z.n)
-        elseif z.irank == 0
-            z_indices = (1,)
-        elseif z.irank == z.nrank - 1
-            z_indices = (z.n,)
-        else
-            return nothing
-        end
-        T_e = composition.T_e
-        ion_temp = moments.ion.temp
-        @loop_s_r is ir begin
-            for iz ∈ z_indices
-                # set the ion flow to local sound speed at wall, each temperature being a parallel temperature
-                # note that Tpar is 3 time T in this case. NOTE THAT THIS IS FOR 1V ONLY
-                if iz == 1
-                    if n_upar_out[iz,ir,is] > -density[iz,ir,is] * sqrt(T_e + 3*ion_temp[iz,ir,is])
-                        n_upar_out[iz,ir,is] = -density[iz,ir,is] * sqrt(T_e + 3*ion_temp[iz,ir,is])
-                    end
-                else
-                    if n_upar_out[iz,ir,is] < density[iz,ir,is] * sqrt(T_e + 3*ion_temp[iz,ir,is])
-                        n_upar_out[iz,ir,is] = density[iz,ir,is] * sqrt(T_e + 3*ion_temp[iz,ir,is])
-                    end
-                end
-            end
-        end
-    end
     return nothing
 end
 

@@ -969,10 +969,9 @@ enforce boundary conditions in r and z on the moments.
                          z, r, z_adv, r_adv, composition, geometry, r_diffusion) = begin
 
     if z.n > 1
-        # Enforce the z BC on the evolved velocity space moments of the pdf. At the moment
-        # this is a placeholder that does not do anything, because no z boundary
-        # conditions are needed on the ion moments.
-        enforce_z_boundary_condition_moments!(density, moments, z.bc)
+        # Enforce the z BC on the evolved velocity space moments of the pdf. This is only
+        # needed (at the moment) for coll_krook_ions.
+        enforce_z_boundary_condition_moments!(density, n_upar, p, z, composition)
     end
     if r.n > 1
         moment_r_speed = fields.vEr # For now, allow only ExB drift of ion moments
@@ -2705,22 +2704,38 @@ end
 """
 enforce the z boundary condition on the evolved velocity space moments of f
 """
-function enforce_z_boundary_condition_moments!(density, moments, bc::String)
-    ## TODO: parallelise
-    #@begin_serial_region()
-    #@serial_region begin
-    #    # enforce z boundary condition on density if it is evolved separately from f
-    #	if moments.evolve_density
-    #        # TODO: extend to 'periodic' BC case, as this requires further code modifications to be consistent
-    #        # with finite difference derivatives (should be fine for Chebyshev)
-    #        if bc == "wall"
-    #            @loop_s_r is ir begin
-    #                density[1,ir,is] = 0.5*(density[1,ir,is] + density[end,ir,is])
-    #                density[end,ir,is] = density[1,ir,is]
-    #        	end
-    #        end
-    #    end
-    #end
+function enforce_z_boundary_condition_moments!(density, n_upar, p, z, composition)
+    if composition.ion_physics == coll_krook_ions && z.bc == "wall"
+        @begin_s_r_region()
+        # boundary condition for fluid simulation on ion flow at wall is that flow must be at least sonic.
+        if z.irank == 0 && (z.irank == z.nrank - 1)
+            z_indices = (1, z.n)
+        elseif z.irank == 0
+            z_indices = (1,)
+        elseif z.irank == z.nrank - 1
+            z_indices = (z.n,)
+        else
+            return nothing
+        end
+        T_e = composition.T_e
+        @loop_s_r is ir begin
+            for iz ∈ z_indices
+                # set the ion flow to local sound speed at wall, each temperature being a parallel temperature
+                # note that Tpar is 3 times T in this case. NOTE THAT THIS IS FOR 1V ONLY
+                n_c_s = density[iz,ir,is] * sqrt(T_e + 3 * p[iz,ir,is] / density[iz,ir,is])
+                if iz == 1
+                    if n_upar[iz,ir,is] > -n_c_s
+                        n_upar[iz,ir,is] = -n_c_s
+                    end
+                else
+                    if n_upar[iz,ir,is] < n_c_s
+                        n_upar[iz,ir,is] = n_c_s
+                    end
+                end
+            end
+        end
+    end
+    return nothing
 end
 
 """
