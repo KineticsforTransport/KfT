@@ -52,9 +52,9 @@ function trapping_plots(run_info, run_info_dfns, plot_prefix=nothing)
             vperp_values = similar(vpa_values)
 
             # line is different depending on velocity coordinates
-            if run_info_dfns[1].evolve_density && run_info_dfns[1].evolve_upar && run_info_dfns[1].evolve_p
+            if run_info_dfns[1].evolve_density && run_info_dfns[1].evolve_n_upar && run_info_dfns[1].evolve_p
                 @. vperp_values = safe_sqrt( (((vpa_values*midpoint_thermal_speed + midpoint_upar))^2 - 2 * (phi_top - phi_bottom))*(B_bottom/(B_top - B_bottom)) ) / midpoint_thermal_speed
-            elseif !run_info_dfns[1].evolve_density && !run_info_dfns[1].evolve_upar && !run_info_dfns[1].evolve_p
+            elseif !run_info_dfns[1].evolve_density && !run_info_dfns[1].evolve_n_upar && !run_info_dfns[1].evolve_p
                 @. vperp_values = safe_sqrt( (((vpa_values))^2 - 2 * (phi_top - phi_bottom))*(B_bottom/(B_top - B_bottom)) )
             else
                 error("Trapped-passing boundary plotting not implemented for case where some but not all of n, upar and p are evolved.")
@@ -71,7 +71,7 @@ function trapping_plots(run_info, run_info_dfns, plot_prefix=nothing)
                 phi_max = maximum(phi[1:half_z_length])
                 phi_mid = phi_bottom
                 mid_upar = sqrt(2 * (phi_max - phi_mid))
-                arrow_x = if run_info_dfns[1].evolve_density && run_info_dfns[1].evolve_upar && run_info_dfns[1].evolve_p
+                arrow_x = if run_info_dfns[1].evolve_density && run_info_dfns[1].evolve_n_upar && run_info_dfns[1].evolve_p
                     [mid_upar/midpoint_thermal_speed, -mid_upar/midpoint_thermal_speed]
                 else
                     [mid_upar, -mid_upar]

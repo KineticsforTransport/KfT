@@ -4645,7 +4645,7 @@ const get_variable_funcs = Dict{String,Any}(
                 if run_info.vperp.n == 1
                     variable ./= vth
                 else
-                    variable ./= vth^3
+                    variable ./= vth.^3
                 end
             end
             if run_info.evolve_density
