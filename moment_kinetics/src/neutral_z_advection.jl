@@ -20,8 +20,8 @@ do a single stage time advance (potentially as part of a multi-stage RK scheme)
                          spectral, composition, scratch_dummy) = begin
 
     # get the updated speed along the z direction using the current f
-    @views update_speed_neutral_z!(advect, fvec_in.uz_neutral, moments.neutral.vth,
-                                   moments.evolve_upar, moments.evolve_p, vz, vr, vzeta,
+    @views update_speed_neutral_z!(advect, moments.neutral.uz, moments.neutral.vth,
+                                   moments.evolve_n_upar, moments.evolve_p, vz, vr, vzeta,
                                    z, r, t)
 
     @begin_sn_r_vzeta_vr_vz_region()
@@ -46,13 +46,13 @@ end
 """
 calculate the advection speed in the z-direction at each grid point
 """
-function update_speed_neutral_z!(advect, uz, vth, evolve_upar::Bool, evolve_p::Bool, vz,
+function update_speed_neutral_z!(advect, uz, vth, evolve_n_upar::Bool, evolve_p::Bool, vz,
                                  vr, vzeta, z, r, t)
-    return update_speed_neutral_z!(advect, uz, vth, Val(evolve_upar), Val(evolve_p), vz,
+    return update_speed_neutral_z!(advect, uz, vth, Val(evolve_n_upar), Val(evolve_p), vz,
                                    vr, vzeta, z, r, t)
 end
-function update_speed_neutral_z!(advect, uz, vth, evolve_upar::Val, evolve_p::Val, vz, vr,
-                                 vzeta, z, r, t)
+function update_speed_neutral_z!(advect, uz, vth, evolve_n_upar::Val, evolve_p::Val, vz,
+                                 vr, vzeta, z, r, t)
     @debug_consistency_checks r.n == size(advect,5) || throw(BoundsError(advect))
     @debug_consistency_checks z.n == size(advect,4) || throw(BoundsError(advect))
     @debug_consistency_checks vzeta.n == size(advect,3) || throw(BoundsError(advect))
@@ -64,7 +64,7 @@ function update_speed_neutral_z!(advect, uz, vth, evolve_upar::Val, evolve_p::Va
     vz_grid = vz.grid
     @loop_sn_r isn ir begin
         speed_args_snr = get_speed_neutral_z_inner_views_sr(isn, ir, advect, uz, vth,
-                                                            vz_grid, evolve_upar,
+                                                            vz_grid, evolve_n_upar,
                                                             evolve_p)
         @loop_z iz begin
             speed_args_z = get_speed_neutral_z_inner_views_z(iz, speed_args_snr...)
@@ -78,26 +78,26 @@ function update_speed_neutral_z!(advect, uz, vth, evolve_upar::Val, evolve_p::Va
 end
 
 @inline function get_speed_neutral_z_inner_views_sr(isn, ir, advect, uz, vth, vz,
-                                                    evolve_upar::Val, evolve_p::Val)
-    return @views advect[:,:,:,:,ir,isn], uz[:,ir,isn], vth[:,ir,isn], vz, evolve_upar,
+                                                    evolve_n_upar::Val, evolve_p::Val)
+    return @views advect[:,:,:,:,ir,isn], uz[:,ir,isn], vth[:,ir,isn], vz, evolve_n_upar,
                   evolve_p
 end
 
 @inline function get_speed_neutral_z_inner_views_z(iz, advect, uz, vth, vz,
-                                                   evolve_upar::Val, evolve_p::Val)
-    return @views advect[:,:,:,iz], uz[iz], vth[iz], vz, evolve_upar, evolve_p
+                                                   evolve_n_upar::Val, evolve_p::Val)
+    return @views advect[:,:,:,iz], uz[iz], vth[iz], vz, evolve_n_upar, evolve_p
 end
 
 @inline function get_speed_neutral_z_inner_views_vzetavr(ivzeta, ivr, advect, uz, vth, vz,
-                                                         evolve_upar::Val, evolve_p::Val)
-    return @views advect[:,ivr,ivzeta], uz, vth, vz, evolve_upar, evolve_p
+                                                         evolve_n_upar::Val, evolve_p::Val)
+    return @views advect[:,ivr,ivzeta], uz, vth, vz, evolve_n_upar, evolve_p
 end
 
-function update_speed_neutral_z_inner!(advect, uz, vth, vz, evolve_upar::Val,
+function update_speed_neutral_z_inner!(advect, uz, vth, vz, evolve_n_upar::Val,
                                        evolve_p::Val)
     if evolve_p === Val(true)
         @. advect = (vth * vz + uz)
-    elseif evolve_upar === Val(true)
+    elseif evolve_n_upar === Val(true)
         @. advect = (vz + uz)
     else
         @. advect = vz

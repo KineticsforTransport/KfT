@@ -224,8 +224,8 @@ function run_test(test_input, rtol, atol; args...)
             phi_zrt, Er_zrt, Ez_zrt = load_fields_data(fid)
 
             # load velocity moments data
-            n_ion_zrst, upar_ion_zrst, p_ion_zrst, ppar_ion_zrst, qpar_ion_zrst, v_t_ion_zrst = load_ion_moments_data(fid)
-            n_neutral_zrst, upar_neutral_zrst, p_neutral_zrst, pz_neutral_zrst, qpar_neutral_zrst, v_t_neutral_zrst = load_neutral_particle_moments_data(fid)
+            n_ion_zrst, n_upar_ion_zrst, p_ion_zrst, ppar_ion_zrst, qpar_ion_zrst, v_t_ion_zrst = load_ion_moments_data(fid)
+            n_neutral_zrst, n_upar_neutral_zrst, p_neutral_zrst, pz_neutral_zrst, qpar_neutral_zrst, v_t_neutral_zrst = load_neutral_particle_moments_data(fid)
             z, z_spectral = load_coordinate_data(fid, "z"; ignore_MPI=true)
 
             close(fid)
@@ -242,13 +242,13 @@ function run_test(test_input, rtol, atol; args...)
             
             phi = phi_zrt[:,1,:]
             n_ion = n_ion_zrst[:,1,:,:]
-            upar_ion = upar_ion_zrst[:,1,:,:]
+            upar_ion = n_upar_ion_zrst[:,1,:,:] ./ n_ion
             p_ion = p_ion_zrst[:,1,:,:]
             qpar_ion = qpar_ion_zrst[:,1,:,:]
             v_t_ion = v_t_ion_zrst[:,1,:,:]
             f_ion = f_ion_vpavperpzrst[:,1,:,1,:,:]
             n_neutral = n_neutral_zrst[:,1,:,:]
-            upar_neutral = upar_neutral_zrst[:,1,:,:]
+            upar_neutral = n_upar_neutral_zrst[:,1,:,:] ./ n_neutral
             p_neutral = p_neutral_zrst[:,1,:,:]
             qpar_neutral = qpar_neutral_zrst[:,1,:,:]
             v_t_neutral = v_t_neutral_zrst[:,1,:,:]

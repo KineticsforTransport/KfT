@@ -51,7 +51,7 @@ flow and/or pressure, and use them to update the pdf
                     pdf_in[ivpa,ivperp,iz,ir,is]
             end
         end
-    elseif moments.evolve_upar || moments.evolve_density
+    elseif moments.evolve_n_upar || moments.evolve_density
         @loop_s_r_z is ir iz begin
             ddt_term = - dn_dt[iz,ir,is] / n[iz,ir,is]
             rdot_coefficient = - dn_dr[iz,ir,is] / n[iz,ir,is]
@@ -81,7 +81,7 @@ flow and/or pressure, and use them to update the pdf
 
     pdf_in = fvec_in.pdf_neutral
     n = fvec_in.density_neutral
-    uz = fvec_in.uz_neutral
+    uz = moments.neutral.uz
     vth = moments.neutral.vth
     dn_dt = moments.neutral.ddens_dt
     dn_dz = moments.neutral.ddens_dz
@@ -99,7 +99,7 @@ flow and/or pressure, and use them to update the pdf
                     pdf_in[ivz,ivr,ivzeta,iz,ir,isn]
             end
         end
-    elseif moments.evolve_upar
+    elseif moments.evolve_n_upar
         @loop_sn_r_z isn ir iz begin
             coefficient1 = -(dn_dt[iz,ir,isn] + uz[iz,ir,isn] * dn_dz[iz,ir,isn]) / n[iz,ir,isn]
             coefficient2 = -dn_dz[iz,ir,isn] / n[iz,ir,isn]

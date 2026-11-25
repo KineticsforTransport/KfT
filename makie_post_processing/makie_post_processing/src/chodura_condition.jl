@@ -308,7 +308,7 @@ function Chodura_condition_plots(run_info; plot_prefix=nothing, axes=nothing)
                                 run_info.composition, Er, run_info.geometry,
                                 run_info.z.bc, nothing;
                                 evolve_density=run_info.evolve_density,
-                                evolve_upar=run_info.evolve_upar,
+                                evolve_n_upar=run_info.evolve_n_upar,
                                 evolve_p=run_info.evolve_p,
                                 f_lower=f_lower, f_upper=f_upper, find_extra_offset=true)
 

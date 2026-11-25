@@ -11,7 +11,7 @@ using moment_kinetics.file_io: io_has_parallel
 using moment_kinetics.input_structs: hdf5
 using moment_kinetics.interpolation: interpolate_to_grid_z, interpolate_to_grid_vpa
 using moment_kinetics.load_data: get_run_info_no_setup, close_run_info,
-                                 postproc_load_variable
+                                 get_variable
 using moment_kinetics.type_definitions: mk_float
 using moment_kinetics.utils: merge_dict_with_kwargs!
 
@@ -170,27 +170,26 @@ function run_test(test_input, base, message, rtol, atol; tol_3V, args...)
             time = run_info.time
             n_ion_species = run_info.n_ion_species
             n_neutral_species = run_info.n_neutral_species
-            n_ion_zrst = postproc_load_variable(run_info, "density")
-            upar_ion_zrst = postproc_load_variable(run_info, "parallel_flow")
-            p_ion_zrst = postproc_load_variable(run_info, "pressure")
-            ppar_ion_zrst = postproc_load_variable(run_info, "parallel_pressure")
-            qpar_ion_zrst = postproc_load_variable(run_info, "parallel_heat_flux")
-            v_t_ion_zrst = postproc_load_variable(run_info, "thermal_speed")
-            f_ion_vpavperpzrst  = postproc_load_variable(run_info, "f")
-            n_neutral_zrst = postproc_load_variable(run_info, "density_neutral")
-            upar_neutral_zrst = postproc_load_variable(run_info, "uz_neutral")
-            p_neutral_zrst = postproc_load_variable(run_info, "p_neutral")
-            pz_neutral_zrst = postproc_load_variable(run_info, "pz_neutral")
-            qpar_neutral_zrst = postproc_load_variable(run_info, "qz_neutral")
-            v_t_neutral_zrst = postproc_load_variable(run_info, "thermal_speed_neutral")
+            n_ion_zrst = get_variable(run_info, "density")
+            upar_ion_zrst = get_variable(run_info, "parallel_flow")
+            p_ion_zrst = get_variable(run_info, "pressure")
+            ppar_ion_zrst = get_variable(run_info, "parallel_pressure")
+            qpar_ion_zrst = get_variable(run_info, "parallel_heat_flux")
+            v_t_ion_zrst = get_variable(run_info, "thermal_speed")
+            f_ion_vpavperpzrst  = get_variable(run_info, "f")
+            n_neutral_zrst = get_variable(run_info, "density_neutral")
+            upar_neutral_zrst = get_variable(run_info, "uz_neutral")
+            p_neutral_zrst = get_variable(run_info, "p_neutral")
+            pz_neutral_zrst = get_variable(run_info, "pz_neutral")
+            qpar_neutral_zrst = get_variable(run_info, "qz_neutral")
+            v_t_neutral_zrst = get_variable(run_info, "thermal_speed_neutral")
             # Slice f_neutral while loading to save memory, and avoid termination of the
             # 'long tests' CI job.
-            f_neutral_vzvrvzetazrst = postproc_load_variable(run_info, "f_neutral",
-                                                             ivzeta=(vzeta.n+1)÷2,
-                                                             ivr=(vr.n+1)÷2)
-            phi_zrt = postproc_load_variable(run_info, "phi")
-            Er_zrt = postproc_load_variable(run_info, "Er")
-            Ez_zrt = postproc_load_variable(run_info, "Ez")
+            f_neutral_vzvrvzetazrst = get_variable(run_info, "f_neutral",
+                                                   ivzeta=(vzeta.n+1)÷2, ivr=(vr.n+1)÷2)
+            phi_zrt = get_variable(run_info, "phi")
+            Er_zrt = get_variable(run_info, "Er")
+            Ez_zrt = get_variable(run_info, "Ez")
 
             close_run_info(run_info)
 

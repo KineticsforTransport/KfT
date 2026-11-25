@@ -15,7 +15,7 @@ use the force balance equation d(nu)/dt + d(ppar + n*upar*upar)/dz =
 to update the parallel particle flux dens*upar for each species
 """
 @timeit global_timer force_balance!(
-                         upar_out, density_out, fvec, moments, fields, collisions, dt,
+                         n_upar_out, density_out, fvec, moments, fields, collisions, dt,
                          spectral, composition, geometry, ion_source_settings,
                          num_diss_params, z) = begin
     @begin_s_r_z_region()
@@ -24,7 +24,8 @@ to update the parallel particle flux dens*upar for each species
 
     # account for momentum flux contribution to force balance
     density = fvec.density
-    upar = fvec.upar
+    n_upar = fvec.n_upar
+    upar = moments.ion.upar
     ddens_dr_upwind = moments.ion.ddens_dr_upwind
     ddens_dz_upwind = moments.ion.ddens_dz_upwind
     dupar_dr_upwind = moments.ion.dupar_dr_upwind
@@ -78,56 +79,25 @@ to update the parallel particle flux dens*upar for each species
         ionization = collisions.reactions.ionization_frequency
         if abs(charge_exchange) > 0.0
             @loop_s_r_z is ir iz begin
-                dnupar_dt[iz,ir,is] += charge_exchange*density[iz,ir,is]*fvec.density_neutral[iz,ir,is]*(fvec.uz_neutral[iz,ir,is]-upar[iz,ir,is])
+                dnupar_dt[iz,ir,is] += charge_exchange*density[iz,ir,is]*fvec.density_neutral[iz,ir,is]*(moments.neutral.uz[iz,ir,is]-upar[iz,ir,is])
             end
         end
         # account for ionization collisions
         if abs(ionization) > 0.0
             @loop_s_r_z is ir iz begin
-                dnupar_dt[iz,ir,is] += ionization*density[iz,ir,is]*fvec.density_neutral[iz,ir,is]*fvec.uz_neutral[iz,ir,is]
+                dnupar_dt[iz,ir,is] += ionization*density[iz,ir,is]*fvec.density_neutral[iz,ir,is]*moments.neutral.uz[iz,ir,is]
             end
         end
     end
 
     @loop_s_r_z is ir iz begin
-        # convert from the particle flux to the parallel flow
-        upar_out[iz,ir,is] = (density[iz,ir,is]*upar[iz,ir,is] + dt * dnupar_dt[iz,ir,is]) / density_out[iz,ir,is]
-    end
-
-    if composition.ion_physics == coll_krook_ions
-        @begin_s_r_region()
-        # boundary condition for fluid simulation on ion flow at wall is that flow must be at least sonic.
-        if z.irank == 0 && (z.irank == z.nrank - 1)
-            z_indices = (1, z.n)
-        elseif z.irank == 0
-            z_indices = (1,)
-        elseif z.irank == z.nrank - 1
-            z_indices = (z.n,)
-        else
-            return nothing
-        end
-        T_e = composition.T_e
-        @loop_s_r is ir begin
-            for iz ∈ z_indices
-                # set the ion flow to local sound speed at wall, each temperature being a parallel temperature
-                # note that Tpar is 3 time T in this case. NOTE THAT THIS IS FOR 1V ONLY
-                if iz == 1
-                    if upar_out[iz,ir,is] > -sqrt(T_e + 3*moments.ion.temp[iz,ir,is])
-                        upar_out[iz,ir,is] = -sqrt(T_e + 3*moments.ion.temp[iz,ir,is])
-                    end
-                else
-                    if upar_out[iz,ir,is] < sqrt(T_e + 3*moments.ion.temp[iz,ir,is])
-                        upar_out[iz,ir,is] = sqrt(T_e + 3*moments.ion.temp[iz,ir,is])
-                    end
-                end
-            end
-        end
+        n_upar_out[iz,ir,is] = n_upar[iz,ir,is] + dt * dnupar_dt[iz,ir,is]
     end
     return nothing
 end
 
 @timeit global_timer neutral_force_balance!(
-                         uz_out, density_out, fvec, moments, fields, collisions, dt,
+                         n_uz_out, density_out, fvec, moments, fields, collisions, dt,
                          spectral, composition, geometry, neutral_source_settings,
                          num_diss_params) = begin
 
@@ -137,7 +107,8 @@ end
 
     # account for momentum flux contribution to force balance
     density = fvec.density_neutral
-    uz = fvec.uz_neutral
+    n_uz = fvec.n_uz_neutral
+    uz = moments.neutral.uz
     @loop_sn_r_z isn ir iz begin
         dnuz_dt[iz,ir,isn] = -(moments.neutral.dpz_dz[iz,ir,isn] +
                                uz[iz,ir,isn]*uz[iz,ir,isn]*moments.neutral.ddens_dz_upwind[iz,ir,isn] +
@@ -168,7 +139,7 @@ end
         ionization = collisions.reactions.ionization_frequency
         if abs(charge_exchange) > 0.0
             @loop_sn_r_z isn ir iz begin
-                dnuz_dt[iz,ir,isn] += charge_exchange*density[iz,ir,isn]*fvec.density[iz,ir,isn]*(fvec.upar[iz,ir,isn]-uz[iz,ir,isn])
+                dnuz_dt[iz,ir,isn] += charge_exchange*density[iz,ir,isn]*fvec.density[iz,ir,isn]*(moments.ion.upar[iz,ir,isn]-uz[iz,ir,isn])
             end
         end
         # account for ionization collisions
@@ -181,7 +152,7 @@ end
 
     @loop_sn_r_z isn ir iz begin
         # convert from the particle flux to the parallel flow
-        uz_out[iz,ir,isn] = (density[iz,ir,isn]*uz[iz,ir,isn] + dt * dnuz_dt[iz,ir,isn]) / density_out[iz,ir,isn]
+        n_uz_out[iz,ir,isn] = n_uz[iz,ir,isn] + dt * dnuz_dt[iz,ir,isn]
     end
 
     return nothing

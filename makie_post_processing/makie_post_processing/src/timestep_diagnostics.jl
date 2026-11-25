@@ -103,7 +103,7 @@ function timestep_diagnostics(run_info, run_info_dfns; plot_prefix=nothing, it=n
                                 linestyle=:dash, label=prefix * "failures caused by n_ion",
                                 ax=ax_failures)
                     end
-                    if !electron && ri.evolve_upar
+                    if !electron && ri.evolve_n_upar
                         # Ion flow failure counter
                         counter += 1
                         plot_1d(time, @view failure_caused_by_per_output[counter,:];
@@ -146,7 +146,7 @@ function timestep_diagnostics(run_info, run_info_dfns; plot_prefix=nothing, it=n
                                     linestyle=:dash,
                                     label=prefix * "failures caused by n_neutral", ax=ax_failures)
                         end
-                        if ri.evolve_upar
+                        if ri.evolve_n_upar
                             # Neutral flow failure counter
                             counter += 1
                             plot_1d(time, @view failure_caused_by_per_output[counter,:];
@@ -415,7 +415,7 @@ function timestep_diagnostics(run_info, run_info_dfns; plot_prefix=nothing, it=n
                                 label=prefix * "ion density RK accuracy", ax=ax,
                                 linestyle=:dash)
                     end
-                    if !electron && ri.evolve_upar
+                    if !electron && ri.evolve_n_upar
                         counter += 1
                         plot_1d(time, @view limit_caused_by_per_output[counter,:];
                                 label=prefix * "ion upar RK accuracy", ax=ax,
@@ -446,7 +446,7 @@ function timestep_diagnostics(run_info, run_info_dfns; plot_prefix=nothing, it=n
                                     label=prefix * "neutral density RK accuracy", ax=ax,
                                     linestyle=:dash)
                         end
-                        if ri.evolve_upar
+                        if ri.evolve_n_upar
                             counter += 1
                             plot_1d(time, @view limit_caused_by_per_output[counter,:];
                                     label=prefix * "neutral uz RK accuracy", ax=ax,

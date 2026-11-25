@@ -50,16 +50,16 @@ const u = 0.1
 const vth_2V = 1.2
 const vth_1V = 1.2 / sqrt(3.0)
 
-function get_Maxwellian(vperp, vpa, evolve_density, evolve_upar, evolve_p, is_1V,
+function get_Maxwellian(vperp, vpa, evolve_density, evolve_n_upar, evolve_p, is_1V,
                         unit_vth_perp; is_electron=false)
-    if evolve_upar && evolve_p
+    if evolve_n_upar && evolve_p
         if is_1V
             vpa_unnorm = reshape(vpa.grid, vpa.n, 1) .* vth_1V .+ u
         else
             vpa_unnorm = reshape(vpa.grid, vpa.n, 1) .* vth_2V .+ u
             vperp_unnorm = reshape(vperp.grid, 1, vperp.n) .* vth_2V
         end
-    elseif evolve_upar
+    elseif evolve_n_upar
         vpa_unnorm = reshape(vpa.grid, vpa.n, 1) .+ u
         vperp_unnorm = reshape(vperp.grid, 1, vperp.n)
     elseif evolve_p
@@ -110,9 +110,9 @@ function get_Maxwellian(vperp, vpa, evolve_density, evolve_upar, evolve_p, is_1V
     return f
 end
 
-function get_Maxwellian_neutral(vzeta, vr, vz, evolve_density, evolve_upar, evolve_p,
+function get_Maxwellian_neutral(vzeta, vr, vz, evolve_density, evolve_n_upar, evolve_p,
                                 is_1V, unit_vth_perp)
-    if evolve_upar && evolve_p
+    if evolve_n_upar && evolve_p
         if is_1V
             vz_unnorm = reshape(vz.grid, vz.n, 1, 1) .* vth_1V .+ u
         else
@@ -120,7 +120,7 @@ function get_Maxwellian_neutral(vzeta, vr, vz, evolve_density, evolve_upar, evol
             vzeta_unnorm = reshape(vzeta.grid, 1, 1, vzeta.n) .* vth_2V
             vr_unnorm = reshape(vr.grid, 1, vr.n, 1) .* vth_2V
         end
-    elseif evolve_upar
+    elseif evolve_n_upar
         vz_unnorm = reshape(vz.grid, vz.n, 1, 1) .+ u
         vr_unnorm = reshape(vr.grid, 1, vr.n, 1)
         vzeta_unnorm = reshape(vzeta.grid, 1, 1, vzeta.n)
@@ -197,10 +197,10 @@ function all_tests(; rtol=1.0e-2, atol=5.0e-4)
     z = z_2V
     z_spectral = spectral_objects_2V.z_spectral
 
-    @testset "1V $old_is_1V->$new_is_1V, evolve_density $old_evolve_density->$new_evolve_density, evolve_upar $old_evolve_upar->$new_evolve_upar, evolve_p $old_evolve_p->$new_evolve_p" for
+    @testset "1V $old_is_1V->$new_is_1V, evolve_density $old_evolve_density->$new_evolve_density, evolve_n_upar $old_evolve_n_upar->$new_evolve_n_upar, evolve_p $old_evolve_p->$new_evolve_p" for
             old_is_1V ∈ (true, false), new_is_1V ∈ (true, false),
             old_evolve_density ∈ (false, true), new_evolve_density ∈ (false, true),
-            old_evolve_upar ∈ (false, true), new_evolve_upar ∈ (false, true),
+            old_evolve_n_upar ∈ (false, true), new_evolve_n_upar ∈ (false, true),
             old_evolve_p ∈ (false, true), new_evolve_p ∈ (false, true),
             force_interp ∈ (false, true) # force_interp sets `interpolation_needed` entries to `true` in the `regrid_*_pdf()` functions even when the grids are the same, to check for errors in more code branches.
 
@@ -253,16 +253,16 @@ function all_tests(; rtol=1.0e-2, atol=5.0e-4)
         moments = (ion=(dens=fill(n, 1, 1, 1), upar=fill(u, 1, 1, 1), vth=fill(vth, 1, 1, 1)),
                    electron=(dens=fill(n, 1, 1), upar=fill(u, 1, 1), vth=fill(vth, 1, 1)),
                    neutral=(dens=fill(n, 1, 1), uz=fill(u, 1, 1), vth=fill(vth, 1, 1)),
-                   evolve_density=new_evolve_density, evolve_upar=new_evolve_upar,
+                   evolve_density=new_evolve_density, evolve_n_upar=new_evolve_n_upar,
                    evolve_p=new_evolve_p)
 
         @testset "ion" begin
-            old_f = get_Maxwellian(old_vperp, old_vpa, old_evolve_density, old_evolve_upar,
+            old_f = get_Maxwellian(old_vperp, old_vpa, old_evolve_density, old_evolve_n_upar,
                                    old_evolve_p, old_is_1V, false)
 
             unit_vth_perp = !new_evolve_p && (old_is_1V && !new_is_1V)
             expected_new_f = get_Maxwellian(new_vperp, new_vpa, new_evolve_density,
-                                            new_evolve_upar, new_evolve_p, new_is_1V,
+                                            new_evolve_n_upar, new_evolve_p, new_is_1V,
                                             unit_vth_perp)
 
             interp_new_f = regrid_ion_pdf(old_f,
@@ -275,19 +275,19 @@ function all_tests(; rtol=1.0e-2, atol=5.0e-4)
                                                "vperp"=>force_interp || (old_is_1V != new_is_1V),
                                                "vpa"=>force_interp),
                                           moments,
-                                          old_evolve_density, old_evolve_upar, old_evolve_p
+                                          old_evolve_density, old_evolve_n_upar, old_evolve_p
                                          )
 
             @test elementwise_isapprox(interp_new_f, expected_new_f; rtol=rtol, atol=atol)
         end
 
         @testset "electron" begin
-            old_f = get_Maxwellian(old_vperp, old_vpa, old_evolve_density, old_evolve_upar,
+            old_f = get_Maxwellian(old_vperp, old_vpa, old_evolve_density, old_evolve_n_upar,
                                    old_evolve_p, old_is_1V, false, is_electron=true)
 
             unit_vth_perp = !new_evolve_p && (old_is_1V && !new_is_1V)
             expected_new_f = get_Maxwellian(new_vperp, new_vpa, new_evolve_density,
-                                            new_evolve_upar, new_evolve_p, new_is_1V,
+                                            new_evolve_n_upar, new_evolve_p, new_is_1V,
                                             unit_vth_perp, is_electron=true)
 
             interp_new_f = regrid_electron_pdf(old_f,
@@ -300,7 +300,7 @@ function all_tests(; rtol=1.0e-2, atol=5.0e-4)
                                                     "vperp"=>force_interp || (old_is_1V != new_is_1V),
                                                     "vpa"=>force_interp),
                                                moments,
-                                               old_evolve_density, old_evolve_upar, old_evolve_p;
+                                               old_evolve_density, old_evolve_n_upar, old_evolve_p;
                                                allow_unsupported_options=true
                                               )
 
@@ -309,12 +309,12 @@ function all_tests(; rtol=1.0e-2, atol=5.0e-4)
 
         @testset "neutral" begin
             old_f = get_Maxwellian_neutral(old_vzeta, old_vr, old_vz, old_evolve_density,
-                                           old_evolve_upar, old_evolve_p, old_is_1V,
+                                           old_evolve_n_upar, old_evolve_p, old_is_1V,
                                            false)
 
             unit_vth_perp = !new_evolve_p && (old_is_1V && !new_is_1V)
             expected_new_f = get_Maxwellian_neutral(new_vzeta, new_vr, new_vz,
-                                                    new_evolve_density, new_evolve_upar,
+                                                    new_evolve_density, new_evolve_n_upar,
                                                     new_evolve_p, new_is_1V,
                                                     unit_vth_perp)
 
@@ -330,7 +330,7 @@ function all_tests(; rtol=1.0e-2, atol=5.0e-4)
                                                    "vr"=>force_interp || (old_is_1V != new_is_1V),
                                                    "vz"=>force_interp),
                                               moments,
-                                              old_evolve_density, old_evolve_upar, old_evolve_p
+                                              old_evolve_density, old_evolve_n_upar, old_evolve_p
                                              )
 
             @test elementwise_isapprox(interp_new_f, expected_new_f; rtol=rtol, atol=atol)

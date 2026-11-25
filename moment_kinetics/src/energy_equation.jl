@@ -20,7 +20,7 @@ evolve the parallel pressure by solving the energy equation
     @begin_s_r_z_region()
 
     density = fvec.density
-    upar = fvec.upar
+    upar = moments.ion.upar
     p = fvec.p
     ppar = moments.ion.ppar
     pperp = moments.ion.pperp
@@ -76,7 +76,7 @@ evolve the parallel pressure by solving the energy equation
                         fvec.density_neutral[iz,ir,is]*fvec.p[iz,ir,is] -
                         fvec.density[iz,ir,is]*fvec.p_neutral[iz,ir,is] -
                         1.0/3.0 * fvec.density[iz,ir,is]*fvec.density_neutral[iz,ir,is] *
-                            (fvec.upar[iz,ir,is] - fvec.uz_neutral[iz,ir,is])^2)
+                            (upar[iz,ir,is] - moments.neutral.uz[iz,ir,is])^2)
             end
         end
         if abs(ionization) > 0.0
@@ -85,7 +85,7 @@ evolve the parallel pressure by solving the energy equation
                     ionization*fvec.density[iz,ir,is] * (
                         fvec.p_neutral[iz,ir,is] +
                         1.0/3.0 * fvec.density_neutral[iz,ir,is] *
-                            (fvec.upar[iz,ir,is]-fvec.uz_neutral[iz,ir,is])^2)
+                            (upar[iz,ir,is]-moments.neutral.uz[iz,ir,is])^2)
             end
         end
     end
@@ -109,7 +109,7 @@ evolve the neutral parallel pressure by solving the energy equation
     dp_dt = moments.neutral.dp_dt
 
     @loop_sn_r_z isn ir iz begin
-        dp_dt[iz,ir,isn] = (-fvec.uz_neutral[iz,ir,isn]*moments.neutral.dp_dz_upwind[iz,ir,isn]
+        dp_dt[iz,ir,isn] = (-moments.neutral.uz[iz,ir,isn]*moments.neutral.dp_dz_upwind[iz,ir,isn]
                             -fvec.p_neutral[iz,ir,isn]*moments.neutral.duz_dz[iz,ir,isn]
                             - 2.0/3.0*moments.neutral.dqz_dz[iz,ir,isn]
                             - 2.0/3.0*moments.neutral.pz[iz,ir,isn]*moments.neutral.duz_dz[iz,ir,isn])
@@ -142,7 +142,7 @@ evolve the neutral parallel pressure by solving the energy equation
                         fvec.density[iz,ir,isn]*fvec.p_neutral[iz,ir,isn] -
                         fvec.density_neutral[iz,ir,isn]*fvec.p[iz,ir,isn] -
                         1.0/3.0 * fvec.density_neutral[iz,ir,isn]*fvec.density[iz,ir,isn] *
-                            (fvec.uz_neutral[iz,ir,isn] - fvec.upar[iz,ir,isn])^2)
+                            (moments.neutral.uz[iz,ir,isn] - moments.ion.upar[iz,ir,isn])^2)
             end
         end
         if abs(ionization) > 0.0

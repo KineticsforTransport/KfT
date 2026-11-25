@@ -9,7 +9,7 @@ import moment_kinetics
 using moment_kinetics.array_allocation: allocate_float, allocate_shared_float
 using moment_kinetics.coordinates: define_coordinate
 using moment_kinetics.chebyshev: setup_chebyshev_pseudospectral
-using moment_kinetics.gauss_legendre: setup_gausslegendre_pseudospectral, get_QQ_local!
+using moment_kinetics.gauss_legendre: setup_gausslegendre_pseudospectral
 using moment_kinetics.type_definitions: mk_float, mk_int, OptionsDict
 using moment_kinetics.fokker_planck: init_fokker_planck_collisions_weak_form
 using moment_kinetics.fokker_planck: fokker_planck_collision_operator_weak_form!

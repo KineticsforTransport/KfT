@@ -103,7 +103,7 @@ struct time_info{T_varsf, T_varsi, T_caused_by, Terrorsum <: Real, T_debug_outpu
     low_storage::Bool
     rtol::mk_float
     atol::mk_float
-    atol_upar::mk_float
+    atol_n_upar::mk_float
     step_update_prefactor::mk_float
     max_increase_factor::mk_float
     max_increase_factor_near_last_fail::mk_float
