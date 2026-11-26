@@ -5,9 +5,10 @@ Pkg.instantiate()
 using Documenter, UUIDs
 using moment_kinetics, makie_post_processing, plots_post_processing
 include("../util/MKJacobianUtils.jl")
+include("organise_pages.jl")
 
 makedocs(
-    sitename = "moment_kinetics",
+    sitename = "KfT",
     format = Documenter.HTML(prettyurls = get(ENV, "CI", nothing) == "true",
                              size_threshold = 5000000,
                              size_threshold_warn = 2500000,
@@ -20,6 +21,7 @@ makedocs(
                              inventory_version = Pkg.dependencies()[UUID("b5ff72cc-06fc-4161-ad14-dba1c22ed34e")].version,
                             ),
     modules = [moment_kinetics, makie_post_processing, plots_post_processing, MKJacobianUtils],
+    pages = organise_pages(),
 )
 
 if get(ENV, "CI", nothing) == "true"

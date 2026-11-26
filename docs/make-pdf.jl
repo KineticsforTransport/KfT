@@ -18,14 +18,9 @@ Pkg.develop([PackageSpec(path=joinpath(repo_dir, "moment_kinetics")),
 Pkg.instantiate()
 
 using Documenter
-using Glob
 using moment_kinetics, makie_post_processing, plots_post_processing
 include("../util/MKJacobianUtils.jl")
-
-doc_files = glob("src/*.md")
-
-# Remove the src/ prefix
-doc_files = [basename(s) for s ∈ doc_files]
+include("organise_pages.jl")
 
 if get(ENV, "CI", nothing) == "true"
     latex_kwargs = (platform = "docker",)
@@ -34,9 +29,9 @@ else
 end
 
 makedocs(
-    sitename = "momentkinetics",
+    sitename = "KfT",
     format = Documenter.LaTeX(; latex_kwargs...),
     modules = [moment_kinetics, makie_post_processing, plots_post_processing, MKJacobianUtils],
-    authors = "M. Barnes, J.T. Omotani, M. Hardman",
-    pages = doc_files
+    authors = "KfT contributors",
+    pages = organise_pages()
 )

@@ -17,13 +17,11 @@ Pages = ["getting_started.md",
          "fokker_planck_notes.md",
          "geometry.md",
          "jacobian_matrices.md",
-         "debugging-hints.md",
-         "developing.md",
          "known_issues.md",
          "manual_setup.md",
          "machine_setup_notes.md",
          "parameter_scans.md",
-         "manufactured_solution_test_examples.md",
+         "developer-index.md",
         ]
 ```
 
