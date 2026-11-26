@@ -14,31 +14,37 @@ dependencies on moments).
 2. Calculate `moments.ion.upar`, `moments.ion.vth`, `moments.electron.upar`,
    `moments.electron.vth`, moments.neutral.uz`, and `moments.neutral.vth` from
    evolved moments.
-3. Apply the sheath-entrance boundary condition for ions.
+3. Set negative values in the shape functions to zero.
+4. Apply the sheath-entrance boundary condition for ions.
    - sets ion shape function at sheath entrance when ions are treated
      kinetically, or `this_scratch.n_upar` and `moments.ion.upar` at the sheath
      entrance when ions are treated as fluid.
    - depends on `moments.ion.upar` and `moments.ion.vth` for kinetic version,
      but only RK updated evolving variables for fluid version.
-4. Apply the wall boundary condition for neutrals. Sets
+   - requires negative values in ion shape function to be set to zero first.
+5. Apply the wall boundary condition for neutrals. Sets
    `this_scratch.n_uz_neutral` and `moments.neutral.uz`.
    - depends on ion particle flux to wall, and `moments.neutral.vth`.
-5. Apply sheath entrance boundary condition for electrons.
+   - requires negative values in neutral shape function to be set to zero
+     first.
+6. Apply sheath entrance boundary condition for electrons.
    - Will eventually have to calculate `phi` and `this_scratch.electron_n_upar`
      from electron parallel force balance, consistently with parallel currents
      through sheaths and `phi` at sheath entrances. Will then require
      electron-ion and electron-neutral friction, so likely to depend on
      `moments.ion.upar` and `moments.neutral.uz`.
-6. Apply moment constraint corrections to shape functions.
+   - requires negative values in electron shape function to be set to zero
+     first.
+7. Apply moment constraint corrections to shape functions.
    - must be done after applying boundary conditions to shape functions (the
      boundary conditions take care of enforcing constraints at the boundary
      points, and must not modify the shape functions on the boundary points
      before applying boundary conditions).
-7. Other derived moments, e.g. `qpar` and `ppar`/`pperp`. Derivatives of
+8. Other derived moments, e.g. `qpar` and `ppar`/`pperp`. Derivatives of
    moments.
    - depends on fully updated shape functions and input moments, including any
      moment constraints and boundary conditions.
-8. When using kinetic electrons, fill the `moments` struct with the RK stage
+9. When using kinetic electrons, fill the `moments` struct with the RK stage
    values of the evolving variables. This is needed as to be compatible with
    both pseudo-transient (which has a special `scratch_electron` struct just
    for electrons) and time-evolving approaches (which use the `scratch` struct
