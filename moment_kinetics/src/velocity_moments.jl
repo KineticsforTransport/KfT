@@ -1294,6 +1294,31 @@ function update_derived_ion_moment_time_derivatives!(fvec_in, moments)
     return nothing
 end
 
+# Update electron_upar using the standard shared-memory regions, not anyzv, for use in the
+# main RK update steps, outside of electron implicit solves. This is more efficient as it
+# avoids needing extra `halo_swap!()` calls.
+function update_electron_upar_not_anyzv!(electron_upar, electron_density,
+                                            electron_n_upar)
+    @begin_r_z_region()
+    @loop_r_z ir iz begin
+        electron_upar[iz,ir] = electron_n_upar[iz,ir] / electron_density[iz,ir]
+    end
+    return nothing
+end
+
+# Update electron_vth using the standard shared-memory regions, not anyzv, for use in the
+# main RK update steps, outside of electron implicit solves. This is more efficient as it
+# avoids needing extra `halo_swap!()` calls.
+function update_electron_vth_temp_not_anyzv!(electron_vth, electron_temp,
+                                             electron_density, electron_p, me)
+    @begin_r_z_region()
+    @loop_r_z ir iz begin
+        electron_temp[iz,ir] = electron_p[iz,ir] / electron_density[iz,ir]
+        electron_vth[iz,ir] = sqrt(2.0 * electron_temp[iz,ir] / me)
+    end
+    return nothing
+end
+
 """
 'Primary' time derivatives are calculated when doing the time advance for moment
 quantities. Moment kinetic equations require in addition some 'derived' time derivatives,
@@ -2552,10 +2577,7 @@ update velocity moments that are calculable from the evolved ion pdf
             update_chodura!(moments,ff,vpa,vperp,z,r,r_spectral,composition,geometry,scratch_dummy,z_advect)
         end
     end
-    # update the thermal speed
     @begin_s_r_z_region()
-    update_vth!(moments.ion.vth, moments.ion.temp, new_scratch.p, new_scratch.density, z,
-                r, composition)
     # update the parallel heat flux
     update_ion_qpar!(moments.ion.qpar, new_scratch.density, moments.ion.upar,
                      moments.ion.vth, moments.ion.dT_dz, ff, vpa, vperp, z, r,
@@ -2605,8 +2627,7 @@ update velocity moments that are calculable from the evolved neutral pdf
                        moments.neutral.uz, new_scratch.p_neutral, moments.neutral.vth,
                        new_scratch.pdf_neutral, vz, vr, vzeta, z, r, composition,
                        moments.evolve_density, moments.evolve_n_upar, moments.evolve_p)
-    update_neutral_vth!(moments.neutral.vth, new_scratch.p_neutral,
-                        new_scratch.density_neutral, z, r, composition)
+    return nothing
 end
 
 """

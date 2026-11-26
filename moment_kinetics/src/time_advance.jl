@@ -23,13 +23,18 @@ using ..file_io: write_data_to_ascii, write_all_moments_data_to_binary,
 using ..initial_conditions: initialize_electrons!
 using ..looping
 using ..moment_kinetics_structs: scratch_pdf, scratch_electron_pdf
-using ..velocity_moments: update_moments!, update_moments_neutral!, update_derived_moments!, update_derived_moments_neutral!
+using ..velocity_moments: update_moments!, update_moments_neutral!,
+                          update_derived_moments!, update_derived_moments_neutral!,
+                          update_vth!, update_neutral_vth!
 using ..velocity_moments: update_derived_ion_moment_time_derivatives!, update_upar!
 using ..velocity_moments: update_neutral_qz!
 using ..velocity_moments: update_neutral_uzeta!, update_neutral_ur!, update_neutral_uz!
 using ..velocity_moments: update_neutral_pzeta!, update_neutral_pr!, update_derived_neutral_moment_time_derivatives!
 using ..velocity_moments: calculate_ion_moment_derivatives!, calculate_neutral_moment_derivatives!
-using ..velocity_moments: calculate_electron_moment_derivatives!, update_derived_electron_moment_time_derivatives!
+using ..velocity_moments: calculate_electron_moment_derivatives!,
+                          update_derived_electron_moment_time_derivatives!,
+                          update_electron_upar_not_anyzv!,
+                          update_electron_vth_temp_not_anyzv!
 using ..velocity_grid_transforms: vzvrvzeta_to_vpavperp!, vpavperp_to_vzvrvzeta!
 using ..boundary_conditions
 using ..boundary_conditions: get_ion_z_boundary_cutoff_indices, enforce_vperp_boundary_condition!
@@ -2800,6 +2805,31 @@ moments and moment derivatives
 
     success = ""
 
+    # upar/uz and vth may be needed to transform between wpa/wperp and vpa/vperp, etc., so
+    # calculate these first.
+    if moments.evolve_n_upar
+        update_upar!(moments.ion.upar, this_scratch.density, this_scratch.n_upar)
+        update_electron_upar_not_anyzv!(moments.electron.upar,
+                                        this_scratch.electron_density,
+                                        this_scratch.electron_n_upar)
+        if composition.n_neutral_species > 0
+            update_neutral_uz!(moments.neutral.uz, this_scratch.density_neutral,
+                               this_scratch.n_uz_neutral)
+        end
+    end
+    if moments.evolve_p
+        update_vth!(moments.ion.vth, moments.ion.temp, this_scratch.p,
+                    this_scratch.density, z, r, composition)
+        update_electron_vth_temp_not_anyzv!(moments.electron.vth, moments.electron.temp,
+                                            this_scratch.electron_density,
+                                            this_scratch.electron_p,
+                                            composition.me_over_mi)
+        if composition.n_neutral_species > 0
+            update_neutral_vth!(moments.neutral.vth, this_scratch.p_neutral,
+                                this_scratch.density_neutral, z, r, composition)
+        end
+    end
+
     if composition.ion_physics ∈ (drift_kinetic_ions, gyrokinetic_ions)
         if pdf_bc_constraints
             # Ensure there are no negative values in the pdf before applying boundary
@@ -2818,11 +2848,6 @@ moments and moment derivatives
         # depends on phi) is needed for the sheath-entrance boundary condition on the
         # distribution function.
         if moments.evolve_density && moments.evolve_n_upar
-            # upar is needed when applying the sheath entrance boundary condition to the
-            # shape function, and possibly in some electron update functions. Doesn't make
-            # sense to calculate twice, so calculate once here.
-            update_upar!(moments.ion.upar, this_scratch.density, this_scratch.n_upar)
-
             calculate_electron_moments!(this_scratch, pdf, moments, composition,
                                         collisions, r, z, vperp, vpa)
             calculate_electron_moment_derivatives!(moments, this_scratch, scratch_dummy,
@@ -2952,7 +2977,6 @@ moments and moment derivatives
                                              fields, boundaries, moments, z, r,
                                              z_advect, r_advect, composition,
                                              geometry, advance.r_diffusion)
-        update_upar!(moments.ion.upar, this_scratch.density, this_scratch.n_upar)
 
         # coll_krook heat flux is calculated from moments in this function via update_ion_qpar
         update_derived_moments!(this_scratch, moments, vpa, vperp, z, r, composition,
@@ -3009,14 +3033,6 @@ moments and moment derivatives
     end
 
     if composition.n_neutral_species > 0
-        if moments.evolve_n_upar
-            # uz is needed when applying the sheath entrance boundary condition to the
-            # shape function. Doesn't make sense to calculate twice, so calculate once
-            # here.
-            update_neutral_uz!(moments.neutral.uz, this_scratch.density_neutral,
-                               this_scratch.n_uz_neutral)
-        end
-
         if pdf_bc_constraints
             @begin_sn_r_z_region()
             # Ensure there are no negative values in the pdf before applying boundary
