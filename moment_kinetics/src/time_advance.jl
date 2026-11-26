@@ -2818,6 +2818,11 @@ moments and moment derivatives
         # depends on phi) is needed for the sheath-entrance boundary condition on the
         # distribution function.
         if moments.evolve_density && moments.evolve_n_upar
+            # upar is needed when applying the sheath entrance boundary condition to the
+            # shape function, and possibly in some electron update functions. Doesn't make
+            # sense to calculate twice, so calculate once here.
+            update_upar!(moments.ion.upar, this_scratch.density, this_scratch.n_upar)
+
             calculate_electron_moments!(this_scratch, pdf, moments, composition,
                                         collisions, r, z, vperp, vpa)
             calculate_electron_moment_derivatives!(moments, this_scratch, scratch_dummy,
@@ -2842,11 +2847,6 @@ moments and moment derivatives
                                                  fields, boundaries, moments, z, r,
                                                  z_advect, r_advect, composition,
                                                  geometry, advance.r_diffusion)
-
-            # upar is needed when applying the sheath entrance boundary condition to the
-            # shape function. Doesn't make sense to calculate twice, so calculate once
-            # here.
-            update_upar!(moments.ion.upar, this_scratch.density, this_scratch.n_upar)
 
             if pdf_bc_constraints
                 enforce_boundary_conditions_f!(this_scratch, moments, fields, boundaries,
