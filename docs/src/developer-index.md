@@ -7,6 +7,7 @@ Developer documentation for KfT.jl.
 ```@contents
 Pages = ["developer-intro.md",
          "debugging-hints.md",
+         "bc-moments-dependencies.md",
          "manufactured_solution_test_examples.md",
         ]
 ```

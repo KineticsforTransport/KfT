@@ -46,6 +46,7 @@ function organise_pages()
     developers = create_section("Developers", ["developer-index.md",
                                                "developer-intro.md",
                                                "debugging-hints.md",
+                                               "rk-bc-moments-dependencies.md",
                                                "manufactured_solution_test_examples.md",
                                               ])
 
