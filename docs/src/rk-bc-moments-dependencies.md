@@ -38,3 +38,14 @@ dependencies on moments).
    moments.
    - depends on fully updated shape functions and input moments, including any
      moment constraints and boundary conditions.
+8. When using kinetic electrons, fill the `moments` struct with the RK stage
+   values of the evolving variables. This is needed as to be compatible with
+   both pseudo-transient (which has a special `scratch_electron` struct just
+   for electrons) and time-evolving approaches (which use the `scratch` struct
+   from the main RK solve), the electron implicit solves reads several
+   variables from the `moments` struct, which would not otherwise be updated
+   until the end of the RK timestep (rather than at each stage). The variables
+   that need to be (or might need to be) updated are `moments.ion.dens`,
+   `moments.ion.n_upar`, `moments.ion.p`, `moments.electron.dens`,
+   `moments.electron.upar`, `moments.electron.p`, `moments.neutral.dens`,
+   `moments.neutral.n_uz`, `moments.neutral.p`.
