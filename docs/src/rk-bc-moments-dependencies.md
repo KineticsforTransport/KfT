@@ -80,11 +80,11 @@ dependencies on moments).
      (the boundary conditions take care of enforcing constraints at the
      boundary points, and must not modify the shape functions on the boundary
      points before applying boundary conditions).
-11. Derived moments for neutrals, e.g. `qz` and `pz`/`pzeta`/`pr`. Derivatives
+12. Derived moments for neutrals, e.g. `qz` and `pz`/`pzeta`/`pr`. Derivatives
    of moments.
    - depends on fully updated neutral shape function and input moments,
      including any moment constraints and boundary conditions.
-12. When using kinetic electrons, fill the `moments` struct with the RK stage
+13. When using kinetic electrons, fill the `moments` struct with the RK stage
    values of the evolving variables. This is needed as to be compatible with
    both pseudo-transient (which has a special `scratch_electron` struct just
    for electrons) and time-evolving approaches (which use the `scratch` struct
