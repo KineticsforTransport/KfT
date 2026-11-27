@@ -104,9 +104,17 @@ test_input = OptionsDict(
     )
 )
 
+test_input_2 = recursive_merge(test_input,
+                               OptionsDict(
+ "timestepping" => OptionsDict(
+     "nstep" => 20000
+    )
+))
 # Here choose the names for each test
 test_input = recursive_merge(test_input,
-                               OptionsDict("output" => OptionsDict("run_name" => "periodic_damping_Ti700_lowres_2")))
+                               OptionsDict("output" => OptionsDict("run_name" => "periodic damping Ti200 ui1")))
+test_input_2 = recursive_merge(test_input_2,
+                               OptionsDict("output" => OptionsDict("run_name" => "periodic damping Ti200 ui1 long")))
 
 """
 Run a test for a single set of parameters
@@ -178,17 +186,14 @@ function runtests()
 
     @testset "periodic_damping tests" verbose=use_verbose begin
         println("periodic_damping tests")
-        @testset "periodic_damping_Ti200_ui1" begin
+        @testset "periodic damping Ti200 ui1" begin
             test_input["output"]["base_directory"] = test_output_directory
             run_test(test_input,
                      [5.5967425601246763, 5.5733906807391369, 5.5758764911275422, 5.5902552462771027, 5.6195252272608514, 5.6519102196310484, 5.6721369662252279, 5.6830923143176744, 5.6781836395621452, 5.6513867257101076, 5.6212679365027265])
         end
-    end
-    @long @testset "periodic_damping_long tests" verbose=use_verbose begin
-        println("periodic_damping_long tests")
-        @testset "periodic_damping_Ti200_ui1 long" begin
-            test_input["output"]["base_directory"] = test_output_directory
-            run_test(test_input,
+        @long @testset "periodic damping Ti200 ui1 long" begin
+            test_input_2["output"]["base_directory"] = test_output_directory
+            run_test(test_input_2,
                      [5.6339341024924643, 5.6339641381816268, 5.6337935534545158, 5.6332241283533602, 5.6319534019682509, 5.631111868493651, 5.6313405087209114, 5.6321743325228395, 5.633403127813235, 5.6339186669518444, 5.6339801557723295])
         end
     end
