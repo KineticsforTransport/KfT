@@ -2865,126 +2865,99 @@ moments and moment derivatives
         halo_swap!(this_scratch.pdf_electron)
     end
 
-    if composition.ion_physics ∈ (drift_kinetic_ions, gyrokinetic_ions)
-        if pdf_bc_constraints
-            # Ensure there are no negative values in the pdf before applying boundary
-            # conditions, so that negative deviations do not mess up the
-            # integral-constraint corrections in the sheath boundary conditions.
-            force_minimum_pdf_value!(this_scratch.pdf,
-                                     num_diss_params.ion.force_minimum_pdf_value)
-        end
+    # Need to be careful with order of application of boundary conditions and calculation
+    # of phi/Er, because in 2D case vEz (which depends on Er, which depends on phi) is
+    # needed for the sheath-entrance boundary condition on the distribution function.
+    if moments.evolve_density && moments.evolve_n_upar
+        calculate_electron_moment_derivatives!(moments, this_scratch, scratch_dummy, z,
+                                               z_spectral,
+                                               num_diss_params.electron.moment_dissipation_coefficient,
+                                               composition.electron_physics)
+        # update the electron parallel friction force
+        calculate_electron_parallel_friction_force!(
+            moments.electron.parallel_friction, this_scratch.electron_density,
+            moments.electron.upar, moments.ion.upar, moments.electron.dT_dz,
+            composition.me_over_mi, collisions.electron_fluid.nu_ei,
+            composition.electron_physics)
 
-        # Need to be careful with order of application of boundary conditions and
-        # calculation of phi/Er, because in 2D case vEz (which depends on Er, which
-        # depends on phi) is needed for the sheath-entrance boundary condition on the
-        # distribution function.
-        if moments.evolve_density && moments.evolve_n_upar
-            calculate_electron_moment_derivatives!(moments, this_scratch, scratch_dummy,
-                                                   z, z_spectral,
-                                                   num_diss_params.electron.moment_dissipation_coefficient,
-                                                   composition.electron_physics)
-            # update the electron parallel friction force
-            calculate_electron_parallel_friction_force!(
-                moments.electron.parallel_friction, this_scratch.electron_density,
-                moments.electron.upar, moments.ion.upar, moments.electron.dT_dz,
-                composition.me_over_mi, collisions.electron_fluid.nu_ei,
-                composition.electron_physics)
+        # update the electrostatic potential phi, electric fields, and ExB velocity
+        # components.
+        update_phi!(fields, this_scratch, vperp, z, r, composition, collisions, moments,
+                    geometry, z_spectral, r_spectral, scratch_dummy, gyroavs, boundaries)
+    end
 
-            # update the electrostatic potential phi, electric fields, and ExB velocity
-            # components.
-            update_phi!(fields, this_scratch, vperp, z, r, composition, collisions,
-                        moments, geometry, z_spectral, r_spectral, scratch_dummy, gyroavs,
-                        boundaries)
+    if composition.ion_physics ∈ (drift_kinetic_ions, gyrokinetic_ions) && pdf_bc_constraints
+        # Ensure there are no negative values in the pdf before applying boundary
+        # conditions, so that negative deviations do not mess up the integral-constraint
+        # corrections in the sheath boundary conditions.
+        force_minimum_pdf_value!(this_scratch.pdf,
+                                 num_diss_params.ion.force_minimum_pdf_value)
 
-            if pdf_bc_constraints
-                enforce_boundary_conditions_f!(this_scratch, moments, fields, boundaries,
-                                               vpa, vperp, z, r, vpa_spectral,
-                                               vperp_spectral, vpa_advect, vperp_advect,
-                                               z_advect, r_advect, composition, geometry,
-                                               scratch_dummy, advance.r_diffusion,
-                                               advance.vpa_diffusion,
-                                               advance.vperp_diffusion)
+        # We fudge this boundary condition a bit for the 'standard drift kinetic' case.
+        # The sheath entrance boundary condition on f_i depends on phi through vEz, but
+        # phi depends on the ion density (e.g. through electron Boltzmann response, or
+        # probably in some more complicated way if solving electron parallel momentum
+        # equation with kinetic electrons). Rather than trying to do some iteration to
+        # make phi and f_i fully self-consistent at the sheath-entrance point, we apply
+        # the boundary condition to f_i using the 'old' phi and Er, so that after the
+        # boundary condition is applied we can calculate a density/phi/Er that are all
+        # consistent with f_i (which is not then modified before starting the new
+        # RK-stage/timestep).
+        # We do the same when evolve_density=true but evolve_n_upar=false.  Technically it
+        # would be more correct to have yet another separate case as we could use the
+        # updated density to update phi and Er before applying the sheath entrance
+        # boundary condition to f_i, but this mode is not commonly used, and it would be a
+        # faff to handle updating n_upar in an appropriate place. So for simplicity, just
+        # do the same as for the standard-drift-kinetic case.
+        enforce_boundary_conditions_f!(this_scratch, moments, fields, boundaries, vpa,
+                                       vperp, z, r, vpa_spectral, vperp_spectral,
+                                       vpa_advect, vperp_advect, z_advect, r_advect,
+                                       composition, geometry, scratch_dummy,
+                                       advance.r_diffusion, advance.vpa_diffusion,
+                                       advance.vperp_diffusion)
 
-                hard_force_moment_constraints!(this_scratch.pdf, moments, vpa, vperp)
-            end
+        hard_force_moment_constraints!(this_scratch.pdf, moments, vpa, vperp)
+    end
 
-            # update remaining velocity moments that are calculable from the evolved pdf
-            # Note these may be needed for the boundary condition on the neutrals, so must
-            # be calculated before that is applied. Also may be needed to calculate
-            # advection speeds for for CFL stability limit calculations in
-            # adaptive_timestep_update!().
-            update_derived_moments!(this_scratch, moments, vpa, vperp, z, r, composition,
-                                    r_spectral, geometry, gyroavs, scratch_dummy,
-                                    z_advect, collisions, diagnostic_moments)
-        else
-            # We fudge this boundary condition a bit for the 'standard drift kinetic'
-            # case. The sheath entrance boundary condition on f_i depends on phi through
-            # vEz, but phi depends on the ion density (e.g. through electron Boltzmann
-            # response, or probably in some more complicated way if solving electron
-            # parallel momentum equation with kinetic electrons). Rather than trying to do
-            # some iteration to make phi and f_i fully self-consistent at the
-            # sheath-entrance point, we apply the boundary condition to f_i using the
-            # 'old' phi and Er, so that after the boundary condition is applied we can
-            # calculate a density/phi/Er that are all consistent with f_i (which is not
-            # then modified before starting the new RK-stage/timestep).
-            # We also use this case when evolve_density=true but evolve_n_upar=false.
-            # Technically it would be more correct to have yet another separate case as we
-            # could use the updated density to update phi and Er before applying the
-            # sheath entrance boundary condition to f_i, but this mode is not commonly
-            # used, and it would be a faff to handle updating n_upar in an appropriate
-            # place. So for simplicity, just do the same as for the standard-drift-kinetic
-            # case.
-            if pdf_bc_constraints
-                enforce_boundary_conditions_f!(this_scratch, moments, fields, boundaries,
-                                               vpa, vperp, z, r, vpa_spectral,
-                                               vperp_spectral, vpa_advect, vperp_advect,
-                                               z_advect, r_advect, composition, geometry,
-                                               scratch_dummy, advance.r_diffusion,
-                                               advance.vpa_diffusion,
-                                               advance.vperp_diffusion)
+    # update remaining velocity moments that are calculable from the evolved pdf Note
+    # these may be needed for the boundary condition on the neutrals, so must be
+    # calculated before that is applied. Also may be needed to calculate advection speeds
+    # for for CFL stability limit calculations in adaptive_timestep_update!().
+    update_derived_moments!(this_scratch, moments, vpa, vperp, z, r, composition,
+                            r_spectral, geometry, gyroavs, scratch_dummy, z_advect,
+                            collisions, diagnostic_moments)
 
-                hard_force_moment_constraints!(this_scratch.pdf, moments, vpa, vperp)
-            end
-
-            # update remaining velocity moments that are calculable from the evolved pdf
-            # Note these may be needed for the boundary condition on the neutrals, so must
-            # be calculated before that is applied. Also may be needed to calculate
-            # advection speeds for for CFL stability limit calculations in
-            # adaptive_timestep_update!().
-            update_derived_moments!(this_scratch, moments, vpa, vperp, z, r, composition,
-                                    r_spectral, geometry, gyroavs, scratch_dummy,
-                                    z_advect, collisions, diagnostic_moments)
-
-            calculate_electron_density_not_anyzv!(this_scratch.electron_density,
-                                                  this_scratch.density)
-            calculate_electron_n_upar_from_zero_parallel_current_not_anyzv!(
-                this_scratch.electron_n_upar, this_scratch.n_upar)
-            update_electron_upar_not_anyzv!(moments.electron.upar,
+    if !(moments.evolve_density && moments.evolve_n_upar)
+        # Ion n_upar and (possibly) n are only now calculated, so can now update electron
+        # moments and phi for evolve_n_upar=false case.
+        calculate_electron_density_not_anyzv!(this_scratch.electron_density,
+                                              this_scratch.density)
+        calculate_electron_n_upar_from_zero_parallel_current_not_anyzv!(
+            this_scratch.electron_n_upar, this_scratch.n_upar)
+        update_electron_upar_not_anyzv!(moments.electron.upar,
+                                        this_scratch.electron_density,
+                                        this_scratch.electron_n_upar)
+        update_electron_vth_temp_not_anyzv!(moments.electron.vth, moments.electron.temp,
                                             this_scratch.electron_density,
-                                            this_scratch.electron_n_upar)
-            update_electron_vth_temp_not_anyzv!(moments.electron.vth, moments.electron.temp,
-                                                this_scratch.electron_density,
-                                                this_scratch.electron_p,
-                                                composition.me_over_mi)
-            calculate_electron_moments_not_anyzv!(this_scratch, pdf, moments, composition,
-                                                  collisions, r, z, vperp, vpa)
-            calculate_electron_moment_derivatives!(moments, this_scratch, scratch_dummy,
-                                                   z, z_spectral,
-                                                   num_diss_params.electron.moment_dissipation_coefficient,
-                                                   composition.electron_physics)
-            # update the electron parallel friction force
-            calculate_electron_parallel_friction_force!(
-                moments.electron.parallel_friction, this_scratch.electron_density,
-                moments.electron.upar, moments.ion.upar, moments.electron.dT_dz,
-                composition.me_over_mi, collisions.electron_fluid.nu_ei,
-                composition.electron_physics)
+                                            this_scratch.electron_p,
+                                            composition.me_over_mi)
+        calculate_electron_moments_not_anyzv!(this_scratch, pdf, moments, composition,
+                                              collisions, r, z, vperp, vpa)
+        calculate_electron_moment_derivatives!(moments, this_scratch, scratch_dummy, z,
+                                               z_spectral,
+                                               num_diss_params.electron.moment_dissipation_coefficient,
+                                               composition.electron_physics)
+        # update the electron parallel friction force
+        calculate_electron_parallel_friction_force!(
+            moments.electron.parallel_friction, this_scratch.electron_density,
+            moments.electron.upar, moments.ion.upar, moments.electron.dT_dz,
+            composition.me_over_mi, collisions.electron_fluid.nu_ei,
+            composition.electron_physics)
 
-            # update the electrostatic potential phi, electric fields, and ExB velocity
-            # components.
-            update_phi!(fields, this_scratch, vperp, z, r, composition, collisions,
-                        moments, geometry, z_spectral, r_spectral, scratch_dummy, gyroavs,
-                        boundaries)
-        end
+        # update the electrostatic potential phi, electric fields, and ExB velocity
+        # components.
+        update_phi!(fields, this_scratch, vperp, z, r, composition, collisions, moments,
+                    geometry, z_spectral, r_spectral, scratch_dummy, gyroavs, boundaries)
     end
 
     if composition.ion_physics == coll_krook_ions
