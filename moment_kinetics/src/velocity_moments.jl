@@ -2563,6 +2563,8 @@ update velocity moments that are calculable from the evolved ion pdf
     if !moments.evolve_p
         update_p!(new_scratch.p, new_scratch.density, moments.ion.upar, ff, vpa, vperp, z,
                   r, composition, moments.evolve_density, moments.evolve_n_upar)
+        update_vth!(moments.ion.vth, moments.ion.temp, new_scratch.p, new_scratch.density,
+                    z, r, composition)
     end
     update_ppar!(moments.ion.ppar, new_scratch.density, moments.ion.upar, moments.ion.vth,
                  new_scratch.p, ff, vpa, vperp, z, r, composition, moments.evolve_density,
@@ -2620,6 +2622,8 @@ update velocity moments that are calculable from the evolved neutral pdf
                           moments.neutral.vth, new_scratch.pdf_neutral, vz, vr, vzeta, z,
                           r, composition, moments.evolve_density, moments.evolve_n_upar,
                           moments.evolve_p)
+        update_neutral_vth!(moments.neutral.vth, new_scratch.p_neutral,
+                            new_scratch.density_neutral, z, r, composition)
     end
     # pz is needed for the neutral parallel momentum equation if evolving uz and the
     # neutral pressure equation if evolving p.
