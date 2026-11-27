@@ -516,8 +516,7 @@ function setup_external_sources!(input_dict, r, z, electron_physics,
     # put all electron sources into electron_source_data struct vector, where 
     # each entry is a mirror of the ion source vector.
     electron_sources = electron_source_data[]
-    if electron_physics ∈ (braginskii_fluid, kinetic_electrons,
-                           kinetic_electrons_with_temperature_equation)
+    if electron_physics ∈ (braginskii_fluid, kinetic_electrons)
         electron_sources = [get_settings_electrons(i, this_source) for (i,this_source) ∈ enumerate(ion_sources)]
     else
         electron_sources = [get_settings_electrons(1, get_settings_ions(1, false))]

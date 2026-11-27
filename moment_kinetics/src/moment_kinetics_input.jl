@@ -221,8 +221,7 @@ function mk_input(input_dict=OptionsDict("output" => OptionsDict("run_name" => "
         minimum_dt=0.0,
         maximum_dt=Inf,
         implicit_braginskii_conduction=true,
-        kinetic_electron_solver=(composition.electron_physics ∈ (kinetic_electrons,
-                                                                 kinetic_electrons_with_temperature_equation)
+        kinetic_electron_solver=(composition.electron_physics === kinetic_electrons
                                  ? implicit_p_implicit_pseudotimestep : null_kinetic_electrons),
         kinetic_electron_preconditioner="default",
         kinetic_ion_solver=full_explicit_ion_advance,

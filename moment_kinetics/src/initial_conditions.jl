@@ -106,8 +106,7 @@ function create_pdf(composition, r, z, vperp, vpa, vzeta, vr, vz)
     pdf_neutral_norm = allocate_shared_float(vz, vr, vzeta, z, r, composition.neutral_species_coord)
     # buffer array is for neutral-ion collisions, not for storing neutral pdf
     pdf_neutral_buffer = allocate_shared_float(vz, vr, vzeta, z, r, composition.ion_species_coord)
-    if composition.electron_physics ∈ (kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    if composition.electron_physics === kinetic_electrons
         pdf_electron_norm = allocate_shared_float(vpa, vperp, z, r)
         # MB: not sure if pdf_electron_buffer will ever be needed, but create for now
         # to emulate ion and neutral behaviour
@@ -232,8 +231,7 @@ function init_pdf_and_moments!(pdf, moments, fields, geometry, composition, r, z
             moments.electron.constraints_A_coefficient .= 1.0
             moments.electron.constraints_B_coefficient .= 0.0
             moments.electron.constraints_C_coefficient .= 0.0
-            if composition.electron_physics ∈ (kinetic_electrons,
-                                               kinetic_electrons_with_temperature_equation)
+            if composition.electron_physics === kinetic_electrons
                 pdf.electron.norm .= 0.0
             end
         end
@@ -317,8 +315,7 @@ function initialize_electrons!(pdf, moments, fields, geometry, composition, r, z
                 moments.electron.pperp[iz,ir] = moments.electron.p[iz,ir]
             end
         end
-    elseif restart_electron_physics ∉ (braginskii_fluid, kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    elseif restart_electron_physics ∉ (braginskii_fluid, kinetic_electrons)
         # Restarting from Boltzmann electron simulation, so start with constant
         # electron temperature
         @begin_serial_region()
@@ -361,8 +358,7 @@ function initialize_electrons!(pdf, moments, fields, geometry, composition, r, z
     @views derivative_z!(moments.electron.dppar_dz, moments.electron.ppar, 
         scratch_dummy.buffer_rs_1[:,1], scratch_dummy.buffer_rs_2[:,1], scratch_dummy.buffer_rs_3[:,1],
         scratch_dummy.buffer_rs_4[:,1], z_spectral, z)
-    if composition.electron_physics ∈ (kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    if composition.electron_physics === kinetic_electrons
         # Initialise the array for the electron pdf
         @begin_serial_region()
         speed = @view scratch_dummy.buffer_vpavperpzrs_1[:,:,:,:,1]
@@ -380,8 +376,7 @@ function initialize_electrons!(pdf, moments, fields, geometry, composition, r, z
         electron_fluid_qpar_boundary_condition!(
             moments.electron.ppar, moments.electron.upar, moments.electron.dens,
             moments.electron, z)
-        if restart_electron_physics ∉ (nothing, braginskii_fluid, kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+        if restart_electron_physics ∉ (nothing, braginskii_fluid, kinetic_electrons)
             # Restarting from Boltzmann. If we use an exactly constant T_e profile,
             # qpar for the electrons will be non-zero only at the boundary points,
             # which will crash the code unless the timestep is insanely small. Give
@@ -583,8 +578,7 @@ function initialize_electron_pdf!(scratch, scratch_electron, pdf, moments, field
         skip_electron_solve = true
     end
 
-    if composition.electron_physics ∈ (kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    if composition.electron_physics === kinetic_electrons
         @begin_serial_region()
         if t_input_tuple.no_restart
             restart_filename = nothing
@@ -2008,8 +2002,7 @@ function init_pdf_moments_manufactured_solns!(pdf, moments, vz, vr, vzeta, vpa, 
         moments.electron.constraints_A_coefficient .= 1.0
         moments.electron.constraints_B_coefficient .= 0.0
         moments.electron.constraints_C_coefficient .= 0.0
-        if composition.electron_physics ∈ (kinetic_electrons,
-                                           kinetic_electrons_with_temperature_equation)
+        if composition.electron_physics === kinetic_electrons
             pdf.electron.norm .= 0.0
         end
     end

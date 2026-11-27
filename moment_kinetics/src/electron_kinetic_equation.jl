@@ -4963,10 +4963,7 @@ function get_electron_sub_terms(
              separate_dp_dz::Bool, separate_dq_dz::Bool, include::Symbol=:all;
              include_qpar_integral_terms::Bool=true)
 
-    if composition.electron_physics == kinetic_electrons_with_temperature_equation
-        error("kinetic_electrons_with_temperature_equation not "
-              * "supported yet in preconditioner")
-    elseif composition.electron_physics != kinetic_electrons
+    if composition.electron_physics != kinetic_electrons
         error("Unsupported electron_physics=$(composition.electron_physics) "
               * "in electron_backward_euler!() preconditioner.")
     end

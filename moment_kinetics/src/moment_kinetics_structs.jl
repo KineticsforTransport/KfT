@@ -263,8 +263,6 @@ struct moments_electron_substruct{ndim_moment_electron_source}
     dvth_dz::Union{MPISharedArray{mk_float,ndim_moment_electron},Nothing}
     # Time derivative of the pressure
     dp_dt::Union{MPISharedArray{mk_float,ndim_moment_electron},Nothing}
-    # Time derivative of the parallel temperature
-    dT_dt::Union{MPISharedArray{mk_float,ndim_moment_electron},Nothing}
     # Time derivative of the thermal speed
     dvth_dt::Union{MPISharedArray{mk_float,ndim_moment_electron},Nothing}
     # Store coefficient 'A' from applying moment constraints so we can write it out as a

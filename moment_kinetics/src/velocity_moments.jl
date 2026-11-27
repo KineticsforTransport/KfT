@@ -307,27 +307,14 @@ function create_moments_electron(z, r, electron_model, num_diss_params, n_source
     dupar_dz = allocate_shared_float(z, r)
     dppar_dz = allocate_shared_float(z, r)
     dp_dz = allocate_shared_float(z, r)
-    if electron_model ∈ (braginskii_fluid, kinetic_electrons,
-                         kinetic_electrons_with_temperature_equation)
+    if electron_model ∈ (braginskii_fluid, kinetic_electrons)
         dT_dz_upwind = allocate_shared_float(z, r)
-        if electron_model == kinetic_electrons_with_temperature_equation
-            dp_dt = nothing
-            dT_dt = allocate_shared_float(z, r)
-            @serial_region begin
-                # Initialise time derivatives so that we can use them without errors when
-                # initialising advection speeds. Note the initial values of the speeds are
-                # never actually used, as they are updated again in the first timestep.
-                dT_dt .= 0.0
-            end
-        else
-            dp_dt = allocate_shared_float(z, r)
-            dT_dt = nothing
-            @serial_region begin
-                # Initialise time derivatives so that we can use them without errors when
-                # initialising advection speeds. Note the initial values of the speeds are
-                # never actually used, as they are updated again in the first timestep.
-                dp_dt .= 0.0
-            end
+        dp_dt = allocate_shared_float(z, r)
+        @serial_region begin
+            # Initialise time derivatives so that we can use them without errors when
+            # initialising advection speeds. Note the initial values of the speeds are
+            # never actually used, as they are updated again in the first timestep.
+            dp_dt .= 0.0
         end
         dvth_dt = allocate_shared_float(z, r)
         @serial_region begin
@@ -339,7 +326,6 @@ function create_moments_electron(z, r, electron_model, num_diss_params, n_source
     else
         dT_dz_upwind = nothing
         dp_dt = nothing
-        dT_dt = nothing
         dvth_dt = nothing
     end
     if num_diss_params.electron.moment_dissipation_coefficient > 0.0
@@ -365,7 +351,7 @@ function create_moments_electron(z, r, electron_model, num_diss_params, n_source
         vth, parallel_friction_force, external_source_amplitude, external_source_T_array,
         external_source_density_amplitude, external_source_momentum_amplitude,
         external_source_pressure_amplitude, v_norm_fac, ddens_dz, dupar_dz, dp_dz,
-        d2p_dz2, dppar_dz, dqpar_dz, dT_dz, dT_dz_upwind, dvth_dz, dp_dt, dT_dt, dvth_dt,
+        d2p_dz2, dppar_dz, dqpar_dz, dT_dz, dT_dz_upwind, dvth_dz, dp_dt, dvth_dt,
         constraints_A_coefficient, constraints_B_coefficient, constraints_C_coefficient)
 end
 
@@ -1336,27 +1322,17 @@ function update_derived_electron_moment_time_derivatives!(p, moments, electron_p
     if moments.electron.dvth_dt !== nothing
         dvth_dt = @view moments.electron.dvth_dt[:,ir]
         vth = @view moments.electron.vth[:,ir]
-        if electron_physics == kinetic_electrons_with_temperature_equation
-            dT_dt = @view moments.electron.dT_dt[:,ir]
-            T = @view moments.electron.temp[:,ir]
-            @loop_z iz begin
-                # vth = sqrt(2*T)
-                # dvth/dt = 1 / (2*T) * dT/dt
-                dvth_dt[iz] = 0.5 * vth[iz] * dT_dt[iz] / T[iz]
-            end
-        else
-            dp_dt = @view moments.electron.dp_dt[:,ir]
-            p = @view moments.electron.p[:,ir]
-            @loop_z iz begin
-                # vth = sqrt(2*p/n)
-                # dvth/dt = 1 / sqrt(2*p*n) * dp/dt - sqrt(p/2/n^3) * dn/dt
-                # but no dn/dt contribution because due to the implicit/explicit splitting
-                # of terms, the density does not update during the update of the electron
-                # pressure and shape function. Therefore T_out = p_out / density_in,
-                # T_in = p_in / density_in so that effectively, for the electron update
-                # dn_dt = (density_in - density_in) / dt_implicit = 0
-                dvth_dt[iz] = 0.5 * vth[iz] * dp_dt[iz] / p[iz]
-            end
+        dp_dt = @view moments.electron.dp_dt[:,ir]
+        p = @view moments.electron.p[:,ir]
+        @loop_z iz begin
+            # vth = sqrt(2*p/n)
+            # dvth/dt = 1 / sqrt(2*p*n) * dp/dt - sqrt(p/2/n^3) * dn/dt
+            # but no dn/dt contribution because due to the implicit/explicit splitting
+            # of terms, the density does not update during the update of the electron
+            # pressure and shape function. Therefore T_out = p_out / density_in,
+            # T_in = p_in / density_in so that effectively, for the electron update
+            # dn_dt = (density_in - density_in) / dt_implicit = 0
+            dvth_dt[iz] = 0.5 * vth[iz] * dp_dt[iz] / p[iz]
         end
     end
 

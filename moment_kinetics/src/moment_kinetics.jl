@@ -329,8 +329,7 @@ parallel loop ranges, and are only used by the tests in `debug_test/`.
         @serial_region begin
             @. moments.electron.temp = 0.5 * composition.me_over_mi * moments.electron.vth^2
         end
-        if composition.electron_physics ∈ (kinetic_electrons,
-                                           kinetic_electrons_with_temperature_equation)
+        if composition.electron_physics === kinetic_electrons
             @begin_r_z_vperp_vpa_region()
             @loop_r_z_vperp_vpa ir iz ivperp ivpa begin
                 pdf.electron.pdf_before_ion_timestep[ivpa,ivperp,iz,ir] =

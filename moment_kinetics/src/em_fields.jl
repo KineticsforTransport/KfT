@@ -128,8 +128,7 @@ update_phi updates the electrostatic potential, phi
         @loop_r_z ir iz begin
             fields.phi[iz,ir] = composition.T_e * log(dens_e[iz,ir] / N_e[ir])
         end
-    elseif composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons,
-                                           kinetic_electrons_with_temperature_equation)
+    elseif composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons)
         calculate_Epar_from_electron_force_balance!(fields.Ez, dens_e, moments.electron.dppar_dz,
             collisions.electron_fluid.nu_ei, moments.electron.parallel_friction,
             composition.n_neutral_species, collisions.reactions.electron_charge_exchange_frequency,
@@ -173,8 +172,7 @@ update_phi updates the electrostatic potential, phi
         end
     end
     # if advancing electron fluid equations, solve for Ez directly from force balance
-    if composition.electron_physics ∉ (braginskii_fluid, kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    if composition.electron_physics ∉ (braginskii_fluid, kinetic_electrons)
         if z.n > 1
             # Ez = - d phi / dz
             @views derivative_z!(fields.Ez,fields.phi,

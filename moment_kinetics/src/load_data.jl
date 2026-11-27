@@ -914,8 +914,7 @@ function reload_evolving_fields!(pdf, moments, fields, restart_prefix_iblock, ti
             restart_electron_physics = enum_from_string(electron_physics_type,
                                                         restart_input["composition"]["electron_physics"])
             if pdf.electron !== nothing &&
-                    restart_electron_physics ∈ (kinetic_electrons,
-                                                kinetic_electrons_with_temperature_equation)
+                    restart_electron_physics === kinetic_electrons
                 pdf.electron.norm .=
                     reload_electron_pdf(dynamic, time_index, moments, coords,
                                         reload_ranges, restart_coords,
@@ -3740,12 +3739,10 @@ function get_run_info_no_setup(run_dir::Union{AbstractString,Tuple{AbstractStrin
         if evolve_p
             push!(evolving_variables, "pressure")
         end
-        if composition.electron_physics ∈ (kinetic_electrons,
-                                           kinetic_electrons_with_temperature_equation)
+        if composition.electron_physics === kinetic_electrons
             push!(evolving_variables, "f_electron")
         end
-        if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons,
-                                           kinetic_electrons_with_temperature_equation)
+        if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons)
             push!(evolving_variables, "electron_pressure")
         end
         if composition.n_neutral_species > 0

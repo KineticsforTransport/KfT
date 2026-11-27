@@ -809,8 +809,7 @@ function setup_time_advance!(pdf, fields, vz, vr, vzeta, vpa, vperp, z, r, gyrop
         dt_reload = nothing
     end
 
-    if composition.electron_physics ∈ (kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    if composition.electron_physics === kinetic_electrons
         electron_t_params = setup_time_info(t_input["electron_t_input"], 2, 0.0,
                                             electron_dt_reload,
                                             electron_dt_before_last_fail_reload,
@@ -855,8 +854,7 @@ function setup_time_advance!(pdf, fields, vz, vr, vzeta, vpa, vperp, z, r, gyrop
         # ion pressure
         n_variables += 1
     end
-    if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons)
         # electron pressure
         n_variables += 1
     end
@@ -976,8 +974,7 @@ function setup_time_advance!(pdf, fields, vz, vr, vzeta, vpa, vperp, z, r, gyrop
         t_params.failure_caused_by["p_accuracy"] = 0
     end
 
-    if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons)
         # electron pressure
         t_params.limit_caused_by["electron_p_accuracy"] = 0
         t_params.failure_caused_by["electron_p_accuracy"] = 0
@@ -990,8 +987,7 @@ function setup_time_advance!(pdf, fields, vz, vr, vzeta, vpa, vperp, z, r, gyrop
             t_params.limit_caused_by["electron_CFL_vpa"] = 0
             t_params.failure_caused_by["electron_pdf_accuracy"] = 0
         end
-        if composition.electron_physics ∈ (kinetic_electrons,
-                                           kinetic_electrons_with_temperature_equation)
+        if composition.electron_physics === kinetic_electrons
             t_params.failure_caused_by["kinetic_electron_convergence"] = 0
         end
     end
@@ -1140,8 +1136,7 @@ function _setup_time_advance_internal!(pdf, fields, vz, vr, vzeta, vpa, vperp, z
     else
         scratch_implicit = nothing
     end
-    if composition.electron_physics ∈ (kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    if composition.electron_physics === kinetic_electrons
         scratch_electron = setup_electron_scratch_arrays(moments, pdf,
                                                          t_params.electron.n_rk_stages+1,
                                                          r, z, vperp, vpa)
@@ -1170,10 +1165,8 @@ function _setup_time_advance_internal!(pdf, fields, vz, vr, vzeta, vpa, vperp, z
     # Now that `t_params` and `scratch` have been created, initialize electrons if
     # necessary
     if restarting &&
-            composition.electron_physics ∈ (kinetic_electrons,
-                                            kinetic_electrons_with_temperature_equation) &&
-            restart_electron_physics ∈ (kinetic_electrons,
-                                        kinetic_electrons_with_temperature_equation)
+            composition.electron_physics === kinetic_electrons &&
+            restart_electron_physics === kinetic_electrons
         if t_params.electron.debug_io !== nothing
             # Create *.electron_debug.ir*.h5 files so that they can be re-opened in
             # update_electron_pdf!().
@@ -1633,8 +1626,7 @@ function setup_advance_flags(moments, composition, t_params, collisions,
         end
         # if treating the electrons as a fluid with Braginskii closure, or
         # moment-kinetically then advance the electron energy equation
-        if composition.electron_physics ∈ (kinetic_electrons,
-                                           kinetic_electrons_with_temperature_equation)
+        if composition.electron_physics === kinetic_electrons
             if !(t_params.kinetic_electron_solver ∈ (implicit_time_evolving,
                                                      implicit_p_implicit_pseudotimestep,
                                                      implicit_steady_state,
@@ -2772,8 +2764,7 @@ function rk_update!(scratch, scratch_implicit, moments, t_params, istage, compos
     # use Runge Kutta to update any velocity moments evolved separately from the pdf
     rk_update_evolved_moments!(scratch, scratch_implicit, moments, t_params, istage)
 
-    if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons)
         rk_update_variable!(scratch, scratch_implicit, :electron_p, t_params, istage)
     end
 
@@ -2941,8 +2932,7 @@ moments and moment derivatives
                                              geometry, advance.r_diffusion)
 
 
-        if (composition.electron_physics ∈ (kinetic_electrons,
-                                           kinetic_electrons_with_temperature_equation)
+        if (composition.electron_physics === kinetic_electrons
                 && length(this_scratch.pdf_electron) > 0)
 
             @begin_r_anyzv_region()
@@ -2996,8 +2986,7 @@ moments and moment derivatives
                                           num_diss_params.ion.moment_dissipation_coefficient)
     end
 
-    if composition.electron_physics ∈ (kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    if composition.electron_physics === kinetic_electrons
 
         # Copy ion and electron moments from `scratch` into `moments` to be used in
         # electron kinetic equation update
@@ -3227,8 +3216,7 @@ appropriate.
         @begin_r_z_vperp_vpa_region()
         rk_loworder_solution!(scratch, scratch_implicit, :pdf_electron, t_params)
     end
-    if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons)
         @begin_r_z_region()
         rk_loworder_solution!(scratch, scratch_implicit, :electron_p, t_params)
     end
@@ -3359,8 +3347,7 @@ appropriate.
         push!(total_points, z.n_global * r.n_global * n_ion_species)
     end
 
-    if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    if composition.electron_physics ∈ (braginskii_fluid, kinetic_electrons)
         @begin_r_z_region()
         electron_p_err = local_error_norm(scratch[2].electron_p,
                                           scratch[t_params.n_rk_stages+1].electron_p,
@@ -3467,8 +3454,7 @@ appropriate.
                                        nl_total_its_soft_limit,
                                        nl_total_its_soft_limit_reduce_dt, composition, z)
 
-    if composition.electron_physics ∈ (kinetic_electrons,
-                                       kinetic_electrons_with_temperature_equation)
+    if composition.electron_physics === kinetic_electrons
         if t_params.previous_dt[] == 0.0
             # Reset electron pdf to its value at the beginning of this step.
             @begin_r_z_vperp_vpa_region()

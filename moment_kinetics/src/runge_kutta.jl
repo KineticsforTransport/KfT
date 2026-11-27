@@ -1499,8 +1499,7 @@ function adaptive_timestep_update_t_params!(t_params, CFL_limits, error_norms,
         # Could do with a better way to sort the different possible types of
         # convergence failure...
         if t_params.rk_coefs_implicit !== nothing &&
-                composition.electron_physics ∈ (kinetic_electrons,
-                                                kinetic_electrons_with_temperature_equation)
+                composition.electron_physics === kinetic_electrons
             if success == "nonlinear-solver"
                 failure_caused_by["nonlinear_solver_convergence"] += 1
             elseif success == "kinetic-electrons"
