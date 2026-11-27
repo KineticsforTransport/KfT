@@ -44,20 +44,17 @@ using ..communication
 using ..debugging
 using ..derivatives: derivative_z!, derivative_z_anyzv!, second_derivative_z!
 using ..derivatives: derivative_r!, second_derivative_r!
+using ..electron_fluid_equations: calculate_electron_ppar_no_r!,
+                                  calculate_electron_qpar_no_r!,
+                                  electron_fluid_qpar_boundary_condition!
 using ..looping
 using ..gauss_legendre: gausslegendre_info
 using ..gyroaverages: gyro_operators, gyroaverage_pdf!
 using ..collision_frequencies: get_collision_frequency_ii
 using ..input_structs
-using ..moment_kinetics_structs: moments_ion_substruct, moments_electron_substruct,
-                                 moments_neutral_substruct, coordinate
+using ..moment_kinetics_structs
 using ..timer_utils
 
-
-#global tmpsum1 = 0.0
-#global tmpsum2 = 0.0
-#global dens_hist = zeros(17,1)
-#global n_hist = 0
 
 """
 """
@@ -1294,6 +1291,36 @@ function update_derived_ion_moment_time_derivatives!(fvec_in, moments)
     return nothing
 end
 
+# Update electron_density using the standard shared-memory regions, not anyzv, for use in
+# the main RK update steps, outside of electron implicit solves. This is more efficient as
+# it avoids needing extra `halo_swap!()` calls.
+function calculate_electron_density_not_anyzv!(dens_e, dens_i)
+    @begin_r_z_region()
+    # enforce quasineutrality
+    @loop_r_z ir iz begin
+        dens_e[iz,ir] = 0.0
+        @loop_s is begin
+            dens_e[iz,ir] += dens_i[iz,ir,is]
+        end
+    end
+    return nothing
+end
+
+# Update electron_n_upar using the standard shared-memory regions, not anyzv, for use in
+# the main RK update steps, outside of electron implicit solves. This is more efficient as
+# it avoids needing extra `halo_swap!()` calls.
+function calculate_electron_n_upar_from_zero_parallel_current_not_anyzv!(n_upar_e,
+                                                                         n_upar_i)
+    @begin_r_z_region()
+    @loop_r_z ir iz begin
+        # Set the electron parallel particle flux equal to the sum of the ion parallel
+        # particle fluxes (this should be weighted by the ion charges when charges other
+        # than +1 are allowed), so that the parallel current is zero.
+        n_upar_e[iz,ir] = sum(@view(n_upar_i[iz,ir,:]))
+    end
+    return nothing
+end
+
 # Update electron_upar using the standard shared-memory regions, not anyzv, for use in the
 # main RK update steps, outside of electron implicit solves. This is more efficient as it
 # avoids needing extra `halo_swap!()` calls.
@@ -1338,17 +1365,23 @@ function calculate_electron_moments_not_anyzv!(scratch, pdf, moments, compositio
             this_pdf = @view pdf_electron[:,:,:,ir]
         end
         @views calculate_electron_ppar_no_r!(moments.electron.ppar[:,ir],
-                                             electron_density,
-                                             moments.electron.upar[:,ir], electron_p,
+                                             scratch.electron_density,
+                                             moments.electron.upar[:,ir],
+                                             scratch.electron_p,
                                              moments.electron.vth[:,ir], pdf_electron,
                                              vpa, vperp, z, composition.me_over_mi)
-        @views calculate_electron_qpar_no_r!(moments.electron, pdf_electron, electron_p,
-                                             electron_density,
+        @views calculate_electron_qpar_no_r!(moments.electron, pdf_electron,
+                                             scratch.electron_p, scratch.electron_density,
                                              moments.electron.upar[:,ir],
                                              moments.ion.upar[:,ir,:],
                                              collisions.electron_fluid.nu_ei,
                                              composition.me_over_mi,
                                              composition.electron_physics, vperp, vpa, ir)
+        if composition.electron_physics == braginskii_fluid
+            @views electron_fluid_qpar_boundary_condition!(
+                       scratch.electron_p, moments.electron.upar[:,ir],
+                       scratch.electron_density, moments.electron, z)
+        end
     end
 
     return nothing

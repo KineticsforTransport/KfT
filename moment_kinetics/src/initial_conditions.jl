@@ -1098,7 +1098,7 @@ end
 initialise the electron parallel flow density
 """
 function init_electron_n_upar!(n_upar_e, n_upar_i, r, z)
-    calculate_electron_n_upar_from_zero_parallel_current!(n_upar_e, n_upar_i, r, z)
+    calculate_electron_n_upar_from_zero_parallel_current!(n_upar_e, n_upar_i)
 
     # Ensure subdomain boundary points are initialised.
     halo_swap!(r, z, n_upar_e)

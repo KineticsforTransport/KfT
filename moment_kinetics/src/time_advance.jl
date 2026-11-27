@@ -33,6 +33,8 @@ using ..velocity_moments: update_neutral_pzeta!, update_neutral_pr!, update_deri
 using ..velocity_moments: calculate_ion_moment_derivatives!, calculate_neutral_moment_derivatives!
 using ..velocity_moments: calculate_electron_moment_derivatives!,
                           update_derived_electron_moment_time_derivatives!,
+                          calculate_electron_density_not_anyzv!,
+                          calculate_electron_n_upar_from_zero_parallel_current_not_anyzv!,
                           update_electron_upar_not_anyzv!,
                           update_electron_vth_temp_not_anyzv!,
                           calculate_electron_moments_not_anyzv!
@@ -109,7 +111,6 @@ using ..utils: to_minutes, get_minimum_CFL_r, get_minimum_CFL_z, get_minimum_CFL
                get_minimum_CFL_neutral_vz
 using ..electron_fluid_equations: calculate_electron_moments!
 using ..electron_fluid_equations: calculate_electron_density!
-using ..electron_fluid_equations: calculate_electron_n_upar_from_zero_parallel_current!
 using ..electron_fluid_equations: calculate_electron_qpar!, electron_fluid_qpar_boundary_condition!
 using ..electron_fluid_equations: calculate_electron_parallel_friction_force!
 using ..electron_fluid_equations: electron_energy_equation!, update_electron_vth_temperature!,
@@ -1395,8 +1396,8 @@ function _setup_time_advance_internal!(pdf, fields, vz, vr, vzeta, vpa, vperp, z
         # in case the corresponding ion quantities have been changed by applying
         # constraints to the ion pdf
         calculate_electron_density!(moments.electron.dens, moments.ion.dens)
-        calculate_electron_n_upar_from_zero_parallel_current!(moments.electron.n_upar,
-                                                              moments.ion.n_upar, r, z)
+        calculate_electron_n_upar_from_zero_parallel_current_not_anyzv!(
+            moments.electron.n_upar, moments.ion.n_upar)
         @begin_serial_region()
         # compute the updated electron temperature
         # NB: not currently necessary, as initial vth is not directly dependent on ion quantities
@@ -2810,9 +2811,16 @@ moments and moment derivatives
     success = ""
 
     # upar/uz and vth may be needed to transform between wpa/wperp and vpa/vperp, etc., so
-    # calculate these first.
+    # calculate these first. Also have to set electron moments that are calculated from
+    # ion moments in terms of updated ion moments.
+    if moments.evolve_density
+        calculate_electron_density_not_anyzv!(this_scratch.electron_density,
+                                              this_scratch.density)
+    end
     if moments.evolve_n_upar
         update_upar!(moments.ion.upar, this_scratch.density, this_scratch.n_upar)
+        calculate_electron_n_upar_from_zero_parallel_current_not_anyzv!(
+            this_scratch.electron_n_upar, this_scratch.n_upar)
         update_electron_upar_not_anyzv!(moments.electron.upar,
                                         this_scratch.electron_density,
                                         this_scratch.electron_n_upar)
@@ -2855,19 +2863,6 @@ moments and moment derivatives
                        nl_solver_params.electron_advance, scratch_dummy)
         end
         halo_swap!(this_scratch.pdf_electron)
-
-        calculate_electron_moments_not_anyzv!(scratch, pdf, moments, composition,
-                                              collisions, r, z, vperp, vpa)
-        calculate_electron_moment_derivatives!(moments, this_scratch, scratch_dummy,
-                                               z, z_spectral,
-                                               num_diss_params.electron.moment_dissipation_coefficient,
-                                               composition.electron_physics)
-        # update the electron parallel friction force
-        calculate_electron_parallel_friction_force!(
-            moments.electron.parallel_friction, this_scratch.electron_density,
-            moments.electron.upar, moments.ion.upar, moments.electron.dT_dz,
-            composition.me_over_mi, collisions.electron_fluid.nu_ei,
-            composition.electron_physics)
     end
 
     if composition.ion_physics ∈ (drift_kinetic_ions, gyrokinetic_ions)
@@ -2888,6 +2883,17 @@ moments and moment derivatives
         # depends on phi) is needed for the sheath-entrance boundary condition on the
         # distribution function.
         if moments.evolve_density && moments.evolve_n_upar
+            calculate_electron_moment_derivatives!(moments, this_scratch, scratch_dummy,
+                                                   z, z_spectral,
+                                                   num_diss_params.electron.moment_dissipation_coefficient,
+                                                   composition.electron_physics)
+            # update the electron parallel friction force
+            calculate_electron_parallel_friction_force!(
+                moments.electron.parallel_friction, this_scratch.electron_density,
+                moments.electron.upar, moments.ion.upar, moments.electron.dT_dz,
+                composition.me_over_mi, collisions.electron_fluid.nu_ei,
+                composition.electron_physics)
+
             # update the electrostatic potential phi, electric fields, and ExB velocity
             # components.
             update_phi!(fields, this_scratch, vperp, z, r, composition, collisions,
@@ -2953,6 +2959,30 @@ moments and moment derivatives
                                     r_spectral, geometry, gyroavs, scratch_dummy,
                                     z_advect, collisions, diagnostic_moments)
 
+            calculate_electron_density_not_anyzv!(this_scratch.electron_density,
+                                                  this_scratch.density)
+            calculate_electron_n_upar_from_zero_parallel_current_not_anyzv!(
+                this_scratch.electron_n_upar, this_scratch.n_upar)
+            update_electron_upar_not_anyzv!(moments.electron.upar,
+                                            this_scratch.electron_density,
+                                            this_scratch.electron_n_upar)
+            update_electron_vth_temp_not_anyzv!(moments.electron.vth, moments.electron.temp,
+                                                this_scratch.electron_density,
+                                                this_scratch.electron_p,
+                                                composition.me_over_mi)
+            calculate_electron_moments_not_anyzv!(this_scratch, pdf, moments, composition,
+                                                  collisions, r, z, vperp, vpa)
+            calculate_electron_moment_derivatives!(moments, this_scratch, scratch_dummy,
+                                                   z, z_spectral,
+                                                   num_diss_params.electron.moment_dissipation_coefficient,
+                                                   composition.electron_physics)
+            # update the electron parallel friction force
+            calculate_electron_parallel_friction_force!(
+                moments.electron.parallel_friction, this_scratch.electron_density,
+                moments.electron.upar, moments.ion.upar, moments.electron.dT_dz,
+                composition.me_over_mi, collisions.electron_fluid.nu_ei,
+                composition.electron_physics)
+
             # update the electrostatic potential phi, electric fields, and ExB velocity
             # components.
             update_phi!(fields, this_scratch, vperp, z, r, composition, collisions,
@@ -2971,6 +3001,16 @@ moments and moment derivatives
                                           composition, this_scratch, scratch_dummy, r, z,
                                           vperp, r_spectral, z_spectral,
                                           num_diss_params.ion.moment_dissipation_coefficient)
+        calculate_electron_moment_derivatives!(moments, this_scratch, scratch_dummy,
+                                            z, z_spectral,
+                                            num_diss_params.electron.moment_dissipation_coefficient,
+                                            composition.electron_physics)
+        # update the electron parallel friction force
+        calculate_electron_parallel_friction_force!(
+            moments.electron.parallel_friction, this_scratch.electron_density,
+            moments.electron.upar, moments.ion.upar, moments.electron.dT_dz,
+            composition.me_over_mi, collisions.electron_fluid.nu_ei,
+            composition.electron_physics)
         # This should only ever be Boltzmann for coll_krook_ions
         update_phi!(fields, this_scratch, vperp, z, r, composition, collisions,
                     moments, geometry, z_spectral, r_spectral, scratch_dummy, gyroavs,

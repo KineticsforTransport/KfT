@@ -67,17 +67,15 @@ inputs:
 output:
     n_upar_e = contains the updated electron parallel flow
 """
-function calculate_electron_n_upar_from_zero_parallel_current!(n_upar_e, n_upar_i, r, z)
+function calculate_electron_n_upar_from_zero_parallel_current!(n_upar_e, n_upar_i)
     @begin_r_anyzv_region()
     @loop_r ir begin
         @views calculate_electron_n_upar_from_zero_parallel_current_no_r!(
-                   n_upar_e[:,ir], n_upar_i[:,ir,:], r, z, ir)
+                   n_upar_e[:,ir], n_upar_i[:,ir,:])
     end
     return nothing
 end
-function calculate_electron_n_upar_from_zero_parallel_current_no_r!(n_upar_e, n_upar_i, r,
-                                                                    z, ir)
-
+function calculate_electron_n_upar_from_zero_parallel_current_no_r!(n_upar_e, n_upar_i)
     @begin_anyzv_z_region()
     @loop_z iz begin
         # Set the electron parallel particle flux equal to the sum of the ion parallel
@@ -148,7 +146,7 @@ function calculate_electron_moments_no_r!(pdf_electron, electron_density, electr
                                           composition, collisions, r, z, vperp, vpa, ir)
     calculate_electron_density_no_r!(electron_density, ion_density, ir)
     calculate_electron_n_upar_from_zero_parallel_current_no_r!(
-        electron_n_upar, ion_n_upar, r, z, ir)
+        electron_n_upar, ion_n_upar)
     @begin_anyzv_z_region()
     @views calculate_electron_upar_no_r!(moments.electron.upar[:,ir], electron_density,
                                          electron_n_upar)
