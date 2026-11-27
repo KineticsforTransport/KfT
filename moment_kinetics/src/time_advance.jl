@@ -2842,6 +2842,19 @@ moments and moment derivatives
                                                       composition, geometry, z)
     end
 
+    if (composition.electron_physics === kinetic_electrons
+            && length(this_scratch.pdf_electron) > 0)
+
+        @begin_r_anyzv_region()
+        @loop_r ir begin
+            @views apply_electron_bc_and_constraints_no_r!(
+                       this_scratch.pdf_electron[:,:,:,ir], fields.phi[:,ir], moments, r,
+                       z, vperp, vpa, vperp_spectral, vpa_spectral, electron_vpa_advect,
+                       num_diss_params, composition, ir,
+                       nl_solver_params.electron_advance, scratch_dummy)
+        end
+    end
+
     if composition.ion_physics ∈ (drift_kinetic_ions, gyrokinetic_ions)
         if pdf_bc_constraints
             # Ensure there are no negative values in the pdf before applying boundary
@@ -2956,19 +2969,6 @@ moments and moment derivatives
             update_phi!(fields, this_scratch, vperp, z, r, composition, collisions,
                         moments, geometry, z_spectral, r_spectral, scratch_dummy, gyroavs,
                         boundaries)
-        end
-
-        if (composition.electron_physics === kinetic_electrons
-                && length(this_scratch.pdf_electron) > 0)
-
-            @begin_r_anyzv_region()
-            @loop_r ir begin
-                @views apply_electron_bc_and_constraints_no_r!(
-                           this_scratch.pdf_electron[:,:,:,ir], fields.phi[:,ir], moments,
-                           r, z, vperp, vpa, vperp_spectral, vpa_spectral,
-                           electron_vpa_advect, num_diss_params, composition, ir,
-                           nl_solver_params.electron_advance, scratch_dummy)
-            end
         end
     end
 
