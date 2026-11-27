@@ -8,6 +8,7 @@ export enforce_boundary_conditions!
 export enforce_neutral_boundary_conditions!
 export enforce_boundary_conditions_f!
 export enforce_boundary_conditions_moments!
+export enforce_neutral_z_boundary_condition_moments!
 export enforce_r_boundary_condition_em!
 
 using LinearAlgebra: dot
@@ -1513,6 +1514,55 @@ enforce boundary conditions on electrons in r
 end
 
 """
+enforce boundary conditions on neutral moments
+"""
+function enforce_neutral_z_boundary_condition_moments!(
+             n_uz_neutral, density_neutral, ion_density, ion_n_upar, moments, fields,
+             composition, geometry, z)
+
+    if moments.evolve_n_upar
+        # 'wall' BC enforces wall boundary conditions
+        if z.bc == "wall"
+            zero = 1.0e-14
+            neutral_uz = moments.neutral.uz
+            Er = fields.Er
+            rhostar = geometry.rhostar
+            # Need integrals over vpa at wall boundaries in z, so cannot parallelize over z
+            # or vpa.
+            @begin_sn_r_region()
+            @loop_sn_r isn ir begin
+                # define T_wall_over_m to avoid repeated computation below
+                T_wall_over_m = composition.T_wall / composition.mn_over_mi
+                # Assume for now that the ion species index corresponding to this neutral
+                # species is the same as the neutral species index.
+                # Note, have already calculated moments of ion distribution function(s),
+                # so can use the moments here to get the flux
+                if z.irank == 0
+                    ion_flux_0 = -(ion_n_upar[1,ir,isn] * geometry.bzed[1,ir] - ion_density[1,ir,isn] * rhostar*Er[1,ir])
+                    wall_flux_0 = composition.recycling_fraction * ion_flux_0
+                    n_uz_neutral[1,ir,isn] = wall_flux_0
+                    neutral_uz[1,ir,isn] = n_uz_neutral[1,ir,isn] / density_neutral[1,ir,isn]
+                end
+                if z.irank == z.nrank - 1
+                    ion_flux_L = (ion_n_upar[end,ir,isn] * geometry.bzed[end,ir] - ion_density[end,ir,isn] * rhostar*Er[end,ir])
+                    wall_flux_L = composition.recycling_fraction * ion_flux_L
+                    n_uz_neutral[end,ir,isn] = -wall_flux_L
+                    neutral_uz[end,ir,isn] = n_uz_neutral[end,ir,isn] / density_neutral[end,ir,isn]
+                end
+            end
+        end
+    end
+    return nothing
+end
+function enforce_neutral_z_boundary_condition_moments!(this_scratch, moments, fields,
+                                                       composition, geometry, z)
+    return enforce_neutral_z_boundary_condition_moments!(
+               this_scratch.n_uz_neutral, this_scratch.density_neutral,
+               this_scratch.density, this_scratch.n_upar, moments, fields, composition,
+               geometry, z)
+end
+
+"""
 enforce boundary conditions on neutral particle distribution function
 """
 @timeit global_timer enforce_neutral_boundary_conditions!(
@@ -1559,10 +1609,11 @@ enforce boundary conditions on neutral particle distribution function
                                                        vz_diffusion, vz, vz_spectral)
         end
     end
-    # f_initial contains the initial condition for enforcing a fixed-boundary-value condition
     if z.n > 1
+        # z boundary condition on neutral moments must already have been enforced by a
+        # call to enforce_neutral_z_boundary_condition_moments!() or equivalent.
         @begin_sn_r_vzeta_vr_vz_region()
-        enforce_neutral_z_boundary_condition!(f_neutral, density_neutral, n_uz_neutral,
+        enforce_neutral_z_boundary_condition_f!(f_neutral, density_neutral, n_uz_neutral,
             uz_neutral, p_neutral, moments, density_ion, upar_ion, Er, boundaries.z,
             z_adv, z, vzeta, vr, vz, composition, geometry,
             scratch_dummy.buffer_vzvrvzetarsn_1)
@@ -1788,12 +1839,11 @@ end
 """
 enforce boundary conditions on neutral particle f in z
 """
-@timeit_debug global_timer enforce_neutral_z_boundary_condition!(
+@timeit_debug global_timer enforce_neutral_z_boundary_condition_f!(
                                                pdf, density, n_uz, uz, pz, moments,
                                                density_ion, upar_ion, Er, z_boundaries,
                                                adv, z, vzeta, vr, vz, composition,
                                                geometry, pdf_buffer) = begin
-
 
     zero = 1.0e-14
     # 'constant' BC is time-independent f at upwind boundary
@@ -1888,6 +1938,7 @@ enforce boundary conditions on neutral particle f in z
             end
         end
     end
+    return nothing
 end
 
 function enforce_r_boundary_section_em!(fields, r::coordinate, ir::mk_int,
@@ -2404,12 +2455,8 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, n_uz, uz, density,
                 vth = nothing
             end
 
-            # First apply boundary condition that total neutral outflux is equal to ion
-            # influx to uz
-            n_uz[1] = wall_flux_0
-            uz[1] = wall_flux_0 / density[1]
-            #would setting density work better??
-            #density[1] = - wall_flux_0 / uz[1]
+            # Boundary condition was already applied to n_uz and uz in
+            # enforce_neutral_z_boundary_condition_moments!().
 
             @. vz.scratch2 = vpagrid_to_vpa(vz.grid, vth, uz[1], evolve_p, evolve_n_upar)
 
@@ -2542,12 +2589,8 @@ function enforce_neutral_wall_bc!(pdf, z, vzeta, vr, vz, pz, n_uz, uz, density,
                 vth = nothing
             end
 
-            # First apply boundary condition that total neutral outflux is equal to ion
-            # influx to uz
-            n_uz[end] = - wall_flux_L
-            uz[end] = - wall_flux_L / density[end]
-            #would setting density work better??
-            #density[end] = - wall_flux_L / upar[end]
+            # Boundary condition was already applied to n_uz and uz in
+            # enforce_neutral_z_boundary_condition_moments!().
 
             @. vz.scratch2 = vpagrid_to_vpa(vz.grid, vth, uz[end], evolve_p, evolve_n_upar)
 

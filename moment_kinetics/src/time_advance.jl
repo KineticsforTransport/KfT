@@ -1359,6 +1359,9 @@ function _setup_time_advance_internal!(pdf, fields, vz, vr, vzeta, vpa, vperp, z
         if n_neutral_species > 0
             # Note, so far vr and vzeta do not need advect objects, so pass `nothing` for
             # those as a placeholder
+            enforce_neutral_z_boundary_condition_moments!(
+                moments.neutral.n_uz, moments.neutral.dens, moments.ion.dens,
+                moments.ion.n_upar, moments, fields, composition, geometry, z)
             enforce_neutral_boundary_conditions!(
                 pdf.neutral.norm, pdf.ion.norm, moments.neutral.dens,
                 moments.neutral.n_uz, moments.neutral.p, boundaries, moments,
@@ -2830,6 +2833,15 @@ moments and moment derivatives
         end
     end
 
+    enforce_boundary_conditions_moments!(this_scratch.density, this_scratch.n_upar,
+                                         this_scratch.p, fields, boundaries, moments, z,
+                                         r, z_advect, r_advect, composition, geometry,
+                                         advance.r_diffusion)
+    if composition.n_neutral_species > 0
+        enforce_neutral_z_boundary_condition_moments!(this_scratch, moments, fields,
+                                                      composition, geometry, z)
+    end
+
     if composition.ion_physics ∈ (drift_kinetic_ions, gyrokinetic_ions)
         if pdf_bc_constraints
             # Ensure there are no negative values in the pdf before applying boundary
@@ -2866,12 +2878,6 @@ moments and moment derivatives
             update_phi!(fields, this_scratch, vperp, z, r, composition, collisions,
                         moments, geometry, z_spectral, r_spectral, scratch_dummy, gyroavs,
                         boundaries)
-
-            enforce_boundary_conditions_moments!(this_scratch.density,
-                                                 this_scratch.n_upar, this_scratch.p,
-                                                 fields, boundaries, moments, z, r,
-                                                 z_advect, r_advect, composition,
-                                                 geometry, advance.r_diffusion)
 
             if pdf_bc_constraints
                 enforce_boundary_conditions_f!(this_scratch, moments, fields, boundaries,
@@ -2952,11 +2958,6 @@ moments and moment derivatives
                         boundaries)
         end
 
-        enforce_boundary_conditions_moments!(this_scratch, moments, fields, boundaries,
-                                             z, r, z_advect, r_advect, composition,
-                                             geometry, advance.r_diffusion)
-
-
         if (composition.electron_physics === kinetic_electrons
                 && length(this_scratch.pdf_electron) > 0)
 
@@ -2972,12 +2973,6 @@ moments and moment derivatives
     end
 
     if composition.ion_physics == coll_krook_ions
-        enforce_boundary_conditions_moments!(this_scratch.density,
-                                             this_scratch.n_upar, this_scratch.p,
-                                             fields, boundaries, moments, z, r,
-                                             z_advect, r_advect, composition,
-                                             geometry, advance.r_diffusion)
-
         # coll_krook heat flux is calculated from moments in this function via update_ion_qpar
         update_derived_moments!(this_scratch, moments, vpa, vperp, z, r, composition,
                                 r_spectral, geometry, gyroavs, scratch_dummy,
