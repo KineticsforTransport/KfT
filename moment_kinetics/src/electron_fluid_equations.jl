@@ -151,13 +151,6 @@ function calculate_electron_moments_no_r!(pdf_electron, electron_density, electr
         electron_n_upar, ion_n_upar, r, z, ir)
     @views calculate_electron_upar_no_r!(moments.electron.upar[:,ir], electron_density,
                                          electron_n_upar)
-    if composition.electron_physics ∉ (braginskii_fluid, kinetic_electrons)
-        @begin_anyzv_z_region()
-        @loop_z iz begin
-            electron_p[iz] = 0.5 * composition.me_over_mi *
-                             electron_density[iz] * moments.electron.vth[iz,ir]^2
-        end
-    end
     @views update_electron_vth_temperature_no_r!(moments.electron.vth[:,ir],
                                                  moments.electron.temp[:,ir], electron_p,
                                                  electron_density, composition)
