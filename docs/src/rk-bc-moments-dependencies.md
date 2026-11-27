@@ -13,7 +13,9 @@ dependencies on moments).
    - all other steps require this to be done first.
 2. Calculate `moments.ion.upar`, `moments.ion.vth`, `moments.electron.upar`,
    `moments.electron.vth`, moments.neutral.uz`, and `moments.neutral.vth` from
-   evolved moments.
+   evolved moments. Also update the electron moments that are calculated
+   directly from ion moments, `scratch.electron_density` and
+   `scratch.electron_n_upar` (before `moments.electron.upar`).
 3. Set negative values in the shape functions to zero.
 4. Apply sheath entrance boundary condition for electrons.
    - Will eventually have to calculate `phi` and `this_scratch.electron_n_upar`
