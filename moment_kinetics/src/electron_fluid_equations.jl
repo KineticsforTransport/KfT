@@ -91,6 +91,7 @@ end
 function calculate_electron_upar!(electron_upar, electron_density, electron_n_upar)
     @begin_r_anyzv_region()
     @loop_r ir begin
+        @begin_anyzv_z_region()
         @views calculate_electron_upar_no_r!(electron_upar[:,ir], electron_density[:,ir],
                                              electron_n_upar[:,ir])
     end
@@ -98,7 +99,6 @@ function calculate_electron_upar!(electron_upar, electron_density, electron_n_up
 end
 
 function calculate_electron_upar_no_r!(electron_upar, electron_density, electron_n_upar)
-    @begin_anyzv_z_region()
     @loop_z iz begin
         electron_upar[iz] = electron_n_upar[iz] / electron_density[iz]
     end
@@ -149,6 +149,7 @@ function calculate_electron_moments_no_r!(pdf_electron, electron_density, electr
     calculate_electron_density_no_r!(electron_density, ion_density, ir)
     calculate_electron_n_upar_from_zero_parallel_current_no_r!(
         electron_n_upar, ion_n_upar, r, z, ir)
+    @begin_anyzv_z_region()
     @views calculate_electron_upar_no_r!(moments.electron.upar[:,ir], electron_density,
                                          electron_n_upar)
     @views update_electron_vth_temperature_no_r!(moments.electron.vth[:,ir],
@@ -343,9 +344,11 @@ function electron_braginskii_conduction!(p_out::AbstractVector{mk_float},
     qpar = @view electron_moments.qpar[:,ir]
     dqpar_dz = @view electron_moments.dqpar_dz[:,ir]
 
+    @begin_anyzv_z_region()
     update_electron_vth_temperature_no_r!(vth, temp, p_in, dens, composition)
     derivative_z_anyzv!(dT_dz, temp, buffer_r_1, buffer_r_2, buffer_r_3, buffer_r_4,
                         z_spectral, z)
+    @begin_anyzv_z_region()
     calculate_electron_qpar_no_r!(electron_moments, nothing, p_in, dens, upar_e, upar_i,
                                   collisions.electron_fluid.nu_ei, composition.me_over_mi,
                                   composition.electron_physics, nothing, nothing, ir)
@@ -486,8 +489,6 @@ function calculate_electron_ppar_no_r!(ppar, density, upar, p, vth, ff, vpa, vpe
                                        me_over_mi)
     @debug_consistency_checks z.n == size(ppar, 1) || throw(BoundsError(ppar))
 
-    @begin_anyzv_z_region()
-
     # Only moment-kinetic electrons supported
     evolve_density = true
     evolve_n_upar = true
@@ -570,6 +571,7 @@ function calculate_electron_qpar!(electron_moments, pdf, p_e, dens_e, upar_e, up
         electron_pdf = pdf
     end
     @loop_r ir begin
+        @begin_anyzv_z_region()
         if electron_pdf === nothing
             this_pdf = nothing
         else
@@ -589,7 +591,6 @@ function calculate_electron_qpar_no_r!(electron_moments, pdf, p_e, dens_e, upar_
     vth_e = @view electron_moments.vth[:,ir]
     if electron_model == braginskii_fluid
         dTe_dz = @view electron_moments.dT_dz[:,ir]
-        @begin_anyzv_z_region()
         # use the classical Braginskii expression for the electron heat flux
         @loop_z iz begin
             qpar_e[iz] = 0.0
@@ -607,7 +608,6 @@ function calculate_electron_qpar_no_r!(electron_moments, pdf, p_e, dens_e, upar_
         calculate_electron_qpar_from_pdf_no_r!(qpar_e, dens_e, vth_e, pdf, vperp, vpa,
                                                me_over_mi, ir)
     else
-        @begin_anyzv_z_region()
         # qpar_e is not used. Initialize to 0.0 to avoid failure of
         # @debug_track_initialized check
         @loop_z iz begin
@@ -636,7 +636,6 @@ loop over `r`. `pdf` should have no r-dimension, while the moment variables are 
 `ir`.
 """
 function calculate_electron_qpar_from_pdf_no_r!(qpar, dens, vth, pdf, vperp, vpa, me, ir)
-    @begin_anyzv_z_region()
     @loop_z iz begin
         @views qpar[iz] = 0.5*me*dens[iz]*vth[iz]^3*integral((vperp,vpa)->(vpa*(vpa^2+vperp^2)), pdf[:, :, iz], vperp, vpa)
     end
@@ -657,8 +656,6 @@ function update_electron_vth_temperature!(moments, p, dens, composition, ir)
 end
 
 function update_electron_vth_temperature_no_r!(vth, temp, p, dens, composition)
-    @begin_anyzv_z_region()
-
     me = composition.me_over_mi
     @loop_z iz begin
         this_p = max(p[iz], 0.0)

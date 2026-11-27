@@ -1319,6 +1319,42 @@ function update_electron_vth_temp_not_anyzv!(electron_vth, electron_temp,
     return nothing
 end
 
+function calculate_electron_moments_not_anyzv!(scratch, pdf, moments, composition,
+                                               collisions, r, z, vperp, vpa)
+    @begin_r_z_region()
+
+    if length(scratch.pdf_electron) > 0
+        pdf_electron = scratch.pdf_electron
+    elseif isa(pdf.electron, electron_pdf_substruct)
+        pdf_electron = pdf.electron.norm
+    else
+        pdf_electron = nothing
+    end
+
+    @loop_r ir begin
+        if pdf_electron === nothing
+            this_pdf = nothing
+        else
+            this_pdf = @view pdf_electron[:,:,:,ir]
+        end
+        @views calculate_electron_ppar_no_r!(moments.electron.ppar[:,ir],
+                                             electron_density,
+                                             moments.electron.upar[:,ir], electron_p,
+                                             moments.electron.vth[:,ir], pdf_electron,
+                                             vpa, vperp, z, composition.me_over_mi)
+        @views calculate_electron_qpar_no_r!(moments.electron, pdf_electron, electron_p,
+                                             electron_density,
+                                             moments.electron.upar[:,ir],
+                                             moments.ion.upar[:,ir,:],
+                                             collisions.electron_fluid.nu_ei,
+                                             composition.me_over_mi,
+                                             composition.electron_physics, vperp, vpa, ir)
+    end
+
+    return nothing
+end
+
+
 """
 'Primary' time derivatives are calculated when doing the time advance for moment
 quantities. Moment kinetic equations require in addition some 'derived' time derivatives,
