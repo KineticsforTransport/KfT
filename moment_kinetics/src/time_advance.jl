@@ -3005,28 +3005,6 @@ moments and moment derivatives
                                           num_diss_params.ion.moment_dissipation_coefficient)
     end
 
-    if composition.electron_physics === kinetic_electrons
-
-        # Copy ion and electron moments from `scratch` into `moments` to be used in
-        # electron kinetic equation update
-        @begin_r_z_region()
-        @loop_s_r_z is ir iz begin
-            moments.ion.dens[iz,ir,is] = this_scratch.density[iz,ir,is]
-            moments.ion.n_upar[iz,ir,is] = this_scratch.n_upar[iz,ir,is]
-            moments.ion.p[iz,ir,is] = this_scratch.p[iz,ir,is]
-        end
-        @loop_sn_r_z isn ir iz begin
-            moments.neutral.dens[iz,ir,isn] = this_scratch.density_neutral[iz,ir,isn]
-            moments.neutral.n_uz[iz,ir,isn] = this_scratch.n_uz_neutral[iz,ir,isn]
-            moments.neutral.p[iz,ir,isn] = this_scratch.p_neutral[iz,ir,isn]
-        end
-        @loop_r_z ir iz begin
-            moments.electron.dens[iz,ir] = this_scratch.electron_density[iz,ir]
-            moments.electron.n_upar[iz,ir] = this_scratch.electron_n_upar[iz,ir]
-            moments.electron.p[iz,ir] = this_scratch.electron_p[iz,ir]
-        end
-    end
-
     if composition.n_neutral_species > 0
         if pdf_bc_constraints
             @begin_sn_r_z_region()
@@ -3073,6 +3051,27 @@ moments and moment derivatives
         calculate_neutral_moment_derivatives!(moments, this_scratch, scratch_dummy, z,
                                               z_spectral,
                                               num_diss_params.neutral.moment_dissipation_coefficient)
+    end
+
+    if composition.electron_physics === kinetic_electrons
+        # Copy ion and electron moments from `scratch` into `moments` to be used in
+        # electron kinetic equation update
+        @begin_r_z_region()
+        @loop_s_r_z is ir iz begin
+            moments.ion.dens[iz,ir,is] = this_scratch.density[iz,ir,is]
+            moments.ion.n_upar[iz,ir,is] = this_scratch.n_upar[iz,ir,is]
+            moments.ion.p[iz,ir,is] = this_scratch.p[iz,ir,is]
+        end
+        @loop_sn_r_z isn ir iz begin
+            moments.neutral.dens[iz,ir,isn] = this_scratch.density_neutral[iz,ir,isn]
+            moments.neutral.n_uz[iz,ir,isn] = this_scratch.n_uz_neutral[iz,ir,isn]
+            moments.neutral.p[iz,ir,isn] = this_scratch.p_neutral[iz,ir,isn]
+        end
+        @loop_r_z ir iz begin
+            moments.electron.dens[iz,ir] = this_scratch.electron_density[iz,ir]
+            moments.electron.n_upar[iz,ir] = this_scratch.electron_n_upar[iz,ir]
+            moments.electron.p[iz,ir] = this_scratch.electron_p[iz,ir]
+        end
     end
 
     return success
