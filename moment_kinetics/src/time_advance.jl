@@ -2874,10 +2874,6 @@ moments and moment derivatives
                                      num_diss_params.ion.force_minimum_pdf_value)
         end
 
-        # If using an ion model with no velocity space grid, diagnostic moments are never
-        # needed.
-        diagnostic_moments = diagnostic_moments && composition.ion_physics ∈ (drift_kinetic_ions, gyrokinetic_ions)
-
         # Need to be careful with order of application of boundary conditions and
         # calculation of phi/Er, because in 2D case vEz (which depends on Er, which
         # depends on phi) is needed for the sheath-entrance boundary condition on the
