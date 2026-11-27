@@ -22,7 +22,7 @@ dependencies on moments).
    - depends on `moments.ion.upar` and `moments.ion.vth` for kinetic version,
      but only RK updated evolving variables for fluid version.
    - requires negative values in ion shape function to be set to zero first.
-5. Apply the wall boundary condition for neutrals. Sets
+5. Apply the wall boundary condition for neutrals. Sets boundary values of
    `this_scratch.n_uz_neutral` and `moments.neutral.uz`.
    - depends on ion particle flux to wall, and `moments.neutral.vth`.
    - requires negative values in neutral shape function to be set to zero
